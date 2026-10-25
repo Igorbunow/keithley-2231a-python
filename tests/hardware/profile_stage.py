@@ -64,7 +64,8 @@ def command_plan():
             f'INST:NSEL {ch}', 'VOLT?', 'CURR?')
     snapshots(measured=True)
     # emergency_off() disarms; leave CH1 selected and panel control available.
-    add('OUTP 0', *OFF, 'INST:NSEL 1', 'INST:NSEL?', *OFF, 'SYST:ERR?', 'SYST:LOC')
+    add('SYST:REM', 'OUTP 0', *OFF, 'INST:NSEL 1', 'INST:NSEL?', *OFF,
+        'SYST:ERR?', 'SYST:LOC')
     return tuple(steps)
 
 
@@ -84,7 +85,7 @@ class CheckedIO:
         if not self.live:
             raise OSError('uncertain link; no further SCPI')
         if self.cleanup:
-            if command not in ('OUTP 0', 'SYST:ERR?', 'SYST:LOC', *OFF):
+            if command not in ('SYST:REM', 'OUTP 0', 'SYST:ERR?', 'SYST:LOC', *OFF):
                 raise ValueError('only shutdown is permitted after a failure')
         else:
             if time.monotonic() - self.started > 180:
@@ -197,6 +198,7 @@ def h02(transport, evidence):
         if io.live:
             io.cleanup = True
             try:
+                io.write('SYST:REM')
                 io.write('OUTP 0')
                 _all_off(io)
                 io.errors_clear()

@@ -199,10 +199,18 @@ status diagnostic is prepared but has not been run. See the
 [event log](../reports/hardware/2026-10-25T231834.474816Z_H03/events.jsonl).
 
 The Keithley manual confirms bit 3 is output ON and bit 1/2 are CV/CC. The library
-emergency-off path checks all channels after global OFF and individually issues
-`CHAN:OUTP 0` for any remaining ON channel. The full offline suite is 55/55 SIM TESTED.
+emergency-off path enters Remote, requests global OFF, checks all channels and
+individually issues `CHAN:OUTP 0` for any remaining ON channel. The full offline suite is
+56/56 SIM TESTED.
 H03 remains PARTIAL. A focused diagnostic update records the CH3 questionable-condition
 register alongside operation status and requests panel confirmation before failing on a
 status mismatch. It does not substitute one register for the other or waive a mismatch.
-The offline regression passed 55/55. A fresh approval is required before another powered
+The offline regression passed 56/56. A fresh approval is required before another powered
 CH3 test.
+
+Latest CH3 resume stopped before load or PSU profile configuration: KEL103 `*IDN?`
+timed out. During cleanup, the first Keithley command was `OUTP 0` while the instrument
+was in Local; the following `SYST:ERR?` returned `-200, "Execution error"`. This response
+does not identify its originating command. The library now sends `SYST:REM` before
+emergency OFF. The corrected path is simulation-tested only; see the
+[attempt report](hardware_reports/2026-10-25T233455.502881Z_H03_qualification.md).

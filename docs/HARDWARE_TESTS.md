@@ -29,6 +29,12 @@ do not infer CV from the measurement alone. KEL103 CR/INPUT control was physical
 exercised on CH2, with readback. See the latest
 [H03 report](hardware_reports/2026-10-25T231834.474816Z_H03_qualification.md).
 
+The next CH3 resume aborted before configuration: KEL103 UDP `*IDN?` timed out;
+cleanup then read `-200, "Execution error"` after `OUTP 0`. The error response cannot
+identify its originating command. Emergency shutdown now enters Remote first and passed
+the 56/56 offline suite; physical replay is pending fresh approval. See the
+[attempt report](hardware_reports/2026-10-25T233455.502881Z_H03_qualification.md).
+
 **WARNING:** writing `apply_profile`, `set_channel`, `OUTP` or `power_on()` can turn off a running DUT, change output voltage or energize terminals. No unattended execution; test only with qualified operators. This file provides procedure suggestions, not proof of completed tests or a safety guarantee.
 
 ## Stage 0 — bench preparation

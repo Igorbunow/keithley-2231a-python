@@ -150,6 +150,9 @@ class Keithley2231A:
         with self._lock:
             self._armed = False
             try:
+                # A previous run may have returned the instrument to Local.
+                # Re-enter Remote before sending shutdown SCPI commands.
+                self._write('SYST:REM')
                 if not self._off_confirmed():
                     raise SafetyError('A channel remains ON after OUTP 0')
                 self._expected_outputs = {ch: False for ch in (1, 2, 3)}

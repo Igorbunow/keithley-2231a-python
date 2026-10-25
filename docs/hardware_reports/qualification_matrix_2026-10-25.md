@@ -2,6 +2,12 @@
 
 Исходная матрица из CODEX_HARDWARE_ROADMAP.ru.md, 2026-10-25. Current result: H01 PASS after an aborted first attempt; H02 PASS after a failed first attempt; H03 PARTIAL (CH1/CH2 CV/CC reviewed PASS; CH3 CV status mismatch, CH3 CC pending); H04–H12/O01/O02 NOT_RUN.
 
+Latest H03 CH3 resume aborted before a measurement: KEL103 `*IDN?` timed out, and the
+cleanup sequence read `-200, "Execution error"` after its first `OUTP 0`. The response
+does not identify its originating command. Library emergency shutdown now enters Remote
+before OFF. Offline regression is SIM TESTED 56/56; physical replay remains pending fresh
+operator authorization. See [attempt report](2026-10-25T233455.502881Z_H03_qualification.md).
+
 Outcome and feature verification level are independent. Existing UART/SYST:REM/*IDN? observation on firmware 1.04-1.04 is HW OBSERVED, never a formal H01 PASS. Only reviewed physical evidence may promote a feature to HW VERIFIED.
 
 | ID / порядок | Группа и покрытие | Соединение и нагрузка | Критерий успеха | Outcome / Результат |

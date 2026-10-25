@@ -328,6 +328,20 @@ class TestQualification(unittest.TestCase):
             self.assertEqual([event['mode'] for event in events
                               if event.get('event') == 'measurement'], ['CV', 'CC'])
 
+        with tempfile.TemporaryDirectory() as tmp:
+            class TimedOutLoad(LoadFake):
+                def identify(self): raise TimeoutError('simulated UDP timeout')
+
+            fake = MeterFake()
+            load = TimedOutLoad()
+            evidence = q.Evidence(Path(tmp) / 'load_timeout.jsonl', 'H03')
+            with contextlib.redirect_stdout(io.StringIO()):
+                outcome = h03(fake, evidence, load, start_channel=3)
+            self.assertEqual(outcome, 'ABORTED')
+            self.assertEqual(fake.cmds[0], 'SYST:REM')
+            self.assertGreater(fake.cmds.index('OUTP 0'), fake.cmds.index('SYST:REM'))
+            self.assertFalse(any(fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+
     def test_unattended_and_future_stages_reject_before_open(self):
         q = self.module()
         with patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):

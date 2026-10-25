@@ -241,7 +241,7 @@ def command_plan(start_channel=1):
             status()
     # emergency_off() verifies all channels, then h03() performs its final
     # independent all-off check before returning local control.
-    add('OUTP 0', *OFF, *OFF, 'INST:NSEL 1', 'SYST:LOC')
+    add('SYST:REM', 'OUTP 0', *OFF, *OFF, 'INST:NSEL 1', 'SYST:LOC')
     return tuple(plan)
 
 
@@ -259,7 +259,7 @@ class StageIO:
         if not self.live:
             raise OSError('uncertain link; no further SCPI')
         if self.cleanup:
-            allowed = ('OUTP 0', 'SYST:ERR?', *OFF, 'SYST:LOC',
+            allowed = ('SYST:REM', 'OUTP 0', 'SYST:ERR?', *OFF, 'SYST:LOC',
                        'INST:NSEL 1', 'INST:NSEL 2', 'INST:NSEL 3', 'CHAN:OUTP 0')
             if command not in allowed:
                 raise ValueError('only shutdown is permitted after H03 failure')

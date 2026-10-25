@@ -132,6 +132,11 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(self.fake.values[2]['OUTP:TIM:DEL'],2.2)
         self.dev.timer(2, None)
 
+    def test_emergency_off_enters_remote_before_output_command(self):
+        before = len(self.fake.cmds)
+        self.dev.emergency_off()
+        self.assertEqual(self.fake.cmds[before:before + 2], ['SYST:REM', 'OUTP 0'])
+
     def test_profile_forbids_releasing_lock(self):
         with self.assertRaises(SafetyError): self.dev.remote(lock_panel=False)
         self.dev.remote(lock_panel=True)
