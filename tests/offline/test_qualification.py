@@ -308,6 +308,26 @@ class TestQualification(unittest.TestCase):
                                 and 'operation=8, questionable=9' in event.get('message', '')
                                 for event in events))
 
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = MeterFake()
+            load = LoadFake()
+            evidence = q.Evidence(Path(tmp) / 'resume_ch3.jsonl', 'H03')
+            answers = (
+                'CONFIRM H03 CH3 CV CR=40.0 CONNECTED PSU=OFF',
+                'CONFIRM H03 DISPLAY CH3 PSU=CV KEL=CR INPUT=ON',
+                'CONFIRM H03 CH3 CV PSU=OFF LOAD=OFF',
+                'CONFIRM H03 CH3 CC CR=12.0 CONNECTED PSU=OFF',
+                'CONFIRM H03 DISPLAY CH3 PSU=CC KEL=CR INPUT=ON',
+                'CONFIRM H03 CH3 CC PSU=OFF LOAD=OFF',
+            )
+            with patch('builtins.input', side_effect=answers), contextlib.redirect_stdout(io.StringIO()):
+                outcome = h03(fake, evidence, load, start_channel=3)
+            self.assertEqual(outcome, 'PASS')
+            events = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            self.assertFalse(any(event.get('action') == 'load relocation' for event in events))
+            self.assertEqual([event['mode'] for event in events
+                              if event.get('event') == 'measurement'], ['CV', 'CC'])
+
     def test_unattended_and_future_stages_reject_before_open(self):
         q = self.module()
         with patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):

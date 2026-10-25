@@ -369,7 +369,10 @@ def h03(transport, evidence, load, start_channel=1):
                      load_model='KORAD KEL103')
         print('Профиль готов, все выходы должны быть OFF. KEL103 CR/INPUT '
               'управляются по UDP только после подтверждения подключения и PSU OFF.')
-        previous_channel = start_channel - 1 if start_channel > 1 else None
+        # A CH2 resume starts with the load still on CH1 and needs a move gate.
+        # A CH3 resume is used after the prior CH3 point stopped safely, so the
+        # load is already on CH3 and only the per-point connection gate applies.
+        previous_channel = 1 if start_channel == 2 else None
         for channel in range(start_channel, 4):
             if previous_channel is not None:
                 move = f'CONFIRM H03 MOVE CH{previous_channel}->CH{channel} ALL_OFF LOAD=OFF'
