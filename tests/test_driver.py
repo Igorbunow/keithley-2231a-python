@@ -11,7 +11,7 @@ class FakeTransport:
         self.values = {ch: {'VOLT': 0., 'CURR': 0., 'VOLT:LIM': 30.,
                             'VOLT:LIM:STAT': 0., 'CHAN:OUTP': 0.,
                             'OUTP:TIM:DEL': 10., 'OUTP:TIM:STAT': 0.} for ch in (1,2,3)}
-        self.flags = {'OUTP:SER': 0., 'OUTP:PARA': 0., 'OUTP:TRAC': 0., 'OUTP:STAT:ALL': 0.}
+        self.flags = {'OUTP:SER': 0., 'OUTP:PARALLEL': 0., 'OUTP:TRAC': 0., 'OUTP:STAT:ALL': 0.}
         self.failed_query = None
         self.closed = False
 

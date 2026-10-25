@@ -41,11 +41,17 @@ class TestQualification(unittest.TestCase):
                 if command == 'INST:NSEL?': return '1'
                 if command == 'OUTP:ENABLE?': return '1'
                 return super().query(command)
-        for bad in ('none', 'on', 'model', 'error', 'timeout'):
+        for bad in ('none', 'old170', 'new170', 'on', 'model', 'error', 'timeout'):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as tmp:
                 fake = ProbeFake()
                 base = fake.query
+                error_reads = 0
                 def query(command):
+                    nonlocal error_reads
+                    if command == 'SYST:ERR?':
+                        error_reads += 1
+                        if bad == 'old170' and error_reads == 1: return '170,"Invalid command"'
+                        if bad == 'new170' and error_reads == 2: return '170,"Invalid command"'
                     if bad == 'on' and command == 'STAT:OPER:INST:ISUM2:COND?': return '8'
                     if bad == 'model' and command == '*IDN?': return 'Other, MODEL, SECRET, fw'
                     if bad == 'error' and command == 'SYST:ERR?': return '-100,"Command error"'
@@ -55,13 +61,17 @@ class TestQualification(unittest.TestCase):
                 evidence = q.Evidence(Path(tmp) / 'events.jsonl', 'H01')
                 with contextlib.redirect_stdout(io.StringIO()):
                     outcome = q.h01(fake, evidence)
-                self.assertEqual(outcome, 'PASS' if bad == 'none' else 'ABORTED' if bad == 'timeout' else 'FAIL')
+                self.assertEqual(outcome, 'PASS' if bad in ('none', 'old170') else 'ABORTED' if bad == 'timeout' else 'FAIL')
                 content = evidence.path.read_text()
                 self.assertNotIn('SECRET', content)
                 self.assertNotIn(', TEST,', content)
                 self.assertTrue(fake.closed)
                 self.assertFalse(any(cmd.startswith(('OUTP ', 'CHAN:OUTP ', 'VOLT ', 'CURR ', 'INST:NSEL ')) for cmd in fake.cmds))
-                if bad == 'timeout': self.assertNotIn('SYST:ERR?', fake.cmds)
+                if bad == 'timeout':
+                    self.assertEqual(error_reads, 1)  # No follow-up query on the failed link.
+                    self.assertIn('io_error', content)
+                    self.assertIn('OSError', content)
+                if bad == 'old170': self.assertIn('preexisting_error', content)
 
     def test_evidence_redacts_before_serializing(self):
         q = self.module()

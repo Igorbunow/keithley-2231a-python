@@ -1,12 +1,12 @@
 # Hardware qualification matrix / Матрица аппаратной квалификации
 
-Исходная матрица из CODEX_HARDWARE_ROADMAP.ru.md, 2026-10-25. All groups remain NOT_RUN: no instrument access in the offline stage.
+Исходная матрица из CODEX_HARDWARE_ROADMAP.ru.md, 2026-10-25. Current result: H01 PASS after an aborted first attempt; H02–H12/O01/O02 NOT_RUN.
 
 Outcome and feature verification level are independent. Existing UART/SYST:REM/*IDN? observation on firmware 1.04-1.04 is HW OBSERVED, never a formal H01 PASS. Only reviewed physical evidence may promote a feature to HW VERIFIED.
 
 | ID / порядок | Группа и покрытие | Соединение и нагрузка | Критерий успеха | Outcome / Результат |
 | --- | --- | --- | --- | --- |
-| **H01** | Пассивный SCPI-preflight, идентификация, чтение статусных и mode-регистров, парсер ошибок | Все три OUT OFF, вход нагрузки OFF; без физических перемычек | Ответы воспроизводимы; нет таймаутов/сдвигов ответов; `*IDN?` корректен | NOT_RUN |
+| **H01** | Пассивный SCPI-preflight, идентификация, чтение статусных и mode-регистров, парсер ошибок | Все три OUT OFF, вход нагрузки OFF; без физических перемычек | Ответы воспроизводимы; нет таймаутов/сдвигов ответов; `*IDN?` корректен | PASS |
 | **H02** | Безнагрузочная установка защищённого профиля: все 3 канала, `VOLT:LIM`/state, readback, отказ на недопустимых V/I, неактивированный ON | Независимые каналы, нагрузка отсоединена | После применения все OFF, уставки/лимиты соответствуют профилю, отказы не отправлены в SCPI | NOT_RUN |
 | **H03** | **Все 3 канала × CV и CC**, индивидуальный ON/OFF, измерение U/I/P и статус CV/CC | Нагрузка последовательно CH1→CH2→CH3, CR 40 Ω / CR 12 Ω; 3 операторские паузы | CV и CC соответствуют индикации и независимому измерению; другие каналы остаются OFF | NOT_RUN |
 | **H04** | Профильные ограничения: защищённый, `unrestricted()` в маломощном сценарии; внешняя подмена уставки/лимита при OFF; аварийная реакция/запрет смены профиля | Независимая схема, все OFF для tamper | Нет программного выхода за cap; активный профиль неизменяем; обнаруживается смена **точных** уставок `power_only` | NOT_RUN |
@@ -22,3 +22,18 @@ Outcome and feature verification level are independent. Existing UART/SYST:REM/*
 | **O02** | Два физических PSU / TCP-мост / внешняя аппаратная синхронизация | Только при наличии второго PSU, MCU-моста/триггеров; сейчас нет подтверждения наличия | Отдельный план после подготовки оборудования; иначе `NOT_RUN`/`PLANNED`, не притягивать к общему PASS | NOT_RUN |
 
 H01 is executable after a separate gate. H02–H12/O01/O02 execution is currently guarded pending H01 review, load specifications and individual preflight implementation. This is runner readiness, not a hardware test outcome. No powered qualification is claimed.
+
+H01 attempt: [2026-10-26 local / 2026-10-25 UTC report](2026-10-25T210502.973378Z_H01_preflight.md).
+Stopped on OUTP:PARA? after an I/O exception. Last channel ON bits were 0/0/0;
+post-run physical OFF awaits operator confirmation. No output writes or retry.
+
+H01 retest: [PASS on corrected query](2026-10-25T211550.545588Z_H01_preflight.md),
+firmware 1.04-1.04, error queue 0 before/after, repeated OFF bits 0/0/0 and operator-confirmed PSU OFF.
+The previous ABORTED attempt remains part of the history. The final confirmation
+supersedes the pending PSU-OFF status above; load state is documented by the initial gate.
+
+H01 readback addendum: [CH2/CH3 independent readback](2026-10-25T212311.676405Z_H01_CH2_CH3_readback.md).
+Both channels returned `VOLT?=1`, `CURR?=0.1`, output OFF and timer OFF. All three
+OFF bits remained 0; `SYST:ERR?` returned `0, "No error"` before and after. CH2/CH3
+`VOLT:LIM?` returned 30.1 V / 5.1 V respectively with limit state 0 (observed,
+not active protection). PSU meter readings are uncalibrated and have no independent DMM comparison.

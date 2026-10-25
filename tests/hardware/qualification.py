@@ -28,14 +28,14 @@ TOKEN = 'CONFIRM H01 INDEPENDENT ALL_OFF LOAD=DISCONNECTED'
 FINAL_TOKEN = 'CONFIRM H01 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
 # Read the selected channel only: no INST:NSEL mutation in a read-only preflight.
 OFF_QUERIES = tuple(f'STAT:OPER:INST:ISUM{ch}:COND?' for ch in (1, 2, 3))
-STATE_QUERIES = ('INST:NSEL?', 'OUTP:STAT:ALL?', 'OUTP:SER?', 'OUTP:PARA?',
+STATE_QUERIES = ('INST:NSEL?', 'OUTP:STAT:ALL?', 'OUTP:SER?', 'OUTP:PARALLEL?',
                  'OUTP:TRAC?', 'VOLT?', 'CURR?', 'VOLT:LIM?', 'VOLT:LIM:STAT?',
                  'CHAN:OUTP?', 'OUTP:TIM:STAT?', 'OUTP:TIM:DEL?',
                  'MEAS:VOLT?', 'MEAS:CURR?', '*STB?',
                  'STAT:QUES:COND?', 'STAT:OPER:COND?')
 # SYST:REM is required by manual section 5-2. LOC restores panel control.
 # No profile, reset, setpoint, topology, timer or output mutation is allowed.
-H01_PLAN = ('SYST:REM', '*IDN?', *OFF_QUERIES, 'SYST:VERS?', *STATE_QUERIES,
+H01_PLAN = ('SYST:REM', '*IDN?', 'SYST:ERR?', *OFF_QUERIES, 'SYST:VERS?', *STATE_QUERIES,
             'SYST:ERR?', '*IDN?', *OFF_QUERIES, 'SYST:LOC')
 UNITS = {'VOLT?': 'V', 'VOLT:LIM?': 'V', 'CURR?': 'A',
          'MEAS:VOLT?': 'V', 'MEAS:CURR?': 'A', 'OUTP:TIM:DEL?': 's'}
@@ -123,7 +123,9 @@ def preflight(test_id, port):
           'PSU V/I/caps не изменяются, исходные значения неизвестны: сначала снимок.\n'
           'Ожидается отсутствие питания нагрузки. Паспортный возможный максимум при ошибке\n'
           'состояния: CH1/2 30 V, CH3 5 V, 3 A каждый, суммарно 195 W.\n'
-          'Мутации: только SYST:REM / SYST:LOC (режим управления); SYST:ERR? извлекает одну ошибку.\n'
+          'Мутации: только SYST:REM / SYST:LOC (режим управления); два SYST:ERR? извлекают записи ошибок.\n'
+          'Первый ERR? фиксирует исходную очередь: допускается только 0 или ранее сообщённая 170.\n'
+          'Исходная 170 сохраняется в evidence; финальный ERR? обязан вернуть 0. Без *CLS.\n'
           'Нет OUTP 1/0, INST:NSEL, RWLOCK, *CLS, *RST или изменения уставок.\n'
           'Чтение V/I относится только к выбранному каналу; ON-биты читаются для всех трёх.\n'
           'Ожидание: корректный IDN, повторяемый OFF в бите 3 каждого ISUM, корректные типы ответов.\n'
@@ -151,8 +153,13 @@ def h01(transport, evidence):
             try:
                 answer = transport.query(command) if command.endswith('?') else None
                 if answer is None: transport.write(command)
-            except BaseException:
+            except BaseException as exc:
                 live = False
+                # Do not serialize exception messages: an undecodable IDN reply
+                # might contain a serial number not yet known to the redactor.
+                evidence.add('io_error', command=command,
+                             exception_type=type(exc).__name__,
+                             cause_type=type(exc.__cause__).__name__ if exc.__cause__ else None)
                 raise
             if answer is None: continue
             record = evidence.add('read', command=command, response=answer, units=UNITS.get(command))
@@ -165,7 +172,12 @@ def h01(transport, evidence):
                     raise ValueError('identity changed between queries')
             elif command == 'SYST:ERR?':
                 code, message = answer.split(',', 1)
-                if int(code.strip()) != 0 or not message.strip():
+                code = int(code.strip())
+                initial = command not in replies
+                if initial and code == 170 and message.strip():
+                    evidence.add('preexisting_error', code=code, message=message,
+                                 source='operator-reported previous H01 failure; consumed and preserved')
+                elif code != 0 or not message.strip():
                     raise ValueError('instrument error queue contains an error')
             else:
                 import math
@@ -176,10 +188,10 @@ def h01(transport, evidence):
                         raise ValueError('invalid status register')
                 if command in OFF_QUERIES and (int(value) & 8):
                     raise ValueError('a channel reports ON')
-                if command in ('OUTP:STAT:ALL?', 'OUTP:SER?', 'OUTP:PARA?', 'OUTP:TRAC?',
+                if command in ('OUTP:STAT:ALL?', 'OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?',
                                'VOLT:LIM:STAT?', 'CHAN:OUTP?', 'OUTP:TIM:STAT?') and value not in (0, 1):
                     raise ValueError('invalid boolean response')
-                if command in ('OUTP:STAT:ALL?', 'OUTP:SER?', 'OUTP:PARA?', 'OUTP:TRAC?', 'CHAN:OUTP?') and value:
+                if command in ('OUTP:STAT:ALL?', 'OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?', 'CHAN:OUTP?') and value:
                     raise ValueError('expected independent mode and all outputs OFF')
                 if command == 'INST:NSEL?' and value not in (1, 2, 3):
                     raise ValueError('invalid selected channel')

@@ -171,7 +171,7 @@ class Keithley2231A:
                     self._trip('Output could not be switched OFF')
                 # When changing wiring, remove physical jumpers while outputs OFF.
                 self._write('OUTP:SER 0')
-                self._write('OUTP:PARA 0')
+                self._write('OUTP:PARALLEL 0')
                 self._write('OUTP:TRAC 0')
                 for ch, spec in enumerate(profile.channels, 1):
                     self._select(ch)
@@ -191,7 +191,7 @@ class Keithley2231A:
                     self._write(f'VOLT {spec.initial_voltage:.2f}')
                     self._check_setpoints(ch, spec)
                 if profile.wiring == 'series': self._write('OUTP:SER 1')
-                elif profile.wiring == 'parallel': self._write('OUTP:PARA 1')
+                elif profile.wiring == 'parallel': self._write('OUTP:PARALLEL 1')
                 elif profile.wiring == 'tracking': self._write('OUTP:TRAC 1')
                 self._profile = profile
                 self._check_wiring_mode()
@@ -224,7 +224,7 @@ class Keithley2231A:
         p = self._profile
         if p is None: raise SafetyError('profile not loaded')
         flags = {'series': self._bool(self._query('OUTP:SER?')),
-                 'parallel': self._bool(self._query('OUTP:PARA?')),
+                 'parallel': self._bool(self._query('OUTP:PARALLEL?')),
                  'tracking': self._bool(self._query('OUTP:TRAC?'))}
         active = {k for k, v in flags.items() if v}
         wanted = set() if p.wiring == 'independent' else {p.wiring}
