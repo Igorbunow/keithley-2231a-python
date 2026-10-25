@@ -45,7 +45,9 @@ class FakeTransport:
         if key in self.flags: return str(int(self.flags[key]))
         if key == 'MEAS:VOLT': return str(self.values[self.active_ch]['VOLT'])
         if key == 'MEAS:CURR': return str(self.values[self.active_ch]['CURR']/2)
-        if key.startswith('STAT:OPER:INST:ISUM') and key.endswith(':COND'): return '1'
+        if key.startswith('STAT:OPER:INST:ISUM') and key.endswith(':COND'):
+            ch = int(key.split('ISUM')[1].split(':')[0])
+            return '9' if self.values[ch]['CHAN:OUTP'] else '0'
         if key == 'SYST:ERR': return '0,No error'
         if key == 'SYST:VERS': return '1999.0'
         if key in ('*STB','STAT:QUES:COND','STAT:OPER:COND'): return '0'
@@ -100,7 +102,7 @@ class TestDevice(unittest.TestCase):
         self.assertFalse(self.fake.values[1]['CHAN:OUTP'])
 
     def test_guard_detects_external_change(self):
-        self.fake.values[2]['VOLT:LIM'] = 30
+        self.fake.values[2]['VOLT:LIM'] = 5.01
         with self.assertRaises(SafetyError): self.dev.verify_profile()
         self.assertFalse(self.dev.armed)
         self.assertTrue(self.dev.faulted)
@@ -160,6 +162,76 @@ class TestDevice(unittest.TestCase):
         with self.assertRaises(SafetyError): self.dev.read_channel(2)
         r = self.dev.read_channel(1)
         self.assertEqual(r.label,'CH1+CH2')
+        self.assertIsNone(r.voltage_set_v)
+        self.assertIsNone(r.current_limit_set_a)
+
+    def test_fixed_setpoint_tampering_within_caps_trips(self):
+        for key, value in (('VOLT', 1.01), ('CURR', .101)):
+            with self.subTest(key=key):
+                fake = FakeTransport(); dev = Keithley2231A(fake)
+                base = profile()
+                dev.apply_profile(Profile('fixed', base.channels, access='power_only'))
+                fake.values[1][key] = value
+                with self.assertRaises(SafetyError): dev.verify_profile()
+                self.assertFalse(dev.armed)
+                self.assertFalse(fake.values[1]['CHAN:OUTP'])
+
+    def test_control_remembers_authorized_setpoints(self):
+        self.dev.set_channel(1, voltage=2.5, current=.15)
+        self.dev.verify_profile()
+        self.fake.values[1]['VOLT'] = 2.49
+        with self.assertRaises(SafetyError): self.dev.verify_profile()
+
+    def test_global_off_must_check_each_channel(self):
+        original = self.fake.write
+        def stuck_off(command):
+            original(command)
+            if command == 'OUTP 0': self.fake.values[2]['CHAN:OUTP'] = 1
+        self.fake.write = stuck_off
+        with self.assertRaises(SafetyError): self.dev.emergency_off()
+        self.assertFalse(self.dev.armed)
+        self.assertTrue(self.dev.faulted)
+
+    def test_external_output_on_is_not_authorized(self):
+        self.fake.values[3]['CHAN:OUTP'] = 1
+        with self.assertRaises(SafetyError): self.dev.verify_profile()
+        self.assertFalse(self.dev.armed)
+
+    def test_status_io_failure_disarms(self):
+        self.fake.failed_query = 'SYST:VERS?'
+        with self.assertRaises(SafetyError): self.dev.status()
+        self.assertTrue(self.dev.faulted)
+        with self.assertRaises(SafetyError): self.dev.output(1, True)
+
+    def test_output_requires_boolean_without_io(self):
+        before = len(self.fake.cmds)
+        with self.assertRaises(ValueError): self.dev.output(1, 'OFF')
+        self.assertEqual(len(self.fake.cmds), before)
+
+    def test_identity_rejects_similar_model_and_channel_requires_integer(self):
+        from keithley2231a import InstrumentError
+        for channel in (1.0, True, '1'):
+            with self.subTest(channel=channel):
+                with self.assertRaises(ValueError): self.dev.output(channel, True)
+        original = self.fake.query
+        self.fake.query = lambda cmd: 'Keithley instruments, 2231A-30-30, TEST, fw' if cmd == '*IDN?' else original(cmd)
+        with self.assertRaises(InstrumentError): self.dev.identity()
+        self.assertFalse(self.dev.armed)
+
+    def test_apply_disables_inherited_timers(self):
+        self.dev.emergency_off()
+        for values in self.fake.values.values(): values['OUTP:TIM:STAT'] = 1
+        self.dev.apply_profile(profile())
+        self.assertTrue(all(values['OUTP:TIM:STAT'] == 0 for values in self.fake.values.values()))
+
+    def test_combined_enable_is_blocked_pending_setpoint_qualification(self):
+        for mode in ('series', 'parallel'):
+            with self.subTest(mode=mode):
+                self.dev.emergency_off()
+                self.dev.apply_profile(profile(mode), confirmed_wiring=mode)
+                with self.assertRaises(SafetyError):
+                    self.dev.combined_outputs(True, confirm_all_channels_safe=True)
+                self.assertFalse(self.fake.values[3]['CHAN:OUTP'])
 
     def test_close_safely_disarms(self):
         self.dev.output(1, True)
@@ -225,6 +297,35 @@ class TestTransportNetwork(unittest.TestCase):
         try: self.assertEqual(t.query('*IDN?'), 'Keithley,OK')
         finally: t.close(); th.join(timeout=1)
         self.assertEqual(got, [b'*IDN?\r\n'])
+
+    def test_serial_timeout_and_stale_input_require_new_transport(self):
+        from unittest.mock import Mock, patch
+        from keithley2231a import SerialTransport, TransportError
+        for stale in (False, True):
+            with self.subTest(stale=stale):
+                port = Mock()
+                port.in_waiting = int(stale)
+                port.readline.return_value = b'partial'
+                port.write.side_effect = lambda value: len(value)
+                with patch('serial.Serial', return_value=port):
+                    io = SerialTransport('SIMULATED')
+                with self.assertRaises(TransportError): io.query('*IDN?')
+                port.readline.return_value = b'1\n'
+                with self.assertRaises(TransportError): io.query('CHAN:OUTP?')
+                with self.assertRaises(TransportError): io.write('CHAN:OUTP 1')
+                io.close()
+
+    def test_tcp_timeout_cannot_reuse_late_reply(self):
+        from unittest.mock import Mock, patch
+        from keithley2231a import TcpTransport, TransportError
+        sock = Mock()
+        sock.recv.side_effect = [TimeoutError('timeout'), b'1\n']
+        with patch('socket.create_connection', return_value=sock):
+            io = TcpTransport('SIMULATED', 5025)
+        with self.assertRaises(TransportError): io.query('*IDN?')
+        with self.assertRaises(TransportError): io.query('CHAN:OUTP?')
+        with self.assertRaises(TransportError): io.write('CHAN:OUTP 1')
+        io.close()
 
     def test_unrecorded_still_checked(self):
         p=Profile('record selective',(

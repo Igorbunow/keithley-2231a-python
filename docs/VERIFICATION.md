@@ -45,3 +45,32 @@
 6. Do not publish a universal safety guarantee, even after successful hardware tests.
 
 A green GitHub Actions badge, by definition, reports **SIM TESTED only**. The hardware result must be a human-reviewed report, not an automatically merged badge.
+
+## Qualification preparation — 2026-10-25
+
+The [exact H01–H12/O01/O02 matrix](hardware_reports/qualification_matrix_2026-10-25.md)
+records **NOT_RUN** for every new hardware group. UART, `SYST:REM` and `*IDN?`
+remain **HW OBSERVED**, supported only by the [operator observation](hardware_reports/2026-10-25_uart_idn_observation.md).
+No physical instrument was accessed during this preparation.
+
+Offline baseline: **31 passed**. After focused regressions: **46 passed**, Python
+3.13.5 / pyserial 3.5, `PYTHONPATH=src python3 -m unittest discover -s tests -v`.
+These results are **SIM TESTED** only. See the [audit](hardware_reports/2026-10-25_offline_audit.md).
+
+`tools/hw_qualify.py list`, `preflight H01` and `run H01` default to dry run;
+no port opens. Only H01 has an executable scenario at this stage, requiring a
+specific interactive gate. It changes remote/local control mode, queries the
+selected channel and all three ON status bits, and consumes one error queue item.
+It never writes output/setpoint/topology/timer controls. H02–H12/O01/O02 execution
+is guarded until preceding evidence, load specifications and individual cards
+are reviewed; their test outcomes remain NOT_RUN.
+
+Safety changes are simulation-tested: exact authorized V/I and voltage-limit
+readbacks, unexpected ON detection, per-channel OFF checks, inherited timer
+disable, strict identity/boolean inputs, and transport failure latching.
+Series/parallel enabling is temporarily refused pending combined-setpoint
+qualification; combined readings expose unknown setpoints as `None`. Tracking
+setpoint changes remain unavailable. No lock readback command is documented;
+external panel unlock cannot be claimed detectable. `VOLT:LIM` is a maximum
+settable voltage, not independent measured-voltage OVP. Timer start on remote ON,
+combined readbacks and all electrical behavior remain HW UNVERIFIED.

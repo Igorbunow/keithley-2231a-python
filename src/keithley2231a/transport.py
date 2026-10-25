@@ -1,6 +1,7 @@
 """One SCPI command per newline. TCP is a raw transparent UART tunnel, NOT VISA."""
 from __future__ import annotations
 import socket
+import os
 import threading
 from typing import Protocol
 
@@ -20,32 +21,40 @@ class SerialTransport:
         self._serial = serial.Serial(port=port, baudrate=baudrate, bytesize=8,
                                      parity="N", stopbits=1, timeout=timeout,
                                      write_timeout=timeout, xonxoff=False,
-                                     rtscts=False, dsrdtr=False)
+                                     rtscts=False, dsrdtr=False,
+                                     **({'exclusive': True} if os.name == 'posix' else {}))
         self._terminator = terminator
         self._lock = threading.RLock()
+        self._failed = False
 
     def write(self, line: str) -> None:
         if '\n' in line or '\r' in line: raise ValueError("one command per line")
         with self._lock:
+            if self._failed: raise TransportError('serial link uncertain; close and requalify before reconnecting')
             try:
-                self._serial.write(line.encode("ascii") + self._terminator)
+                message = line.encode("ascii") + self._terminator
+                if self._serial.write(message) != len(message):
+                    raise TransportError('short serial write')
                 self._serial.flush()
             except Exception as exc:
+                self._failed = True
                 raise TransportError(f"serial write: {exc}") from exc
 
     def query(self, line: str) -> str:
         with self._lock:
-            # Drain any unsolicited/stale input; prevents mistaking old replies for this query.
-            self._serial.reset_input_buffer()
-            self.write(line)
+            if self._failed: raise TransportError('serial link uncertain; close and requalify before reconnecting')
             try:
-                reply = self._serial.readline()
+                # Discarding bytes cannot rule out an old response still in flight.
+                if self._serial.in_waiting:
+                    raise TransportError('unsolicited/stale serial input')
+                self.write(line)
+                reply = self._serial.readline(4097)
+                if not reply.endswith(b"\n") or len(reply) > 4096:
+                    raise TransportError('incomplete/oversized/timeout reply')
+                return reply.decode("ascii").strip()
             except Exception as exc:
-                raise TransportError(f"serial read: {exc}") from exc
-            if not reply.endswith(b"\n"):
-                raise TransportError(f"incomplete/timeout reply to {line!r}: {reply!r}")
-            try: return reply.decode("ascii").strip()
-            except UnicodeDecodeError as exc: raise TransportError("non-ASCII reply") from exc
+                self._failed = True
+                raise TransportError(f"serial query {line!r} failed; UNKNOWN OUTPUT STATE") from exc
 
     def close(self) -> None:
         self._serial.close()
@@ -64,19 +73,23 @@ class TcpTransport:
         self._buf = bytearray()
         self._terminator = terminator
         self._lock = threading.RLock()
+        self._failed = False
 
     def write(self, line: str) -> None:
         if '\n' in line or '\r' in line: raise ValueError("one command per line")
         with self._lock:
+            if self._failed: raise TransportError('TCP link uncertain; close and requalify before reconnecting')
             try: self._sock.sendall(line.encode("ascii") + self._terminator)
-            except OSError as exc: raise TransportError(f"TCP write failed: {exc}") from exc
+            except OSError as exc:
+                self._failed = True
+                raise TransportError(f"TCP write failed: {exc}") from exc
 
     def query(self, line: str) -> str:
         with self._lock:
-            # On each transaction, no abandoned response should be queued.
-            if self._buf: raise TransportError("unsolicited/stale TCP input; reconnect")
-            self.write(line)
+            if self._failed: raise TransportError('TCP link uncertain; close and requalify before reconnecting')
             try:
+                if self._buf: raise TransportError("unsolicited/stale TCP input; reconnect")
+                self.write(line)
                 while b'\n' not in self._buf:
                     chunk = self._sock.recv(4096)
                     if not chunk: raise TransportError("TCP peer closed connection")
@@ -87,6 +100,7 @@ class TcpTransport:
                 if self._buf: raise TransportError("unexpected extra TCP response; reconnect")
                 return reply.decode("ascii").strip()
             except (OSError, UnicodeDecodeError) as exc:
+                self._failed = True
                 raise TransportError(f"TCP query failed: {exc}") from exc
 
     def close(self) -> None:

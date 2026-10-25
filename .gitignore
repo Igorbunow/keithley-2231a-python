@@ -47,6 +47,7 @@ runs/
 data/local/
 results/local/
 reports/local/
+reports/hardware/
 output/
 *.bak
 *.tmp
@@ -59,3 +60,4 @@ output/
 
 CODEX_*
 qualification_matrix_*
+!docs/hardware_reports/qualification_matrix_2026-10-25.md

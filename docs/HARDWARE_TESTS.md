@@ -2,6 +2,15 @@
 
 [English](HARDWARE_TESTS.md) | [Русский](HARDWARE_TESTS.ru.md) · [Feature matrix](VERIFICATION.md)
 
+
+> Current qualification follows the [compact H01–H12/O01/O02 matrix](hardware_reports/qualification_matrix_2026-10-25.md)
+> and [offline audit / H01 gate](hardware_reports/2026-10-25_offline_audit.md).
+> Use `python3 tools/hw_qualify.py preflight H01` first. Explicit operator approval
+> is required before any serial access and separately for every powered group,
+> rewiring, mains cycle or live-link interruption. Begin with offline I/O failure
+> simulation; H07 is a 2–5 minute run. Diode DUTs and longer stress runs need
+> separate approval. The overview below does not authorize those actions.
+
 **WARNING:** writing `apply_profile`, `set_channel`, `OUTP` or `power_on()` can turn off a running DUT, change output voltage or energize terminals. No unattended execution; test only with qualified operators. This file provides procedure suggestions, not proof of completed tests or a safety guarantee.
 
 ## Stage 0 — bench preparation

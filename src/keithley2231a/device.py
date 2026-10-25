@@ -42,6 +42,8 @@ class Keithley2231A:
         self._last_verify = 0.0
         self._idn = None
         self._sequencing = False
+        self._expected_setpoints = {}
+        self._expected_outputs = {ch: False for ch in (1, 2, 3)}
 
     @property
     def instrument_id(self) -> str | None: return self._idn
@@ -52,8 +54,17 @@ class Keithley2231A:
     @property
     def faulted(self) -> bool: return self._faulted
 
-    def _write(self, command: str): self._io.write(command)
-    def _query(self, command: str) -> str: return self._io.query(command)
+    def _write(self, command: str):
+        try: self._io.write(command)
+        except Exception:
+            self._faulted, self._armed = True, False
+            raise
+
+    def _query(self, command: str) -> str:
+        try: return self._io.query(command)
+        except Exception:
+            self._faulted, self._armed = True, False
+            raise
     def _num(self, command: str) -> float:
         s = self._query(command)
         try:
@@ -73,8 +84,10 @@ class Keithley2231A:
     def identity(self) -> str:
         with self._lock:
             ans = self._query('*IDN?')
-            if '2231A-30-3' not in ans.upper():
-                raise InstrumentError(f"Not Keithley 2231A-30-3: {ans!r}")
+            parts = [part.strip() for part in ans.split(',')]
+            if len(parts) != 4 or parts[0].lower() != 'keithley instruments' or parts[1].upper() != '2231A-30-3' or not parts[3]:
+                self._faulted, self._armed = True, False
+                raise InstrumentError('Not a valid Keithley 2231A-30-3 identity')
             self._idn = ans
             return ans
 
@@ -89,7 +102,7 @@ class Keithley2231A:
 
     @staticmethod
     def _check_channel(ch: int):
-        if ch not in (1, 2, 3) or isinstance(ch, bool):
+        if type(ch) is not int or ch not in (1, 2, 3):
             raise ValueError('channel must be 1, 2 or 3')
 
     def _select(self, ch: int):
@@ -107,18 +120,31 @@ class Keithley2231A:
         except Exception: pass
         raise SafetyError(f'{why}; attempted OUTP 0 (not guaranteed)')
 
+    def _output_states(self) -> dict[int, bool]:
+        """Read per-channel ON bits; global status has ambiguous mixed-state semantics."""
+        states = {}
+        for ch in (1, 2, 3):
+            mask = self._num(f'STAT:OPER:INST:ISUM{ch}:COND?')
+            if mask != int(mask) or not 0 <= mask <= 255:
+                raise InstrumentError('Invalid operation condition register')
+            states[ch] = bool(int(mask) & 8)
+        return states
+
     def _off_confirmed(self) -> bool:
         self._write('OUTP 0')
-        return not self._bool(self._query('OUTP:STAT:ALL?'))
+        return not any(self._output_states().values())
 
     def emergency_off(self) -> None:
         """Available even when faulted; command delivery not guaranteed if link is dead."""
         with self._lock:
             self._armed = False
-            self._write('OUTP 0')
-            if self._bool(self._query('OUTP:STAT:ALL?')):
+            try:
+                if not self._off_confirmed():
+                    raise SafetyError('A channel remains ON after OUTP 0')
+                self._expected_outputs = {ch: False for ch in (1, 2, 3)}
+            except BaseException:
                 self._faulted = True
-                raise SafetyError('Global output remains ON after OUTP 0')
+                raise
 
     def apply_profile(self, profile: Profile, *, confirmed_wiring: str | None = None) -> None:
         """Arms profile with all outputs OFF. For series/parallel physical wires must
@@ -134,6 +160,10 @@ class Keithley2231A:
             self._armed = False
             self._faulted = False
             self._profile = None
+            self._expected_setpoints = {
+                ch: (spec.initial_voltage, spec.initial_current)
+                for ch, spec in enumerate(profile.channels, 1)}
+            self._expected_outputs = {ch: False for ch in (1, 2, 3)}
             try:
                 self.remote(lock_panel=False)
                 self.identity()
@@ -145,6 +175,9 @@ class Keithley2231A:
                 self._write('OUTP:TRAC 0')
                 for ch, spec in enumerate(profile.channels, 1):
                     self._select(ch)
+                    self._write('OUTP:TIM:STAT 0')
+                    if self._bool(self._query('OUTP:TIM:STAT?')):
+                        raise SafetyError(f'CH{ch}: inherited timer remains enabled')
                     self._write('VOLT 0')
                     self._write('CURR 0')
                     self._write(f'VOLT:LIM {spec.max_voltage:.2f}')
@@ -152,7 +185,7 @@ class Keithley2231A:
                     if not self._bool(self._query('VOLT:LIM:STAT?')):
                         raise SafetyError(f'CH{ch}: hardware limit inactive')
                     got = self._num('VOLT:LIM?')
-                    if abs(got - spec.max_voltage) > .011:
+                    if abs(got - spec.max_voltage) > .0049:
                         raise SafetyError(f'CH{ch}: hardware V limit mismatch {got}')
                     self._write(f'CURR {spec.initial_current:.3f}')
                     self._write(f'VOLT {spec.initial_voltage:.2f}')
@@ -164,9 +197,11 @@ class Keithley2231A:
                 self._check_wiring_mode()
                 if profile.lock_front_panel:
                     self.remote(lock_panel=True)
+                if any(self._output_states().values()):
+                    raise SafetyError('Unexpected output ON while applying profile')
                 self._last_verify = time.monotonic()
                 self._armed = True  # Outputs remain OFF until explicitly enabled.
-            except Exception:
+            except BaseException:
                 self._profile = None
                 self._armed = False
                 self._faulted = True
@@ -174,11 +209,16 @@ class Keithley2231A:
                 except Exception: pass
                 raise
 
-    def _check_setpoints(self, ch: int, spec):
+    def _check_setpoints(self, ch: int, spec, expected=None):
         self._select(ch)
         v = self._num('VOLT?'); i = self._num('CURR?')
         if v < -.011 or v > spec.max_voltage + .011 or i < -.002 or i > spec.max_current + .002:
             raise SafetyError(f'CH{ch}: readback setpoint exceeds profile: V={v} I={i}')
+        wanted_v, wanted_i = expected if expected is not None else self._expected_setpoints[ch]
+        # These are digital setpoint readbacks, not analog measurements. Less
+        # than half a programming step catches even a one-step external edit.
+        if abs(v - wanted_v) > .0049 or abs(i - wanted_i) > .00049:
+            raise SafetyError(f'CH{ch}: authorized setpoints changed: V={v} I={i}')
 
     def _check_wiring_mode(self):
         p = self._profile
@@ -196,11 +236,14 @@ class Keithley2231A:
             self._require_ready()
             try:
                 self._check_wiring_mode()
+                for ch, enabled in self._output_states().items():
+                    if enabled and not self._expected_outputs[ch]:
+                        raise SafetyError(f'CH{ch}: unexpected output ON')
                 for ch, spec in enumerate(self._profile.channels, 1):
                     self._select(ch)
                     if not self._bool(self._query('VOLT:LIM:STAT?')):
                         raise SafetyError(f'CH{ch}: hardware V limit disabled')
-                    if abs(self._num('VOLT:LIM?') - spec.max_voltage) > .011:
+                    if abs(self._num('VOLT:LIM?') - spec.max_voltage) > .0049:
                         raise SafetyError(f'CH{ch}: hardware V limit changed')
                     self._check_setpoints(ch, spec)
                 self._last_verify = time.monotonic()
@@ -230,16 +273,21 @@ class Keithley2231A:
                 # Current first, then voltage; both are bounded by profile.
                 if current is not None: self._write(f'CURR {current:.3f}')
                 if voltage is not None: self._write(f'VOLT {voltage:.2f}')
-                self._check_setpoints(ch, spec)
+                old_v, old_i = self._expected_setpoints[ch]
+                expected = (old_v if voltage is None else voltage,
+                            old_i if current is None else current)
+                self._check_setpoints(ch, spec, expected)
                 self._select(ch)
                 if voltage is not None and abs(self._num('VOLT?') - voltage) > .011:
                     raise SafetyError('Voltage set command was not applied')
                 if current is not None and abs(self._num('CURR?') - current) > .002:
                     raise SafetyError('Current set command was not applied')
+                self._expected_setpoints[ch] = expected
             except Exception as exc:
                 self._trip(f'Setting CH{ch} failed: {exc}')
 
     def output(self, ch: int, enabled: bool) -> None:
+        if type(enabled) is not bool: raise ValueError('enabled must be bool')
         with self._lock:
             self._require_ready(); self._check_channel(ch)
             if self._profile.access == 'power_only' and self._profile.power_sequence and not self._sequencing:
@@ -252,6 +300,7 @@ class Keithley2231A:
                 self._write(f'CHAN:OUTP {1 if enabled else 0}')
                 if self._bool(self._query('CHAN:OUTP?')) != bool(enabled):
                     raise SafetyError(f'CH{ch} output state mismatch')
+                self._expected_outputs[ch] = enabled
             except Exception as exc:
                 self._trip(f'CH{ch} output operation failed: {exc}')
 
@@ -259,12 +308,15 @@ class Keithley2231A:
         """Global output command. Could enable CH3: explicit confirmation required.
         Intended for operation only when CH3 wiring & configured setpoint are safe.
         """
+        if type(enabled) is not bool: raise ValueError('enabled must be bool')
         with self._lock:
             self._require_ready()
             if self._profile.access == 'power_only':
                 raise SafetyError('power_only: combined output control is unavailable')
             if self._profile.wiring == 'independent':
                 raise SafetyError('Use output(channel, on/off) for independent wiring')
+            if enabled and self._profile.wiring in ('series', 'parallel'):
+                raise SafetyError('Combined setpoint semantics require H09/H10 qualification before enabling')
             if enabled and not confirm_all_channels_safe:
                 raise SafetyError('Global OUTP 1 may turn on CH3. Confirm ALL connected loads.')
             if enabled: self.verify_profile()
@@ -272,6 +324,9 @@ class Keithley2231A:
                 self._write(f'OUTP {1 if enabled else 0}')
                 if self._bool(self._query('OUTP:STAT:ALL?')) != bool(enabled):
                     raise SafetyError('Global output state mismatch')
+                if any(state != enabled for state in self._output_states().values()):
+                    raise SafetyError('Per-channel output state mismatch')
+                self._expected_outputs = {ch: enabled for ch in (1, 2, 3)}
             except Exception as exc:
                 self._trip(f'Global output operation failed: {exc}')
 
@@ -413,18 +468,21 @@ class Keithley2231A:
                                current_a=amps, power_w=volts * amps,
                                regulation=mode, enabled=enabled,
                                label="CH1+CH2" if combined else f"CH{ch}",
-                               voltage_set_v=voltage_set,
-                               current_limit_set_a=current_set)
+                               voltage_set_v=None if combined else voltage_set,
+                               current_limit_set_a=None if combined else current_set)
             except Exception as exc:
                 self._trip(f'Measurement failed: {exc}')
 
     def status(self) -> dict:
         with self._lock:
             self._require_ready()
-            return {'identity': self._idn, 'scpi_version': self._query('SYST:VERS?'),
-                    'status_byte': int(self._num('*STB?')),
-                    'questionable_condition': int(self._num('STAT:QUES:COND?')),
-                    'operation_condition': int(self._num('STAT:OPER:COND?'))}
+            try:
+                return {'identity': self._idn, 'scpi_version': self._query('SYST:VERS?'),
+                        'status_byte': int(self._num('*STB?')),
+                        'questionable_condition': int(self._num('STAT:QUES:COND?')),
+                        'operation_condition': int(self._num('STAT:OPER:COND?'))}
+            except Exception as exc:
+                self._trip(f'Status query failed: {exc}')
 
     def error(self) -> str:
         with self._lock: return self._query('SYST:ERR?')
