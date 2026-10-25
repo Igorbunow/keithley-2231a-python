@@ -301,6 +301,9 @@ class TestQualification(unittest.TestCase):
                               and event.get('channel') == 3 and event.get('mode') == 'CV')
             self.assertEqual(diagnostic['keithley_status_mask'], 8)
             self.assertEqual(diagnostic['keithley_questionable_status_mask'], 9)
+            self.assertTrue(any(event.get('event') == 'operator_display_confirmation'
+                                and event.get('channel') == 3 and event.get('keithley_panel_mode') == 'CV'
+                                for event in events))
             self.assertTrue(any(event.get('event') == 'stage_error'
                                 and 'operation=8, questionable=9' in event.get('message', '')
                                 for event in events))

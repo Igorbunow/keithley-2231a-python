@@ -201,8 +201,8 @@ status diagnostic is prepared but has not been run. See the
 The Keithley manual confirms bit 3 is output ON and bit 1/2 are CV/CC. The library
 emergency-off path checks all channels after global OFF and individually issues
 `CHAN:OUTP 0` for any remaining ON channel. The full offline suite is 55/55 SIM TESTED.
-H03 remains PARTIAL. A focused diagnostic update to the runner records the CH3
-questionable-condition register alongside operation status; it does not substitute one
-register for the other or waive a mismatch. That diagnostic and its offline regression
-are prepared but not yet run. A fresh approval is required before any further powered
+H03 remains PARTIAL. A focused diagnostic update records the CH3 questionable-condition
+register alongside operation status and requests panel confirmation before failing on a
+status mismatch. It does not substitute one register for the other or waive a mismatch.
+The offline regression passed 55/55. A fresh approval is required before another powered
 CH3 test.

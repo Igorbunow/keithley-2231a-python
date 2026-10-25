@@ -433,6 +433,9 @@ def h03(transport, evidence, load, start_channel=1):
                     raise SafetyError('KEL103 power differs from V*I by more than its 300 W full-scale tolerance')
                 if abs(scpi_power - sample.power_w) > power_tolerance_w:
                     raise SafetyError('MEAS:POW? differs from measured U*I by more than 0.31 W')
+                # In a diagnostic status mismatch, preserve independent panel
+                # evidence before failing the point and shutting down.
+                _display_gate(evidence, channel, mode, observed)
                 operation_mode = ('CV' if raw_status & 1 and not raw_status & 2 else
                                   'CC' if raw_status & 2 and not raw_status & 1 else 'UNKNOWN')
                 questionable_mode = ('CV' if questionable_status & 1 and not questionable_status & 2 else
@@ -442,7 +445,6 @@ def h03(transport, evidence, load, start_channel=1):
                     raise SafetyError(
                         f'CH{channel} {mode} status mismatch: sample={sample.regulation}, '
                         f'operation={raw_status}, questionable={questionable_status}')
-                _display_gate(evidence, channel, mode, observed)
                 dev.output(channel, False)
                 io.authorized_channel = None
                 _all_off(io)
