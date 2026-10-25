@@ -54,3 +54,8 @@ output/
 # Archive files built locally (release artifacts belong in GitHub Releases)
 *.zip
 *.tar.gz
+
+
+
+CODEX_*
+qualification_matrix_*
