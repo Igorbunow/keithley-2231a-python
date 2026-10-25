@@ -304,8 +304,11 @@ def report(path):
 
 
 def validate_h03_checkpoint(path, start_channel):
-    """Require reviewed PASS evidence and final OFF proof for prior channels."""
-    events = [json.loads(line) for line in Path(path).read_text(encoding='utf-8').splitlines()]
+    """Require reviewed PASS evidence and final OFF proof across prior run logs."""
+    paths = path if isinstance(path, (list, tuple)) else [path]
+    events = [json.loads(line)
+              for evidence_path in paths
+              for line in Path(evidence_path).read_text(encoding='utf-8').splitlines()]
     if not events or any(event.get('test_id') != 'H03' for event in events):
         raise ValueError('prior evidence is not an H03 event log')
     passed = {(event.get('channel'), event.get('mode'))
@@ -331,7 +334,8 @@ def main(argv=None):
     parser.add_argument('--load-host', default='192.168.22.106')
     parser.add_argument('--load-port', type=int, default=18190)
     parser.add_argument('--start-channel', type=int, choices=(1, 2, 3), default=1)
-    parser.add_argument('--prior-evidence', type=Path)
+    parser.add_argument('--prior-evidence', type=Path, action='append',
+                        help='H03 evidence log; repeat once per completed-channel log when resuming')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--execute', action='store_true')
     mode.add_argument('--dry-run', action='store_true')
@@ -353,7 +357,7 @@ def main(argv=None):
     preflight(args.test_id, args.port, args.load_host, args.load_port, args.start_channel)
     if args.test_id == 'H03' and args.start_channel > 1:
         if args.prior_evidence is None:
-            parser.error('--prior-evidence is required when resuming H03 after a completed channel')
+            parser.error('--prior-evidence is required when resuming H03; repeat for each prior channel log')
         try:
             validate_h03_checkpoint(args.prior_evidence, args.start_channel)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -412,7 +416,7 @@ def main(argv=None):
     evidence.add('approval', token=token)
     if args.test_id == 'H03' and args.start_channel > 1:
         evidence.add('resume_from', start_channel=args.start_channel,
-                     prior_evidence=args.prior_evidence.name)
+                     prior_evidence=[path.name for path in args.prior_evidence])
     load = None
     try:
         if args.test_id == 'H03':

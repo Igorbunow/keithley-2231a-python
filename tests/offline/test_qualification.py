@@ -122,21 +122,31 @@ class TestQualification(unittest.TestCase):
     def test_h03_resume_requires_reviewed_prior_points_and_off_confirmation(self):
         q = self.module()
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / 'prior.jsonl'
-            events = [
+            ch1_path, ch2_path = Path(tmp) / 'ch1.jsonl', Path(tmp) / 'ch2.jsonl'
+            ch1_events = [
                 {'test_id': 'H03', 'event': 'measurement_review', 'channel': 1,
                  'mode': mode, 'review_outcome': 'PASS'}
                 for mode in ('CV', 'CC')
             ]
-            events.append({'test_id': 'H03', 'event': 'outcome',
-                           'physical_off_confirmed': True})
-            path.write_text('\n'.join(json.dumps(event) for event in events), encoding='utf-8')
+            ch1_events.append({'test_id': 'H03', 'event': 'outcome',
+                               'physical_off_confirmed': True})
+            ch2_events = [
+                {'test_id': 'H03', 'event': 'measurement_review', 'channel': 2,
+                 'mode': mode, 'review_outcome': 'PASS'}
+                for mode in ('CV', 'CC')
+            ]
+            ch2_events.append({'test_id': 'H03', 'event': 'outcome',
+                               'physical_off_confirmed': True})
+            ch1_path.write_text('\n'.join(json.dumps(event) for event in ch1_events), encoding='utf-8')
+            ch2_path.write_text('\n'.join(json.dumps(event) for event in ch2_events), encoding='utf-8')
             with contextlib.redirect_stdout(io.StringIO()):
-                q.validate_h03_checkpoint(path, 2)
-            events.pop()
-            path.write_text('\n'.join(json.dumps(event) for event in events), encoding='utf-8')
+                q.validate_h03_checkpoint([ch1_path, ch2_path], 3)
+            ch1_events.pop()
+            ch2_events.pop()
+            ch1_path.write_text('\n'.join(json.dumps(event) for event in ch1_events), encoding='utf-8')
+            ch2_path.write_text('\n'.join(json.dumps(event) for event in ch2_events), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, 'OFF confirmation'):
-                q.validate_h03_checkpoint(path, 2)
+                q.validate_h03_checkpoint([ch1_path, ch2_path], 3)
 
     def test_h03_success_trace_and_error_170_stop(self):
         """Exercise the bounded H03 source/load flow using simulated I/O only."""

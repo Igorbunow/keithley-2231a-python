@@ -132,6 +132,6 @@ CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED LAN=UDP:18190 RECALL=OF
 CONFIRM H03 RESUME_CH3 INDEPENDENT ALL_OFF LOAD=KEL103 INPUT=OFF LAN=UDP:18190 VCAP=4.00 ICAP=0.500
 ```
 
-Команда продолжения: `python3 tools/hw_qualify.py run H03 --execute --start-channel 3 --prior-evidence reports/hardware/<CH2-run>/events.jsonl`.
-Runner проверит reviewed checkpoint CH1/CH2, затем отдельно запросит перестановку
+Команда продолжения: `python3 tools/hw_qualify.py run H03 --execute --start-channel 3 --prior-evidence reports/hardware/2026-10-25T222742.371680Z_H03/events.jsonl --prior-evidence reports/hardware/2026-10-25T231834.474816Z_H03/events.jsonl`.
+Runner объединит reviewed checkpoint CH1/CH2 из обоих журналов, затем отдельно запросит перестановку
 CH2→CH3 и подтверждение подключения. До отдельного допуска повторная точка не запускается.
