@@ -1,0 +1,11 @@
+{
+  "name": "low_voltage_initial_lab_check",
+  "wiring": "independent",
+  "lock_front_panel": true,
+  "verify_every_s": 5.0,
+  "channels": {
+    "1": {"max_voltage": 3.30, "max_current": 0.200, "initial_voltage": 0.00, "initial_current": 0.100, "expected_regulation": "auto", "record": true},
+    "2": {"max_voltage": 5.00, "max_current": 0.200, "initial_voltage": 0.00, "initial_current": 0.100, "expected_regulation": "auto", "record": true},
+    "3": {"max_voltage": 3.30, "max_current": 0.100, "initial_voltage": 0.00, "initial_current": 0.050, "expected_regulation": "auto", "record": true}
+  }
+}

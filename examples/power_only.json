@@ -1,0 +1,16 @@
+{
+  "name": "example-board-power-only-NOT-UNIVERSAL",
+  "wiring": "independent",
+  "access": "power_only",
+  "lock_front_panel": true,
+  "verify_every_s": 5.0,
+  "power_sequence": [
+    {"channel": 1, "delay_s": 0.0},
+    {"channel": 2, "delay_s": 0.5}
+  ],
+  "channels": {
+    "1": {"max_voltage": 3.3, "max_current": 0.15, "initial_voltage": 3.3, "initial_current": 0.10, "record": true},
+    "2": {"max_voltage": 5.0, "max_current": 0.25, "initial_voltage": 5.0, "initial_current": 0.20, "record": true},
+    "3": {"max_voltage": 3.3, "max_current": 0.10, "initial_voltage": 0.0, "initial_current": 0.05, "record": true}
+  }
+}

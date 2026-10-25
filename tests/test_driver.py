@@ -1,0 +1,241 @@
+import math
+import unittest
+from keithley2231a import (Profile, ChannelProfile, LimitsError, SafetyError,
+                          Keithley2231A, Acquisition, ChannelStats, Reading)
+
+class FakeTransport:
+    """Stateful minimal SCPI emulator; validates command sequences, no hardware."""
+    def __init__(self):
+        self.cmds = []
+        self.active_ch = 1
+        self.values = {ch: {'VOLT': 0., 'CURR': 0., 'VOLT:LIM': 30.,
+                            'VOLT:LIM:STAT': 0., 'CHAN:OUTP': 0.,
+                            'OUTP:TIM:DEL': 10., 'OUTP:TIM:STAT': 0.} for ch in (1,2,3)}
+        self.flags = {'OUTP:SER': 0., 'OUTP:PARA': 0., 'OUTP:TRAC': 0., 'OUTP:STAT:ALL': 0.}
+        self.failed_query = None
+        self.closed = False
+
+    def write(self, cmd):
+        self.cmds.append(cmd)
+        arg = cmd.split(' ', 1)
+        key = arg[0].upper()
+        if key == 'INST:NSEL': self.active_ch = int(arg[1]); return
+        if key in self.values[self.active_ch]:
+            self.values[self.active_ch][key] = float(arg[1]); return
+        if key in self.flags:
+            self.flags[key] = float(arg[1])
+            if key == 'OUTP:STAT:ALL':
+                for ch in self.values: self.values[ch]['CHAN:OUTP'] = float(arg[1])
+            return
+        if key == 'OUTP':
+            self.flags['OUTP:STAT:ALL'] = float(arg[1])
+            for ch in self.values: self.values[ch]['CHAN:OUTP'] = float(arg[1])
+            return
+        if key in ('SYST:REM','SYST:RWLOCK','SYST:LOC','SYST:BEEP'): return
+        raise AssertionError(f'Unexpected SCPI: {cmd}')
+
+    def query(self, cmd):
+        self.cmds.append(cmd)
+        if cmd == self.failed_query: raise RuntimeError('simulated link failure')
+        key = cmd.upper().removesuffix('?')
+        if key == '*IDN': return 'Keithley instruments, 2231A-30-3, TEST, 1.04-1.04'
+        if key in self.values[self.active_ch]:
+            val = self.values[self.active_ch][key]
+            return str(int(val)) if key in ('VOLT:LIM:STAT','CHAN:OUTP','OUTP:TIM:STAT') else str(val)
+        if key in self.flags: return str(int(self.flags[key]))
+        if key == 'MEAS:VOLT': return str(self.values[self.active_ch]['VOLT'])
+        if key == 'MEAS:CURR': return str(self.values[self.active_ch]['CURR']/2)
+        if key.startswith('STAT:OPER:INST:ISUM') and key.endswith(':COND'): return '1'
+        if key == 'SYST:ERR': return '0,No error'
+        if key == 'SYST:VERS': return '1999.0'
+        if key in ('*STB','STAT:QUES:COND','STAT:OPER:COND'): return '0'
+        raise AssertionError(f'Unexpected query: {cmd}')
+
+    def close(self): self.closed = True
+
+def profile(wiring='independent', expected='auto'):
+    return Profile('demo', (
+        ChannelProfile(3.3,.2,1,.1,expected),
+        ChannelProfile(5,.3,1,.1),
+        ChannelProfile(3.3,.1,1,.05)), wiring=wiring)
+
+class TestProfile(unittest.TestCase):
+    def test_limits(self):
+        with self.assertRaises(LimitsError): ChannelProfile(30, 4).validate(1)
+        with self.assertRaises(LimitsError): ChannelProfile(6, 1).validate(3)
+        with self.assertRaises(LimitsError): ChannelProfile(2, 1, 3).validate(1)
+        with self.assertRaises(LimitsError): ChannelProfile(3, .2, .01, .3).validate(1)
+        with self.assertRaises(Exception): ChannelProfile(float('nan'), .2).validate(1)
+        with self.assertRaises(Exception): ChannelProfile(3.33, .2, .001, .1).validate(1)
+
+    def test_json(self):
+        p = Profile.from_json('examples/safe_3ch.json')
+        self.assertEqual(p.channels[2].max_voltage, 3.3)
+        self.assertEqual(p.wiring, 'independent')
+
+class TestDevice(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeTransport()
+        self.dev = Keithley2231A(self.fake)
+        self.dev.apply_profile(profile())
+
+    def test_outputs_off_after_apply(self):
+        self.assertEqual(self.fake.flags['OUTP:STAT:ALL'],0)
+        self.assertTrue(self.dev.armed)
+        self.dev.verify_profile()
+        self.assertEqual(self.fake.values[1]['VOLT:LIM'],3.3)
+
+    def test_set_allowed_then_forbid_overshoot(self):
+        self.dev.set_channel(1, voltage=2.5, current=.15)
+        self.assertEqual(self.fake.values[1]['VOLT'], 2.5)
+        before = len(self.fake.cmds)
+        with self.assertRaises(LimitsError): self.dev.set_channel(1, voltage=3.31)
+        self.assertEqual(len(self.fake.cmds), before)
+
+    def test_on_off_and_profile_lock(self):
+        self.dev.output(1, True)
+        self.assertTrue(self.fake.values[1]['CHAN:OUTP'])
+        with self.assertRaises(SafetyError): self.dev.apply_profile(profile())
+        self.dev.output(1, False)
+        self.assertFalse(self.fake.values[1]['CHAN:OUTP'])
+
+    def test_guard_detects_external_change(self):
+        self.fake.values[2]['VOLT:LIM'] = 30
+        with self.assertRaises(SafetyError): self.dev.verify_profile()
+        self.assertFalse(self.dev.armed)
+        self.assertTrue(self.dev.faulted)
+        self.assertEqual(self.fake.flags['OUTP:STAT:ALL'],0)
+
+    def test_trips_on_measured_excess(self):
+        self.dev.output(1, True)
+        self.fake.values[1]['VOLT'] = 5.0
+        with self.assertRaises(SafetyError): self.dev.read_channel(1)
+        self.assertEqual(self.fake.flags['OUTP:STAT:ALL'], 0)
+
+    def test_stage_then_measure(self):
+        sample = self.dev.read_channel(1)
+        self.assertEqual(sample.voltage_v, 1.0)
+        self.assertEqual(sample.current_a, .05)
+        self.assertEqual(sample.power_w, .05)
+        self.assertEqual(sample.voltage_set_v, 1.0)
+        self.assertEqual(sample.current_limit_set_a, .1)
+        self.assertEqual(sample.regulation, 'OFF')
+
+    def test_sequence_and_timer(self):
+        self.dev.sequence([(0,1,True),(0,2,True),(0,1,False)])
+        self.assertEqual(self.fake.values[1]['CHAN:OUTP'],0)
+        self.assertEqual(self.fake.values[2]['CHAN:OUTP'],1)
+        self.dev.timer(2, 2.2)
+        self.assertEqual(self.fake.values[2]['OUTP:TIM:DEL'],2.2)
+        self.dev.timer(2, None)
+
+    def test_profile_forbids_releasing_lock(self):
+        with self.assertRaises(SafetyError): self.dev.remote(lock_panel=False)
+        self.dev.remote(lock_panel=True)
+
+    def test_regulation_check_cannot_be_bypassed(self):
+        self.dev.emergency_off()
+        self.dev.apply_profile(profile(expected='cv'))
+        with self.assertRaises(SafetyError): self.dev.read_channel(1, with_regulation=False)
+
+    def test_connection_failure_attempts_off(self):
+        self.fake.failed_query = 'VOLT:LIM?'
+        with self.assertRaises(SafetyError): self.dev.verify_profile()
+        self.assertFalse(self.dev.armed)
+        self.assertIn('OUTP 0', self.fake.cmds)
+
+    def test_tracking_requires_fresh_profile(self):
+        self.dev.emergency_off()
+        self.dev.apply_profile(profile('tracking'))
+        self.assertTrue(self.fake.flags['OUTP:TRAC'])
+        with self.assertRaises(SafetyError): self.dev.set_channel(1, voltage=2)
+        self.dev.combined_outputs(True, confirm_all_channels_safe=True)
+        self.assertTrue(self.fake.flags['OUTP:STAT:ALL'])
+
+    def test_combined_physical_wiring_confirmation(self):
+        self.dev.emergency_off()
+        with self.assertRaises(SafetyError): self.dev.apply_profile(profile('series'))
+        self.dev.apply_profile(profile('series'), confirmed_wiring='series')
+        with self.assertRaises(SafetyError): self.dev.combined_outputs(True)
+        with self.assertRaises(SafetyError): self.dev.read_channel(2)
+        r = self.dev.read_channel(1)
+        self.assertEqual(r.label,'CH1+CH2')
+
+    def test_close_safely_disarms(self):
+        self.dev.output(1, True)
+        self.dev.close()
+        self.assertEqual(self.fake.flags['OUTP:STAT:ALL'], 0)
+        self.assertTrue(self.fake.closed)
+
+class TestStats(unittest.TestCase):
+    def make(self, timestamp, amps, volts=2, enabled=True):
+        return Reading(1, 'utc', timestamp, volts, amps, volts*amps, 'CV', enabled, 'CH1')
+
+    def test_welford_and_integration(self):
+        s = ChannelStats()
+        s.add(self.make(0,1))
+        s.add(self.make(3600,3), max_gap_s=4000)
+        self.assertAlmostEqual(s.current.mean,2)
+        self.assertAlmostEqual(s.current.stddev,1)
+        self.assertAlmostEqual(s.ampere_hours,2)
+        self.assertAlmostEqual(s.watt_hours,4)
+        s.reset_statistics()
+        self.assertEqual(s.current.count,0)
+        self.assertEqual(s.ampere_hours,2)
+        s.reset_statistics(reset_energy=True)
+        self.assertEqual(s.ampere_hours,0)
+
+    def test_disconnected_gaps_are_not_integrated(self):
+        s = ChannelStats()
+        s.add(self.make(0,1))
+        s.add(self.make(100,1), max_gap_s=10)
+        self.assertEqual(s.skipped_gaps,1)
+        self.assertEqual(s.ampere_hours,0)
+        s.add(self.make(101,1,enabled=False), max_gap_s=10)
+        self.assertEqual(s.ampere_hours,0)
+
+    def test_acquisition(self):
+        fake=FakeTransport(); dev=Keithley2231A(fake); dev.apply_profile(profile())
+        a=Acquisition(dev,interval_s=.1)
+        self.assertEqual(len(a.sample()),3)
+        self.assertEqual(a.stats[1].voltage.count,1)
+
+
+class TestTransportNetwork(unittest.TestCase):
+    def test_tcp_transparent_round_trip(self):
+        import socket
+        import threading
+        from keithley2231a import TcpTransport
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(('127.0.0.1', 0)); server.listen(1)
+        port = server.getsockname()[1]
+        got = []
+        def worker():
+            try:
+                client, _ = server.accept()
+                with client:
+                    buf=b''
+                    while not buf.endswith(b'\r\n'):
+                        buf += client.recv(256)
+                    got.append(buf)
+                    client.sendall(b'Keithley,OK\n')
+            finally: server.close()
+        th=threading.Thread(target=worker,daemon=True); th.start()
+        t=TcpTransport('127.0.0.1',port,timeout=1)
+        try: self.assertEqual(t.query('*IDN?'), 'Keithley,OK')
+        finally: t.close(); th.join(timeout=1)
+        self.assertEqual(got, [b'*IDN?\r\n'])
+
+    def test_unrecorded_still_checked(self):
+        p=Profile('record selective',(
+            ChannelProfile(3.3,.2,1,.1,record=False),
+            ChannelProfile(5.,.2,1,.1),
+            ChannelProfile(3.3,.1,1,.05)))
+        fake=FakeTransport(); dev=Keithley2231A(fake); dev.apply_profile(p)
+        dev.output(1, True)
+        fake.values[1]['VOLT'] = 9.
+        a=Acquisition(dev)
+        with self.assertRaises(SafetyError): a.sample()
+        self.assertEqual(fake.flags['OUTP:STAT:ALL'], 0)
+
+if __name__ == '__main__': unittest.main()

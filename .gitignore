@@ -1,0 +1,56 @@
+# Python bytecode, native extensions and static analysis
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+
+# Packaging, virtual environments and caches
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+.venv/
+venv/
+env/
+ENV/
+.python-version
+.tox/
+.nox/
+
+# IDE and operating system files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Personal credentials, bench results and local environments
+.env
+.env.*
+!.env.example
+*.log
+logs/
+runs/
+data/local/
+results/local/
+reports/local/
+output/
+*.bak
+*.tmp
+
+# Archive files built locally (release artifacts belong in GitHub Releases)
+*.zip
+*.tar.gz
