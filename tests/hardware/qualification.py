@@ -4,7 +4,7 @@
 @author Project contributors
 @date 2026-10-25
 @version 0.2.0
-@brief Read-only H01 and a bounded registry of subsequent qualification stages.
+@brief Gated H01/H02 and a bounded registry of subsequent qualification stages.
 @details No import or dry run opens a port. Powered stages remain guarded until
          their preceding evidence and operator-specific load details are reviewed.
 """
@@ -112,6 +112,34 @@ def preflight(test_id, port):
     """Print a human-readable card; never contact hardware."""
     row = stages()[test_id]
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
+    if test_id == 'H02':
+        from profile_stage import TOKEN as token, command_plan
+        print(f'Порт: {port}; USB–TTL UART 9600 8N1, один владелец.\n'
+              'CH1/CH2/CH3 OFF, клеммы свободны; без DUT и объединяющих перемычек.\n'
+              'Нагрузка отсоединена от всех каналов, INPUT OFF; режим/значение не задавать.\n'
+              'Output Recall=Off проверить на панели; доступен сетевой выключатель.\n'
+              'Перед изменениями снимок V/I, лимита/state, выхода и таймера всех каналов.\n'
+              'Профиль: каждый CH 1.00 V / 0.100 A; V-cap 4.00 V, software I-cap 0.500 A.\n'
+              'VOLT:LIM не является независимой OVP; отдельного hardware I-cap нет.\n'
+              'Все выходы остаются OFF; при ошибочном ON после профиля ожидается до 1 V / 0.1 A.\n'
+              'В пределах профиля до 4 V / 0.5 A, 2 W на канал, 6 W суммарно.\n'
+              'До применения/при отказе защиты возможны паспортные 30/30/5 V, 3 A, 195 W.\n'
+              'Изменения: REM/LOC, OUTP 0, независимый режим, выбор CH, отключение таймеров,\n'
+              'VOLT/CURR 0, VOLT:LIM 4.00/state=1, CURR 0.100, VOLT 1.00. Без RWLOCK.\n'
+              'После каждой записи, кроме LOC, SYST:ERR? должен вернуть 0; без *CLS.\n'
+              'Проверки: точные V/I (±0.0049 V / ±0.00049 A), V-cap ±0.0049 V, state=1,\n'
+              'таймеры OFF, режим независимый, ON-биты всех CH=0, invalid V/I без SCPI.\n'
+              'До профиля ON через API должен быть отвергнут без SCPI. ON после профиля не вызывается.\n'
+              'Читаются внутренние U/I; точность и CV/CC здесь не квалифицируются.\n'
+              'Один проход до 180 s. Первая ошибка останавливает настройки; на живой связи\n'
+              'попытка OUTP 0 и проверка OFF. При отказе I/O — никаких следующих команд/повторов.\n'
+              'Ручной останов: сетевой выключатель Keithley; проверить физический OFF.\n'
+              'Итоговые настройки не откатываются, CH1 выбран, управление локальное.\n'
+              f'Подтверждение только H02: {token}\nSCPI plan (success path):')
+        for command in command_plan(): print('  ' + command)
+        print('Failure path, known live link only: OUTP 0; SYST:ERR?; per-channel OFF; SYST:ERR?; SYST:LOC.\n'
+              'Внутри apply_profile/verify_profile возможна более ранняя попытка OUTP 0; план запрещает иные отклонения.')
+        return
     if test_id != 'H01':
         print('BLOCKED для выполнения: сначала разбор H01, паспорт нагрузки и отдельная полная карточка.\n'
               'SCPI-последовательность ещё не разрешена; порт не открывается.')
@@ -224,7 +252,8 @@ def report(path):
         return
     events = [json.loads(line) for line in Path(path).read_text(encoding='utf-8').splitlines()]
     # Reapply IDN redaction even to externally supplied evidence.
-    print('# H01 evidence / Протокол H01\n\nReview required; no automatic HW VERIFIED promotion.\n')
+    test_id = events[0].get('test_id', 'hardware') if events else 'hardware'
+    print(f'# {test_id} evidence / Протокол {test_id}\n\nReview required; no automatic HW VERIFIED promotion.\n')
     print('| UTC | Monotonic s | Operation | SCPI | Actual response | Unit |\n'
           '| --- | --- | --- | --- | --- | --- |')
     for event in events:
@@ -241,7 +270,7 @@ def report(path):
 
 
 def main(argv=None):
-    """Dry run is the default; only H01 can pass an execution gate at this stage."""
+    """Dry run is the default; H01/H02 each require their own operator gate."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('list', 'preflight', 'run', 'report', 'abort'))
     parser.add_argument('test_id', nargs='?', choices=tuple(stages()))
@@ -268,9 +297,16 @@ def main(argv=None):
     if args.command == 'preflight' or not args.execute:
         print('DRY RUN: порт не открыт, SCPI не отправлены.')
         return 0
-    if args.test_id != 'H01':
+    if args.test_id not in ('H01', 'H02'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
+    if args.test_id == 'H02' and stages()['H01'][-1] != 'PASS':
+        print('BLOCKED: требуется рассмотренный PASS H01; порт не открыт.')
+        return 2
+    token, final_token, runner = TOKEN, FINAL_TOKEN, h01
+    if args.test_id == 'H02':
+        from profile_stage import TOKEN as token, FINAL_TOKEN as final_token, h02
+        runner = h02
     if not sys.stdin.isatty():
         print('BLOCKED: требуется интерактивный терминал; пакетный ввод запрещён.')
         return 2
@@ -279,36 +315,38 @@ def main(argv=None):
         if not adapter:
             print('BLOCKED: не указан проверенный адаптер.')
             return 2
-        if input('Подтверждение: ').strip() != TOKEN:
-            print('BLOCKED: нет точного разрешения H01; порт не открыт.')
+        if input('Подтверждение: ').strip() != token:
+            print(f'BLOCKED: нет точного разрешения {args.test_id}; порт не открыт.')
             return 2
     except (EOFError, KeyboardInterrupt):
         print('ABORTED до открытия порта.')
         return 2
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H%M%S.%fZ')
-    evidence = Evidence(ROOT / f'reports/hardware/{now}_H01/events.jsonl', 'H01')
+    evidence = Evidence(ROOT / f'reports/hardware/{now}_{args.test_id}/events.jsonl', args.test_id)
     evidence.add('metadata', **software_metadata(), port=args.port, baud=9600, framing='8N1',
                  adapter=adapter, topology='independent; no jumpers; no DUT', load='disconnected; input OFF',
-                 proposed_caps='unchanged; initial unknown', independent_meter=None)
-    evidence.add('approval', token=TOKEN)
+                 proposed_caps=('unchanged; initial unknown' if args.test_id == 'H01' else
+                                'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
+                 independent_meter=None)
+    evidence.add('approval', token=token)
     try:
         transport = open_transport(args.port)
     except Exception:
         evidence.add('outcome', outcome='ABORTED', stop_reason='port open failed; verify OFF manually')
         print(f'ABORTED: порт не открыт; проверить OFF вручную. Evidence: {evidence.path}')
         return 2
-    outcome = h01(transport, evidence)
+    outcome = runner(transport, evidence)
     physical_off = False
-    try: physical_off = input(f'После ручной проверки введите {FINAL_TOKEN}: ').strip() == FINAL_TOKEN
+    try: physical_off = input(f'После ручной проверки введите {final_token}: ').strip() == final_token
     except (EOFError, KeyboardInterrupt): pass
     if not physical_off and outcome == 'PASS': outcome = 'PARTIAL'
     evidence.add('outcome', outcome=outcome, physical_off_confirmed=physical_off,
-                 stop_reason='STOP after H01; next stage requires separate operator approval')
-    report_path = ROOT / f'docs/hardware_reports/{now}_H01_preflight.md'
+                 stop_reason=f'STOP after {args.test_id}; next stage requires separate operator approval')
+    report_path = ROOT / f'docs/hardware_reports/{now}_{args.test_id}_qualification.md'
     with report_path.open('x', encoding='utf-8') as stream, contextlib.redirect_stdout(stream):
         report(evidence.path)
     print(f'{outcome}; Evidence: {evidence.path}\n'
           f'Протокол для review: {report_path}\n'
           'STOP: перед следующей группой требуется разбор отчёта и отдельное разрешение.\n'
-          'Предлагаемое сообщение коммита после успешного review: test(hw): record H01 read-only preflight')
+          f'Предлагаемое сообщение коммита после review: test(hw): record {args.test_id} qualification')
     return 0 if outcome == 'PASS' else 2

@@ -11,6 +11,13 @@
 > simulation; H07 is a 2–5 minute run. Diode DUTs and longer stress runs need
 > separate approval. The overview below does not authorize those actions.
 
+H02: [OFF-only profile operator card](H02_PREFLIGHT.ru.md). Offline regression: 48/48.
+The first physical run failed because `*IDN?` changed firmware field mid-session and
+the runner detected it only after profile writes. A library guard now aborts on an
+identity change before configuration. The corrected H02 rerun passed with identical
+`1.04-0.01` identity replies and a clear instrument error queue. See both evidence
+reports and verification log. H03 remains gated pending H02 review and its own approval.
+
 **WARNING:** writing `apply_profile`, `set_channel`, `OUTP` or `power_on()` can turn off a running DUT, change output voltage or energize terminals. No unattended execution; test only with qualified operators. This file provides procedure suggestions, not proof of completed tests or a safety guarantee.
 
 ## Stage 0 — bench preparation

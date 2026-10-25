@@ -39,6 +39,7 @@ class FakeTransport:
         if cmd == self.failed_query: raise RuntimeError('simulated link failure')
         key = cmd.upper().removesuffix('?')
         if key == '*IDN': return 'Keithley instruments, 2231A-30-3, TEST, 1.04-1.04'
+        if key == 'INST:NSEL': return str(self.active_ch)
         if key in self.values[self.active_ch]:
             val = self.values[self.active_ch][key]
             return str(int(val)) if key in ('VOLT:LIM:STAT','CHAN:OUTP','OUTP:TIM:STAT') else str(val)
@@ -217,6 +218,24 @@ class TestDevice(unittest.TestCase):
         self.fake.query = lambda cmd: 'Keithley instruments, 2231A-30-30, TEST, fw' if cmd == '*IDN?' else original(cmd)
         with self.assertRaises(InstrumentError): self.dev.identity()
         self.assertFalse(self.dev.armed)
+
+    def test_identity_change_aborts_profile_before_setpoint_writes(self):
+        from keithley2231a import InstrumentError
+        fake = FakeTransport()
+        dev = Keithley2231A(fake)
+        original = fake.query
+        self.assertEqual(dev.identity(), 'Keithley instruments, 2231A-30-3, TEST, 1.04-1.04')
+        fake.cmds.clear()
+        fake.query = lambda cmd: 'Keithley instruments, 2231A-30-3, TEST, 1.04-0.01' if cmd == '*IDN?' else original(cmd)
+        with self.assertRaisesRegex(InstrumentError, 'identity changed'):
+            dev.apply_profile(profile())
+        self.assertTrue(dev.faulted)
+        self.assertFalse(dev.armed)
+        self.assertNotIn('VOLT 0', fake.cmds)
+        self.assertNotIn('CURR 0', fake.cmds)
+        self.assertFalse(any(cmd.startswith(('VOLT:LIM ', 'VOLT:LIM:STAT ', 'CURR ', 'VOLT '))
+                             for cmd in fake.cmds))
+        self.assertIn('OUTP 0', fake.cmds)
 
     def test_apply_disables_inherited_timers(self):
         self.dev.emergency_off()

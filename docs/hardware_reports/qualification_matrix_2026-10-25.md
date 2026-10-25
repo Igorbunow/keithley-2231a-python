@@ -1,13 +1,13 @@
 # Hardware qualification matrix / Матрица аппаратной квалификации
 
-Исходная матрица из CODEX_HARDWARE_ROADMAP.ru.md, 2026-10-25. Current result: H01 PASS after an aborted first attempt; H02–H12/O01/O02 NOT_RUN.
+Исходная матрица из CODEX_HARDWARE_ROADMAP.ru.md, 2026-10-25. Current result: H01 PASS after an aborted first attempt; H02 PASS after a failed first attempt; H03–H12/O01/O02 NOT_RUN.
 
 Outcome and feature verification level are independent. Existing UART/SYST:REM/*IDN? observation on firmware 1.04-1.04 is HW OBSERVED, never a formal H01 PASS. Only reviewed physical evidence may promote a feature to HW VERIFIED.
 
 | ID / порядок | Группа и покрытие | Соединение и нагрузка | Критерий успеха | Outcome / Результат |
 | --- | --- | --- | --- | --- |
 | **H01** | Пассивный SCPI-preflight, идентификация, чтение статусных и mode-регистров, парсер ошибок | Все три OUT OFF, вход нагрузки OFF; без физических перемычек | Ответы воспроизводимы; нет таймаутов/сдвигов ответов; `*IDN?` корректен | PASS |
-| **H02** | Безнагрузочная установка защищённого профиля: все 3 канала, `VOLT:LIM`/state, readback, отказ на недопустимых V/I, неактивированный ON | Независимые каналы, нагрузка отсоединена | После применения все OFF, уставки/лимиты соответствуют профилю, отказы не отправлены в SCPI | NOT_RUN |
+| **H02** | Безнагрузочная установка защищённого профиля: все 3 канала, `VOLT:LIM`/state, readback, отказ на недопустимых V/I, неактивированный ON | Независимые каналы, нагрузка отсоединена | После применения все OFF, уставки/лимиты соответствуют профилю, отказы не отправлены в SCPI | PASS (second attempt; first FAIL) |
 | **H03** | **Все 3 канала × CV и CC**, индивидуальный ON/OFF, измерение U/I/P и статус CV/CC | Нагрузка последовательно CH1→CH2→CH3, CR 40 Ω / CR 12 Ω; 3 операторские паузы | CV и CC соответствуют индикации и независимому измерению; другие каналы остаются OFF | NOT_RUN |
 | **H04** | Профильные ограничения: защищённый, `unrestricted()` в маломощном сценарии; внешняя подмена уставки/лимита при OFF; аварийная реакция/запрет смены профиля | Независимая схема, все OFF для tamper | Нет программного выхода за cap; активный профиль неизменяем; обнаруживается смена **точных** уставок `power_only` | NOT_RUN |
 | **H05** | `power_only`: предварительная фиксация уставок, запрет `set_channel`/`timer`/произвольной последовательности, CH1→CH2→CH3 и обратное выключение с паузами | Независимая схема, нагрузка на одном CH, остальные без нагрузки; независимый DMM/осциллограф желателен | Реальные статусы и порядок правильны; тайминги проверены с указанной погрешностью; если нет физического измерения всех фронтов — лишь PARTIAL | NOT_RUN |
@@ -21,7 +21,19 @@ Outcome and feature verification level are independent. Existing UART/SYST:REM/*
 | **O01** | Координатор + внешний DMM: timestamp/ошибка наблюдателя, CSV, задержка между приборами | Только если DMM реально подключён и есть драйвер; иначе SIM TESTED / BLOCKED | Валидные показания и времена. Не называть аппаратно синхронным | NOT_RUN |
 | **O02** | Два физических PSU / TCP-мост / внешняя аппаратная синхронизация | Только при наличии второго PSU, MCU-моста/триггеров; сейчас нет подтверждения наличия | Отдельный план после подготовки оборудования; иначе `NOT_RUN`/`PLANNED`, не притягивать к общему PASS | NOT_RUN |
 
-H01 is executable after a separate gate. H02–H12/O01/O02 execution is currently guarded pending H01 review, load specifications and individual preflight implementation. This is runner readiness, not a hardware test outcome. No powered qualification is claimed.
+H02 profile scenario and [operator card](../H02_PREFLIGHT.ru.md) are prepared. Offline
+regression after the identity guard is 48/48 SIM TESTED. Physical attempt report:
+[H02 evidence](2026-10-25T213651.354322Z_H02_qualification.md). It failed because the
+firmware field changed between two `*IDN?` replies; the error queue stayed at zero,
+the profile setpoints/caps were written, and channel OFF bits read 0/0/0. The operator
+later confirmed OFF, load OFF/disconnected, and 1.00 V / 0.100 A setpoints on all
+channels. The driver guard is fixed and passed offline. Corrected H02 rerun passed:
+both IDN replies were firmware `1.04-0.01`, all error replies were zero, profile
+readbacks passed, OFF bits were 0/0/0 and physical OFF was confirmed. See [corrected
+H02 PASS](2026-10-25T214134.648837Z_H02_qualification.md). H03–H12/O01/O02 remain NOT_RUN.
+H03–H12/O01/O02 execution is guarded pending individual preflight implementation,
+equipment specifications and review. This is runner readiness, not a hardware outcome.
+No powered qualification is claimed.
 
 H01 attempt: [2026-10-26 local / 2026-10-25 UTC report](2026-10-25T210502.973378Z_H01_preflight.md).
 Stopped on OUTP:PARA? after an I/O exception. Last channel ON bits were 0/0/0;

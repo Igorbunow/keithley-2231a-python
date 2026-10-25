@@ -57,13 +57,13 @@ Offline baseline: **31 passed**. After focused regressions: **46 passed**, Pytho
 3.13.5 / pyserial 3.5, `PYTHONPATH=src python3 -m unittest discover -s tests -v`.
 These results are **SIM TESTED** only. See the [audit](hardware_reports/2026-10-25_offline_audit.md).
 
-`tools/hw_qualify.py list`, `preflight H01` and `run H01` default to dry run;
-no port opens. Only H01 has an executable scenario at this stage, requiring a
-specific interactive gate. It changes remote/local control mode, queries the
-selected channel and all three ON status bits, and consumes one error queue item.
-It never writes output/setpoint/topology/timer controls. H02–H12/O01/O02 execution
-is guarded until preceding evidence, load specifications and individual cards
-are reviewed; their test outcomes remain NOT_RUN.
+`tools/hw_qualify.py list`, `preflight` and `run` default to dry run; no port opens.
+H01 has a read-only scenario with its own interactive gate: remote/local control,
+selected-channel queries, all-channel ON status bits and two error queue reads.
+H02 has a manually gated OFF-only profile scenario. Its initial hardware attempt
+failed on an in-session `*IDN?` firmware mismatch, then the corrected scenario passed;
+the offline suite is 48/48. See the [H02 operator card](H02_PREFLIGHT.ru.md) and both
+physical reports below. H03–H12/O01/O02 remain pending individual preparation/review.
 
 Safety changes are simulation-tested: exact authorized V/I and voltage-limit
 readbacks, unexpected ON detection, per-channel OFF checks, inherited timer
@@ -131,3 +131,26 @@ and after. CH2/CH3 limits read 30.1 V / 5.1 V with limit state=0; these values
 are observations, not active protection. PSU meter readings are uncalibrated and
 were not compared with an independent meter. The H01 read-only setpoint snapshot
 now covers all channels. Powered behavior remains unverified.
+
+### H02 preparation — 2026-10-26
+
+Prepared `apply_profile()` / `verify_profile()` with all channels at 1.00 V / 0.100 A,
+4.00 V voltage cap and 0.500 A software current cap, outputs OFF, load disconnected.
+The runner rejects command-plan drift before transmission and checks the error queue
+after every write except LOC. Prepared regressions cover the successful trace,
+error 170, uncertain I/O, cap mismatch, initial ON and prevention of ON transmission.
+These checks were **SIM TESTED** before the hardware run. The first H02 attempt **FAILED**:
+the first `*IDN?` returned firmware `1.04-1.04`; the driver's second identity query
+returned `1.04-0.01`. All three profile writes completed, every observed
+`SYST:ERR?` returned `0, "No error"`, and all channel OFF bits read 0. The runner's
+identity comparison happened too late, after writes. The operator then confirmed
+all outputs OFF, load OFF/disconnected, and setpoints 1.00 V / 0.100 A on CH1–CH3.
+The library now latches an identity change and aborts before profile writes; focused
+offline regression is verified in the fixed suite (48/48). On the corrected H02 rerun,
+both `*IDN?` responses matched at firmware `1.04-0.01`; all SCPI error replies remained
+`0, "No error"`, the profile readbacks passed on all channels, and OFF bits were 0/0/0.
+The operator confirmed all outputs OFF, load OFF/disconnected, and 1.00 V / 0.100 A
+setpoints on every channel. See [first attempt](hardware_reports/2026-10-25T213651.354322Z_H02_qualification.md)
+and [corrected H02 PASS](hardware_reports/2026-10-25T214134.648837Z_H02_qualification.md).
+H02 is **HW OBSERVED PASS** for the no-load profile application/readback; PRF-01/PRF-02
+broader electrical behavior remains **HW UNVERIFIED**. No later stage is authorized.

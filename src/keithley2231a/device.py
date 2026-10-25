@@ -88,6 +88,9 @@ class Keithley2231A:
             if len(parts) != 4 or parts[0].lower() != 'keithley instruments' or parts[1].upper() != '2231A-30-3' or not parts[3]:
                 self._faulted, self._armed = True, False
                 raise InstrumentError('Not a valid Keithley 2231A-30-3 identity')
+            if self._idn is not None and ans != self._idn:
+                self._faulted, self._armed = True, False
+                raise InstrumentError('Instrument identity changed during connection')
             self._idn = ans
             return ans
 
