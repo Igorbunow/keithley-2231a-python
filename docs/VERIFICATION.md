@@ -63,7 +63,10 @@ selected-channel queries, all-channel ON status bits and two error queue reads.
 H02 has a manually gated OFF-only profile scenario. Its initial hardware attempt
 failed on an in-session `*IDN?` firmware mismatch, then the corrected scenario passed;
 the offline suite is 48/48. See the [H02 operator card](H02_PREFLIGHT.ru.md) and both
-physical reports below. H03–H12/O01/O02 remain pending individual preparation/review.
+physical reports below. H03 is PARTIAL: reviewed CH1 and CH2 CV/CC points pass; CH3 CV
+stopped on a documented status-bit mismatch and CH3 CC remains pending. KEL103 UDP
+control was exercised on hardware for CH2. H04–H12/O01/O02 remain pending individual
+review.
 
 Safety changes are simulation-tested: exact authorized V/I and voltage-limit
 readbacks, unexpected ON detection, per-channel OFF checks, inherited timer
@@ -154,3 +157,52 @@ setpoints on every channel. See [first attempt](hardware_reports/2026-10-25T2136
 and [corrected H02 PASS](hardware_reports/2026-10-25T214134.648837Z_H02_qualification.md).
 H02 is **HW OBSERVED PASS** for the no-load profile application/readback; PRF-01/PRF-02
 broader electrical behavior remains **HW UNVERIFIED**. No later stage is authorized.
+
+### H03 — CH1/CH2 CV/CC reviewed PASS; CH3 status requires diagnosis
+
+The first run used long, thin leads and stopped after the CH1 CC voltage difference
+exceeded its criterion. It measured CV as Keithley 3.99906 V / 0.0978727 A /
+0.392112 W versus KEL103 3.967 V / 0.099 A / 0.3933 W, then CC as Keithley 3.08919 V /
+0.249801 A / 0.77151 W versus KEL103 3.008 V / 0.250 A / 0.7539 W. Global `OUTP 0`
+returned `0, "No error"` but status remained 10 (CC+ON). The operator manually
+confirmed all OFF. The voltage drops divided by load current were 0.324 Ω and 0.325 Ω,
+suggesting lead/contact resistance; this is an inference.
+
+After installing short 10 AWG leads, a second run measured CH1 CV as Keithley
+3.9988 V / 0.0986824 A / 0.39477 W and KEL103 3.998 V / 0.099 A / 0.3982 W. CH1 CC
+measured Keithley 3.01538 V / 0.249777 A / 0.75292 W and KEL103 3.008 V / 0.250 A /
+0.7539 W. The CC SCPI status was 10; the operator later confirmed the panel showed CC
+and that the earlier `CV` entry was a typing error. The runner stopped safely on that
+entry, and the operator confirmed all channels and load OFF. Both CH1 points are now
+reviewed PASS; raw failure history is preserved. CH2 CV/CC were later measured and
+the operator confirmed both displays. CV: Keithley 3.9931 V / 0.0986671 A /
+0.394513 W, status 9; KEL103 3.9924 V / 0.0999 A / 0.3988 W. CC: Keithley
+3.00772 V / 0.249603 A / 0.750575 W, status 10; KEL103 3.0037 V / 0.2503 A /
+0.7518 W. All error-queue replies were `0, "No error"`; both instruments were
+confirmed OFF after each point.
+
+CH3 is distinct: its nameplate voltage rating is 5 V (CH1/CH2: 30 V); this run's
+4.00 V / 0.500 A cap was within that rating. At the CH3 CV point, Keithley returned
+3.99326 V / 0.0998173 A, but `STAT:OPER:INST:ISUM3:COND?` returned `8` (ON only,
+without CV/CC bits) on repeated reads. The documented operation-condition query is
+channel-specific and assigns CV/CC to bits 0/1 and ON to bit 3. No error-queue error
+occurred; no panel-mode confirmation was obtained before the fail-safe shutdown. The
+point is therefore FAIL/UNVERIFIED, not CV PASS. See the
+[latest event log](../reports/hardware/2026-10-25T231834.474816Z_H03/events.jsonl)
+and [H03 report](hardware_reports/2026-10-25T231834.474816Z_H03_qualification.md).
+
+A read-only KEL103 UDP preflight on port 18190 returned V3.30, INPUT OFF, function CR
+and zero measurements. Bounded CR 40/12 Ω and INPUT ON/OFF writes with readback were
+physically exercised on CH2 and returned zero instrument errors. The CH3 questionable-
+status diagnostic is prepared but has not been run. See the
+[H03 report](hardware_reports/2026-10-25T231834.474816Z_H03_qualification.md) and
+[event log](../reports/hardware/2026-10-25T231834.474816Z_H03/events.jsonl).
+
+The Keithley manual confirms bit 3 is output ON and bit 1/2 are CV/CC. The library
+emergency-off path checks all channels after global OFF and individually issues
+`CHAN:OUTP 0` for any remaining ON channel. The full offline suite is 55/55 SIM TESTED.
+H03 remains PARTIAL. A focused diagnostic update to the runner records the CH3
+questionable-condition register alongside operation status; it does not substitute one
+register for the other or waive a mismatch. That diagnostic and its offline regression
+are prepared but not yet run. A fresh approval is required before any further powered
+CH3 test.

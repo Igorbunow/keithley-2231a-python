@@ -119,9 +119,9 @@ class Keithley2231A:
     def _trip(self, why: str):
         self._faulted = True
         self._armed = False
-        try: self._write('OUTP 0')
+        try: self._off_confirmed()
         except Exception: pass
-        raise SafetyError(f'{why}; attempted OUTP 0 (not guaranteed)')
+        raise SafetyError(f'{why}; emergency output-off attempted (not guaranteed)')
 
     def _output_states(self) -> dict[int, bool]:
         """Read per-channel ON bits; global status has ambiguous mixed-state semantics."""
@@ -134,8 +134,16 @@ class Keithley2231A:
         return states
 
     def _off_confirmed(self) -> bool:
+        """Request global OFF, then explicitly disable any channel still ON."""
         self._write('OUTP 0')
-        return not any(self._output_states().values())
+        states = self._output_states()
+        if any(states.values()):
+            for ch, enabled in states.items():
+                if enabled:
+                    self._select(ch)
+                    self._write('CHAN:OUTP 0')
+            states = self._output_states()
+        return not any(states.values())
 
     def emergency_off(self) -> None:
         """Available even when faulted; command delivery not guaranteed if link is dead."""

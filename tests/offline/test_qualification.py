@@ -1,6 +1,7 @@
 """Regression checks for qualification gates and evidence, using simulated I/O."""
 import contextlib
 import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -23,6 +24,276 @@ class TestQualification(unittest.TestCase):
             with self.subTest(args=args), patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
                 with contextlib.redirect_stdout(io.StringIO()):
                     q.main(args)
+
+    def test_h03_plan_covers_six_individual_cases_without_global_on(self):
+        q = self.module()
+        from channel_stage import FINAL_TOKEN, TOKEN, StageIO, command_plan
+        from test_driver import FakeTransport
+        plan = command_plan()
+        resumed_plan = command_plan(2)
+        self.assertEqual(plan.count('CHAN:OUTP 1'), 6)
+        self.assertEqual(resumed_plan.count('CHAN:OUTP 1'), 4)
+        self.assertEqual(resumed_plan.count('CHAN:OUTP 0'), 4)
+        self.assertEqual(plan.count('CHAN:OUTP 0'), 6)
+        self.assertEqual(plan.count('MEAS:POW?'), 6)
+        self.assertEqual(plan.count('STAT:OPER:INST:ISUM1:COND?'), 29)
+        self.assertEqual(plan.count('STAT:OPER:INST:ISUM2:COND?'), 29)
+        self.assertEqual(plan.count('STAT:OPER:INST:ISUM3:COND?'), 29)
+        self.assertEqual(plan.count('STAT:QUES:INST:ISUM1:COND?'), 2)
+        self.assertEqual(plan.count('STAT:QUES:INST:ISUM2:COND?'), 2)
+        self.assertEqual(plan.count('STAT:QUES:INST:ISUM3:COND?'), 2)
+        self.assertNotIn('OUTP 1', plan)
+        self.assertEqual(TOKEN, 'CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED LAN=UDP:18190 RECALL=OFF VCAP=4.00 ICAP=0.500')
+        self.assertEqual(FINAL_TOKEN, 'CONFIRM H03 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF')
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = FakeTransport()
+            evidence = q.Evidence(Path(tmp) / 'events.jsonl', 'H03')
+            guarded = StageIO(fake, evidence)
+            with self.assertRaises(ValueError): guarded.write('OUTP 1')
+            self.assertEqual(fake.cmds, [])
+
+    def test_kel103_udp_is_lf_terminated_and_rejects_unknown_commands(self):
+        from channel_stage import KEL103UDP
+
+        class DatagramFake:
+            def __init__(self): self.sent, self.closed = [], False
+            def settimeout(self, timeout): self.timeout = timeout
+            def sendto(self, payload, address): self.sent.append((payload, address))
+            def recvfrom(self, size): return b'OFF\n', ('192.168.22.106', 18190)
+            def close(self): self.closed = True
+
+        fake = DatagramFake()
+        load = KEL103UDP('192.168.22.106', sock=fake)
+        self.assertEqual(load.query(':INP?'), 'OFF')
+        self.assertEqual(fake.sent, [(b':INP?\n', ('192.168.22.106', 18190))])
+        with self.assertRaises(ValueError): load.write(':SYST:FACTRESET')
+        self.assertEqual(len(fake.sent), 1)
+        load.close()
+        self.assertTrue(fake.closed)
+
+    def test_kel103_cr_setup_is_input_off_only_and_verified(self):
+        from channel_stage import KEL103UDP
+
+        class DatagramFake:
+            def __init__(self, replies): self.replies, self.sent = list(replies), []
+            def settimeout(self, timeout): pass
+            def sendto(self, payload, address): self.sent.append(payload)
+            def recvfrom(self, size): return self.replies.pop(0), ('192.168.22.106', 18190)
+            def close(self): pass
+
+        fake = DatagramFake((b'OFF', b'CR', b'CR', b'40.000OHM'))
+        load = KEL103UDP('192.168.22.106', sock=fake)
+        load.configure_cr(40.0)
+        self.assertEqual(fake.sent, [b':INP?\n', b':FUNC CR\n', b':FUNC?\n',
+                                     b':RES 40OHM\n', b':FUNC?\n', b':RES?\n'])
+
+        active = DatagramFake((b'ON',))
+        load = KEL103UDP('192.168.22.106', sock=active)
+        with self.assertRaises(Exception): load.configure_cr(12.0)
+        self.assertEqual(active.sent, [b':INP?\n'])
+
+        unconfigured = DatagramFake(())
+        load = KEL103UDP('192.168.22.106', sock=unconfigured)
+        with self.assertRaises(Exception): load.set_input(True)
+        self.assertEqual(unconfigured.sent, [])
+
+    def test_h03_preflight_is_offline_and_states_manual_load_points(self):
+        q = self.module()
+        self.assertTrue(q.stage_passed('PASS'))
+        self.assertTrue(q.stage_passed('PASS (second attempt; first FAIL)'))
+        self.assertFalse(q.stage_passed('PASSING'))
+        self.assertFalse(q.stage_passed('NOT_PASS'))
+        output = io.StringIO()
+        with patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(q.main(['preflight', 'H03']), 0)
+        text = output.getvalue()
+        self.assertIn('KEL103 UDP 192.168.22.106:18190', text)
+        self.assertIn('CR 40.0 Ω', text)
+        self.assertIn('CR 12.0 Ω', text)
+        self.assertIn('считывает U/I/P', text)
+        self.assertIn('перестановки CH1→CH2 и CH2→CH3', text)
+        self.assertIn('DRY RUN', text)
+        with contextlib.redirect_stdout(output := io.StringIO()):
+            q.preflight('H03', '/dev/ttyUSB1', start_channel=3)
+        self.assertIn('CONFIRM H03 RESUME_CH3 INDEPENDENT ALL_OFF', output.getvalue())
+        self.assertIn('questionable', output.getvalue().lower())
+
+    def test_h03_resume_requires_reviewed_prior_points_and_off_confirmation(self):
+        q = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'prior.jsonl'
+            events = [
+                {'test_id': 'H03', 'event': 'measurement_review', 'channel': 1,
+                 'mode': mode, 'review_outcome': 'PASS'}
+                for mode in ('CV', 'CC')
+            ]
+            events.append({'test_id': 'H03', 'event': 'outcome',
+                           'physical_off_confirmed': True})
+            path.write_text('\n'.join(json.dumps(event) for event in events), encoding='utf-8')
+            with contextlib.redirect_stdout(io.StringIO()):
+                q.validate_h03_checkpoint(path, 2)
+            events.pop()
+            path.write_text('\n'.join(json.dumps(event) for event in events), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'OFF confirmation'):
+                q.validate_h03_checkpoint(path, 2)
+
+    def test_h03_success_trace_and_error_170_stop(self):
+        """Exercise the bounded H03 source/load flow using simulated I/O only."""
+        q = self.module()
+        from channel_stage import h03
+        from test_driver import FakeTransport
+
+        def operator_answers(disagree_cc=False):
+            answers = []
+            for channel in (1, 2, 3):
+                if channel > 1:
+                    answers.append(f'CONFIRM H03 MOVE CH{channel - 1}->CH{channel} ALL_OFF LOAD=OFF')
+                for mode, resistance in (('CV', '40.0'), ('CC', '12.0')):
+                    answers.extend((
+                        f'CONFIRM H03 CH{channel} {mode} CR={resistance} CONNECTED PSU=OFF',
+                        f'CONFIRM H03 DISPLAY CH{channel} PSU={mode} KEL=CR INPUT=ON',
+                        f'CONFIRM H03 CH{channel} {mode} PSU=OFF LOAD=OFF'))
+            return answers
+
+        class LoadFake:
+            def __init__(self):
+                self.port = 18190
+                self.input = 'OFF'
+                self.resistance = None
+                self.cc_voltage = 3.0
+                self.live = True
+                self.closed = False
+            def identify(self): return 'KORAD-KEL103 V3.30 SN:[REDACTED]'
+            def input_state(self): return self.input
+            def configure_cr(self, resistance):
+                if self.input != 'OFF': raise RuntimeError('load input active')
+                self.resistance = resistance
+                return resistance
+            def set_input(self, enabled): self.input = 'ON' if enabled else 'OFF'
+            def measurements(self):
+                return ({'kel103_voltage_v': 4.0, 'kel103_current_a': .1, 'kel103_power_w': .4}
+                        if self.resistance == 40.0 else
+                        {'kel103_voltage_v': self.cc_voltage, 'kel103_current_a': .25,
+                         'kel103_power_w': self.cc_voltage * .25})
+            def close(self): self.closed = True
+
+        class MeterFake(FakeTransport):
+            def query(self, command):
+                key = command.upper().removesuffix('?')
+                if key == 'SYST:ERR':
+                    self.cmds.append(command)
+                    if getattr(self, 'inject_170', False):
+                        self.inject_170 = False
+                        return '170,"Invalid command"'
+                    return '0,"No error"'
+                if key == 'STAT:OPER:INST:ISUM1:COND':
+                    return self._status(command, 1)
+                if key == 'STAT:OPER:INST:ISUM2:COND':
+                    return self._status(command, 2)
+                if key == 'STAT:OPER:INST:ISUM3:COND':
+                    return self._status(command, 3)
+                if key in ('STAT:QUES:INST:ISUM1:COND',
+                           'STAT:QUES:INST:ISUM2:COND',
+                           'STAT:QUES:INST:ISUM3:COND'):
+                    channel = int(key.split('ISUM')[1].split(':')[0])
+                    return self._status(command, channel)
+                if key in ('MEAS:VOLT', 'MEAS:CURR', 'MEAS:POW'):
+                    self.cmds.append(command)
+                    values = self.values[self.active_ch]
+                    cc = values['CURR'] == .25
+                    volts, amps = (getattr(self, 'cc_voltage', 3.0), .25) if cc else (4.0, .1)
+                    if key == 'MEAS:VOLT': return str(volts)
+                    if key == 'MEAS:CURR': return str(amps)
+                    return str(volts * amps)
+                return super().query(command)
+
+            def _status(self, command, channel):
+                self.cmds.append(command)
+                if not self.values[channel]['CHAN:OUTP']:
+                    return '0'
+                if (command.upper().startswith('STAT:OPER:') and channel == 3
+                        and getattr(self, 'channel3_status_override', None) is not None):
+                    return str(self.channel3_status_override)
+                return '10' if self.values[channel]['CURR'] == .25 else '9'
+
+            def write(self, command):
+                super().write(command)
+                if command == 'CHAN:OUTP 1': self.had_output_on = True
+                if (command == 'OUTP 0' and getattr(self, 'ignore_global_off', False)
+                        and getattr(self, 'had_output_on', False)):
+                    self.values[1]['CHAN:OUTP'] = 1.
+                if command == 'VOLT:LIM 4.00' and getattr(self, 'fail_next_limit', False):
+                    self.inject_170 = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = MeterFake()
+            load = LoadFake()
+            evidence = q.Evidence(Path(tmp) / 'success.jsonl', 'H03')
+            with patch('builtins.input', side_effect=operator_answers()), contextlib.redirect_stdout(io.StringIO()):
+                outcome = h03(fake, evidence, load)
+            self.assertEqual(outcome, 'PASS', [line for line in evidence.path.read_text().splitlines()
+                                               if 'stage_error' in line])
+            self.assertTrue(fake.closed)
+            self.assertTrue(load.closed)
+            self.assertEqual(load.input, 'OFF')
+            self.assertEqual(sum(command == 'CHAN:OUTP 1' for command in fake.cmds), 6)
+            self.assertEqual(sum(command == 'CHAN:OUTP 0' for command in fake.cmds), 6)
+            self.assertFalse(any(fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+            self.assertEqual(evidence.path.read_text().count('"event": "measurement"'), 6)
+            self.assertIn('"outcome": "PASS"', evidence.path.read_text())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = MeterFake()
+            load = LoadFake()
+            fake.fail_next_limit = True
+            evidence = q.Evidence(Path(tmp) / 'error170.jsonl', 'H03')
+            with patch('builtins.input', side_effect=operator_answers()), contextlib.redirect_stdout(io.StringIO()):
+                outcome = h03(fake, evidence, load)
+            self.assertEqual(outcome, 'FAIL')
+            self.assertFalse(any(command == 'CHAN:OUTP 1' for command in fake.cmds))
+            self.assertFalse(any(fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+            events = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            self.assertTrue(any(event.get('response') == '170,"Invalid command"' for event in events))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = MeterFake()
+            load = LoadFake()
+            fake.cc_voltage = 3.08919
+            load.cc_voltage = 3.008
+            fake.ignore_global_off = True
+            evidence = q.Evidence(Path(tmp) / 'measurement_mismatch.jsonl', 'H03')
+            with patch('builtins.input', side_effect=operator_answers(disagree_cc=True)), contextlib.redirect_stdout(io.StringIO()):
+                outcome = h03(fake, evidence, load)
+            self.assertEqual(outcome, 'FAIL')
+            self.assertIn('CHAN:OUTP 0', fake.cmds)
+            self.assertFalse(any(fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+            events = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            failed_measurement = next(event for event in events
+                                      if event.get('event') == 'measurement'
+                                      and event.get('channel') == 1 and event.get('mode') == 'CC')
+            self.assertEqual(failed_measurement['kel103_voltage_v'], 3.008)
+            self.assertTrue(any(event.get('event') == 'cleanup_error' for event in events) is False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = MeterFake()
+            load = LoadFake()
+            fake.channel3_status_override = 8
+            evidence = q.Evidence(Path(tmp) / 'channel3_status_mismatch.jsonl', 'H03')
+            with patch('builtins.input', side_effect=operator_answers()), contextlib.redirect_stdout(io.StringIO()):
+                outcome = h03(fake, evidence, load)
+            self.assertEqual(outcome, 'FAIL')
+            self.assertFalse(any(fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+            self.assertEqual(load.input, 'OFF')
+            events = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            diagnostic = next(event for event in events
+                              if event.get('event') == 'measurement'
+                              and event.get('channel') == 3 and event.get('mode') == 'CV')
+            self.assertEqual(diagnostic['keithley_status_mask'], 8)
+            self.assertEqual(diagnostic['keithley_questionable_status_mask'], 9)
+            self.assertTrue(any(event.get('event') == 'stage_error'
+                                and 'operation=8, questionable=9' in event.get('message', '')
+                                for event in events))
 
     def test_unattended_and_future_stages_reject_before_open(self):
         q = self.module()

@@ -16,7 +16,18 @@ The first physical run failed because `*IDN?` changed firmware field mid-session
 the runner detected it only after profile writes. A library guard now aborts on an
 identity change before configuration. The corrected H02 rerun passed with identical
 `1.04-0.01` identity replies and a clear instrument error queue. See both evidence
-reports and verification log. H03 remains gated pending H02 review and its own approval.
+reports and verification log. H02 is reviewed PASS; H03 requires a fresh approval after
+the failed first attempt and safety-path correction.
+
+H03: [KEL103 load and transition operator card](H03_PREFLIGHT.ru.md). CH1 CV/CC and
+CH2 CV/CC have reviewed physical measurements. The CH3 CV attempt stopped safely:
+Keithley returned operation status `8` (ON, without documented CV/CC bits) despite
+`3.99326 V / 0.0998173 A`; the KEL103 measurement was not reached. Every instrument
+error-queue reply remained `0, "No error"`. CH3 has a 5 V rating (CH1/CH2: 30 V); this
+run used a 4 V / 0.5 A cap, within its rating. The differing CH3 status needs diagnosis;
+do not infer CV from the measurement alone. KEL103 CR/INPUT control was physically
+exercised on CH2, with readback. See the latest
+[H03 report](hardware_reports/2026-10-25T231834.474816Z_H03_qualification.md).
 
 **WARNING:** writing `apply_profile`, `set_channel`, `OUTP` or `power_on()` can turn off a running DUT, change output voltage or energize terminals. No unattended execution; test only with qualified operators. This file provides procedure suggestions, not proof of completed tests or a safety guarantee.
 

@@ -187,11 +187,23 @@ class TestDevice(unittest.TestCase):
         original = self.fake.write
         def stuck_off(command):
             original(command)
-            if command == 'OUTP 0': self.fake.values[2]['CHAN:OUTP'] = 1
+            if command in ('OUTP 0', 'CHAN:OUTP 0'):
+                self.fake.values[2]['CHAN:OUTP'] = 1
         self.fake.write = stuck_off
         with self.assertRaises(SafetyError): self.dev.emergency_off()
         self.assertFalse(self.dev.armed)
         self.assertTrue(self.dev.faulted)
+
+    def test_emergency_off_falls_back_to_individual_channel_off(self):
+        self.dev.output(1, True)
+        original = self.fake.write
+        def global_off_ignored(command):
+            original(command)
+            if command == 'OUTP 0': self.fake.values[1]['CHAN:OUTP'] = 1
+        self.fake.write = global_off_ignored
+        self.dev.emergency_off()
+        self.assertFalse(self.fake.values[1]['CHAN:OUTP'])
+        self.assertIn('CHAN:OUTP 0', self.fake.cmds)
 
     def test_external_output_on_is_not_authorized(self):
         self.fake.values[3]['CHAN:OUTP'] = 1

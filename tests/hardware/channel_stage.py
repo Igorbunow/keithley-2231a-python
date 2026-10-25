@@ -1,0 +1,492 @@
+"""Manually gated H03 CV/CC qualification for all three independent channels.
+
+@file channel_stage.py
+@author Project contributors
+@date 2026-10-26
+@version 0.2.0
+@brief Exact-plan H03 stage; the electronic load remains operator controlled.
+@details Importing this module does not access hardware. See docs/H03_PREFLIGHT.ru.md.
+"""
+from __future__ import annotations
+
+import math
+import ipaddress
+import re
+import socket
+import time
+
+from keithley2231a import ChannelProfile, Keithley2231A, Profile, SafetyError
+
+TOKEN = ('CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED '
+         'LAN=UDP:18190 RECALL=OFF VCAP=4.00 ICAP=0.500')
+RESUME_CH2_TOKEN = ('CONFIRM H03 RESUME_CH2 INDEPENDENT ALL_OFF '
+                    'LOAD=KEL103 INPUT=OFF LAN=UDP:18190 VCAP=4.00 ICAP=0.500')
+RESUME_CH3_TOKEN = ('CONFIRM H03 RESUME_CH3 INDEPENDENT ALL_OFF '
+                    'LOAD=KEL103 INPUT=OFF LAN=UDP:18190 VCAP=4.00 ICAP=0.500')
+FINAL_TOKEN = 'CONFIRM H03 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
+MODES = ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?')
+OFF = tuple(f'STAT:OPER:INST:ISUM{ch}:COND?' for ch in (1, 2, 3))
+
+
+class KEL103UDP:
+    """Bounded KEL103 network adapter for the H03 load points.
+
+    @details Uses the documented KEL103 UDP command endpoint (LF-terminated
+             commands). Only H03 queries and CR/INPUT mutations are permitted.
+             Setpoint changes require a remotely confirmed INPUT OFF state.
+    """
+    READ_COMMANDS = frozenset(('*IDN?', ':INP?', ':FUNC?', ':RES?',
+                               ':MEAS:VOLT?', ':MEAS:CURR?', ':MEAS:POW?'))
+    WRITE_COMMANDS = frozenset((':FUNC CR', ':INP ON', ':INP OFF',
+                                ':RES 12OHM', ':RES 40OHM'))
+
+    def __init__(self, host, port=18190, timeout=1.5, sock=None, evidence=None):
+        self.host = str(ipaddress.IPv4Address(host))
+        if not isinstance(port, int) or not 1 <= port <= 65535:
+            raise ValueError('invalid KEL103 UDP port')
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError('KEL103 timeout must be finite and positive')
+        self.port, self.endpoint = port, (self.host, port)
+        self.timeout, self.evidence = timeout, evidence
+        if sock is None:
+            route = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                route.connect(self.endpoint)
+                local_ip = route.getsockname()[0]
+            finally:
+                route.close()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.bind((local_ip, port))
+            except BaseException:
+                sock.close()
+                raise
+        self.sock = sock
+        self.sock.settimeout(timeout)
+        self.live = True
+        self.verified_resistance = None
+
+    def _event(self, event, **values):
+        if self.evidence is not None:
+            self.evidence.add(event, **values)
+
+    def query(self, command):
+        """Send an allow-listed query and require a reply from the target."""
+        if not self.live:
+            raise OSError('KEL103 link uncertain; no further UDP commands')
+        if command not in self.READ_COMMANDS:
+            raise ValueError(f'KEL103 query is not permitted in H03: {command}')
+        self._event('kel103_query', command=command)
+        try:
+            self.sock.sendto((command + '\n').encode('ascii'), self.endpoint)
+            data, peer = self.sock.recvfrom(4096)
+            if peer != self.endpoint:
+                raise OSError(f'unexpected KEL103 UDP peer: {peer!r}')
+            response = data.decode('ascii').strip()
+            if not response:
+                raise OSError(f'empty KEL103 response to {command}')
+        except BaseException as exc:
+            self.live = False
+            self._event('kel103_io_error', command=command,
+                        exception_type=type(exc).__name__)
+            raise
+        safe_response = re.sub(r'(?i)(SN\s*:\s*)[^,\s]+', r'\1[REDACTED]', response)
+        self._event('kel103_read', command=command, response=safe_response)
+        print(f'KEL103 {command}: {safe_response}')
+        return response
+
+    def write(self, command):
+        """Send one H03-specific mutation; callers must verify it by query."""
+        if not self.live:
+            raise OSError('KEL103 link uncertain; no further UDP commands')
+        if command not in self.WRITE_COMMANDS:
+            raise ValueError(f'KEL103 write is not permitted in H03: {command}')
+        self._event('kel103_write', command=command)
+        try:
+            self.sock.sendto((command + '\n').encode('ascii'), self.endpoint)
+        except BaseException as exc:
+            self.live = False
+            self._event('kel103_io_error', command=command,
+                        exception_type=type(exc).__name__)
+            raise
+
+    def identify(self):
+        """Require the expected load family before any remote mutation."""
+        identity = self.query('*IDN?')
+        if 'KEL103' not in identity.upper():
+            raise SafetyError('unexpected electronic-load identity')
+        return identity
+
+    def input_state(self):
+        state = self.query(':INP?').upper()
+        if state not in ('ON', 'OFF'):
+            raise SafetyError(f'invalid KEL103 input state: {state}')
+        return state
+
+    @staticmethod
+    def _quantity(response, unit):
+        text = response.strip()
+        if text.upper().endswith(unit):
+            text = text[:-len(unit)].strip()
+        value = float(text)
+        if not math.isfinite(value) or value < 0:
+            raise SafetyError(f'invalid KEL103 measurement: {response}')
+        return value
+
+    def configure_cr(self, resistance_ohm):
+        """Select CR 12/40 Ω only while INPUT is confirmed OFF and verify it."""
+        if resistance_ohm not in (12.0, 40.0):
+            raise ValueError('H03 permits only CR 12.0 Ω and 40.0 Ω')
+        if self.input_state() != 'OFF':
+            raise SafetyError('KEL103 INPUT must be OFF before changing CR settings')
+        self.write(':FUNC CR')
+        if self.query(':FUNC?').upper() != 'CR':
+            raise SafetyError('KEL103 did not enter CR mode')
+        command = f':RES {resistance_ohm:g}OHM'
+        self.write(command)
+        if self.query(':FUNC?').upper() != 'CR':
+            raise SafetyError('KEL103 left CR mode while setting resistance')
+        actual = self._quantity(self.query(':RES?'), 'OHM')
+        if abs(actual - resistance_ohm) > 0.001:
+            raise SafetyError(f'KEL103 CR readback mismatch: {actual} Ω')
+        self.verified_resistance = resistance_ohm
+        return actual
+
+    def set_input(self, enabled):
+        """Set and verify the load input; ON requires verified H03 CR setup."""
+        if type(enabled) is not bool:
+            raise TypeError('enabled must be bool')
+        if enabled:
+            if self.verified_resistance not in (12.0, 40.0):
+                raise SafetyError('KEL103 CR setpoint must be verified before INPUT ON')
+            if self.input_state() != 'OFF':
+                raise SafetyError('KEL103 INPUT is already ON unexpectedly')
+        self.write(':INP ON' if enabled else ':INP OFF')
+        expected = 'ON' if enabled else 'OFF'
+        if self.input_state() != expected:
+            raise SafetyError(f'KEL103 INPUT did not verify {expected}')
+
+    def measurements(self):
+        """Read the three independent KEL103 live measurement values."""
+        return {
+            'kel103_voltage_v': self._quantity(self.query(':MEAS:VOLT?'), 'V'),
+            'kel103_current_a': self._quantity(self.query(':MEAS:CURR?'), 'A'),
+            'kel103_power_w': self._quantity(self.query(':MEAS:POW?'), 'W'),
+        }
+
+    def close(self):
+        self.sock.close()
+
+
+def profile():
+    """Conservative 4 V / 0.5 A caps; outputs remain OFF after application."""
+    return Profile('H03 CV CC qualification', tuple(
+        ChannelProfile(4.0, 0.5, 4.0, 0.5, expected_regulation='auto')
+        for _ in (1, 2, 3)), wiring='independent', lock_front_panel=False,
+        verify_every_s=3600.0)
+
+
+def command_plan(start_channel=1):
+    """Return the exact successful SCPI trace for this library version.
+
+    Every write except LOC is followed by an error queue read by StageIO. The
+    sequence mirrors apply_profile(), verify_profile(), set_channel(), output(),
+    and read_channel(); drift is rejected before transmission.
+    """
+    if start_channel not in (1, 2, 3):
+        raise ValueError('start_channel must be 1, 2 or 3')
+    plan = []
+    def add(*commands):
+        for command in commands:
+            plan.append(command)
+            if command not in ('SYST:ERR?', 'SYST:LOC'):
+                plan.append('SYST:ERR?')
+    def select(ch): add(f'INST:NSEL {ch}')
+    def status(): add(*OFF)
+    def check_setpoints(ch): select(ch); add('VOLT?', 'CURR?')
+    def wiring(): add(*MODES)
+    def verify():
+        wiring(); status()
+        for ch in (1, 2, 3):
+            select(ch); add('VOLT:LIM:STAT?', 'VOLT:LIM?')
+            check_setpoints(ch)
+    # Public apply_profile() success trace.
+    add('SYST:REM', '*IDN?', 'OUTP 0', *OFF,
+        'OUTP:SER 0', 'OUTP:PARALLEL 0', 'OUTP:TRAC 0')
+    for ch in (1, 2, 3):
+        select(ch)
+        add('OUTP:TIM:STAT 0', 'OUTP:TIM:STAT?', 'VOLT 0', 'CURR 0',
+            'VOLT:LIM 4.00', 'VOLT:LIM:STAT 1', 'VOLT:LIM:STAT?', 'VOLT:LIM?',
+            'CURR 0.500', 'VOLT 4.00')
+        check_setpoints(ch)
+    wiring(); status()
+    for ch in range(start_channel, 4):
+        for mode in ('CV', 'CC'):
+            if mode == 'CC':
+                verify()
+                select(ch); add('CURR 0.250')
+                check_setpoints(ch)
+                # set_channel() performs one final readback for each changed
+                # setpoint; CC changes current only.
+                select(ch); add('CURR?')
+            verify()
+            select(ch); add('CHAN:OUTP 1', 'CHAN:OUTP?')
+            status()
+            # read_channel(): selected output, U/I, setpoints and status bits.
+            select(ch); add('CHAN:OUTP?', 'MEAS:VOLT?', 'MEAS:CURR?', 'VOLT?',
+                            'CURR?', f'STAT:OPER:INST:ISUM{ch}:COND?', 'MEAS:POW?',
+                            f'STAT:OPER:INST:ISUM{ch}:COND?',
+                            f'STAT:QUES:INST:ISUM{ch}:COND?')
+            select(ch); add('CHAN:OUTP 0', 'CHAN:OUTP?')
+            status()
+    # emergency_off() verifies all channels, then h03() performs its final
+    # independent all-off check before returning local control.
+    add('OUTP 0', *OFF, *OFF, 'INST:NSEL 1', 'SYST:LOC')
+    return tuple(plan)
+
+
+class StageIO:
+    """Exact success-path guard and error-queue check for H03."""
+    def __init__(self, transport, evidence, start_channel=1):
+        self.transport, self.evidence = transport, evidence
+        self.plan, self.index = command_plan(start_channel), 0
+        self.live, self.cleanup = True, False
+        self.selected = 1
+        self.authorized_channel = None
+        self.started = time.monotonic()
+
+    def _transfer(self, command, is_query):
+        if not self.live:
+            raise OSError('uncertain link; no further SCPI')
+        if self.cleanup:
+            allowed = ('OUTP 0', 'SYST:ERR?', *OFF, 'SYST:LOC',
+                       'INST:NSEL 1', 'INST:NSEL 2', 'INST:NSEL 3', 'CHAN:OUTP 0')
+            if command not in allowed:
+                raise ValueError('only shutdown is permitted after H03 failure')
+        else:
+            if time.monotonic() - self.started > 600:
+                raise TimeoutError('H03 10-minute stage budget exceeded')
+            if self.index >= len(self.plan) or command != self.plan[self.index]:
+                raise ValueError(f'SCPI differs from approved H03 plan at step {self.index + 1}: {command}')
+            self.index += 1
+        self.evidence.add('query' if is_query else 'write', command=command)
+        try:
+            response = self.transport.query(command) if is_query else self.transport.write(command)
+        except BaseException as exc:
+            self.live = False
+            self.evidence.add('io_error', command=command,
+                              exception_type=type(exc).__name__,
+                              cause_type=type(exc.__cause__).__name__ if exc.__cause__ else None)
+            raise
+        if is_query:
+            units = {'MEAS:VOLT?': 'V', 'MEAS:CURR?': 'A', 'MEAS:POW?': 'W',
+                     'VOLT?': 'V', 'VOLT:LIM?': 'V', 'CURR?': 'A'}
+            record = self.evidence.add('read', command=command, response=response,
+                                       units=units.get(command))
+            print(f'{command}: {record["response"]}')
+            if command != 'SYST:ERR?':
+                self._check_error_queue()
+            return response
+        if command == 'OUTP 1':
+            raise ValueError('global output ON is forbidden in H03')
+        if command == 'CHAN:OUTP 1' and self.authorized_channel != self.selected:
+            raise ValueError('individual ON requires a matching confirmed operator gate')
+        if command.startswith('INST:NSEL '):
+            self.selected = int(command.rsplit(' ', 1)[1])
+        if command != 'SYST:LOC':
+            self._check_error_queue(command)
+        return response
+
+    def _check_error_queue(self, command='query'):
+        error = self._transfer('SYST:ERR?', True)
+        code, message = error.split(',', 1)
+        if int(code.strip()) != 0 or not message.strip():
+            raise ValueError(f'instrument error after {command}: {error}')
+
+    def query(self, command): return self._transfer(command, True)
+    def write(self, command): self._transfer(command, False)
+
+
+def guarded_profile(): return profile()
+
+
+def _gate(token, prompt):
+    print(prompt)
+    try: answer = input(f'Подтверждение: {token}\n> ').strip()
+    except (EOFError, KeyboardInterrupt): raise InterruptedError('operator gate interrupted')
+    if answer != token: raise PermissionError('operator confirmation did not match')
+
+
+def _all_off(io):
+    for command in OFF:
+        raw = io.query(command)
+        value = float(raw)
+        if not math.isfinite(value) or value != int(value) or not 0 <= value <= 255 or int(value) & 8:
+            raise SafetyError(f'CH status not OFF: {command}={raw}')
+
+
+def _only_target_on(io, target):
+    """Confirm operation-register ON bits while the one approved channel runs."""
+    for ch, command in enumerate(OFF, 1):
+        raw = io.query(command)
+        value = float(raw)
+        if not math.isfinite(value) or value != int(value) or not 0 <= value <= 255:
+            raise SafetyError(f'invalid CH{ch} operation status: {raw}')
+        if bool(int(value) & 8) != (ch == target):
+            raise SafetyError(f'expected only CH{target} ON; CH{ch} status={raw}')
+
+
+def _display_gate(evidence, channel, mode, readings):
+    """Require independent panel confirmation against the network readbacks."""
+    token = f'CONFIRM H03 DISPLAY CH{channel} PSU={mode} KEL=CR INPUT=ON'
+    _gate(token, f"Проверьте на Keithley режим {mode}; на KEL103 — CR, INPUT ON. "
+          f"Сверьте дисплей KEL103 с сетевыми показаниями "
+          f"{readings['kel103_voltage_v']:.4f} V / {readings['kel103_current_a']:.4f} A / "
+          f"{readings['kel103_power_w']:.4f} W. При любом расхождении не подтверждайте.")
+    evidence.add('operator_display_confirmation', token=token, channel=channel,
+                 keithley_panel_mode=mode, kel103_panel_mode='CR', kel103_panel_input='ON',
+                 kel103_display_matches_remote=True)
+
+
+def h03(transport, evidence, load, start_channel=1):
+    """Run H03 once; operator wires and confirms panels, UDP controls KEL103."""
+    if start_channel not in (1, 2, 3):
+        raise ValueError('start_channel must be 1, 2 or 3')
+    io = StageIO(transport, evidence, start_channel)
+    dev = Keithley2231A(io)
+    outcome, reason = 'ABORTED', 'incomplete H03'
+    try:
+        load.identify()
+        if load.input_state() != 'OFF':
+            raise SafetyError('KEL103 INPUT must be OFF at H03 start')
+        evidence.add('kel103_preflight', host='redacted', port=load.port,
+                     transport='UDP', input_state='OFF')
+        dev.apply_profile(guarded_profile())
+        if not dev.armed or dev.faulted or dev.profile.wiring != 'independent':
+            raise SafetyError('H03 profile not armed in independent mode')
+        evidence.add('profile', name='H03 CV CC qualification', voltage_cap_v=4.0,
+                     current_cap_a=0.5, initial_voltage_v=4.0, initial_current_a=0.5,
+                     load_model='KORAD KEL103')
+        print('Профиль готов, все выходы должны быть OFF. KEL103 CR/INPUT '
+              'управляются по UDP только после подтверждения подключения и PSU OFF.')
+        previous_channel = start_channel - 1 if start_channel > 1 else None
+        for channel in range(start_channel, 4):
+            if previous_channel is not None:
+                move = f'CONFIRM H03 MOVE CH{previous_channel}->CH{channel} ALL_OFF LOAD=OFF'
+                _gate(move, f'Keithley и KEL103 OFF; отключите нагрузку от CH{previous_channel}, '
+                      f'проверьте отсутствие напряжения и подключите полярность только CH{channel}.')
+                evidence.add('operator_gate', token=move, action='load relocation',
+                             from_channel=previous_channel, to_channel=channel)
+            for mode, resistance in (('CV', '40.0'), ('CC', '12.0')):
+                if mode == 'CC':
+                    # Change only the target-channel current setpoint while OFF.
+                    dev.set_channel(channel, current=0.250)
+                token = f'CONFIRM H03 CH{channel} {mode} CR={resistance} CONNECTED PSU=OFF'
+                _gate(token, f'CH{channel}: Keithley OFF; INPUT KEL103 OFF. Подключите '
+                      f'KEL103 только к CH{channel} (+ к +, − к −), остальные каналы '
+                      f'оставьте неподключёнными. Runner проверит и задаст CR {resistance} Ω, '
+                      'затем включит INPUT; источник останется OFF до отдельной команды.')
+                evidence.add('operator_gate', token=token, channel=channel, mode=mode,
+                             connection=f'KEL103 to CH{channel}; correct polarity',
+                             other_channels='OFF', psu_output='OFF')
+                load.configure_cr(float(resistance))
+                load.set_input(True)
+                evidence.add('kel103_setup_verified', channel=channel, mode=mode,
+                             resistance_ohm=float(resistance), input_state='ON')
+                io.authorized_channel = channel
+                dev.output(channel, True)
+                _only_target_on(io, channel)
+                sample = dev.read_channel(channel)
+                if not sample.enabled:
+                    raise SafetyError(f'CH{channel} unexpectedly OFF during {mode} point')
+                if abs(sample.power_w - sample.voltage_v * sample.current_a) > 1e-9:
+                    raise SafetyError('library power arithmetic mismatch')
+                # Explicit power query is in the Keithley manual; retain actual reply.
+                scpi_power = float(io.query('MEAS:POW?'))
+                if not math.isfinite(scpi_power) or scpi_power < 0:
+                    raise SafetyError('invalid MEAS:POW? response')
+                raw_status = int(float(io.query(f'STAT:OPER:INST:ISUM{channel}:COND?')))
+                questionable_status = int(float(io.query(
+                    f'STAT:QUES:INST:ISUM{channel}:COND?')))
+                observed = load.measurements()
+                # Worst published KEL103 measurement range is used because the
+                # selected range is not remotely observable in this runner.
+                voltage_tolerance_v = 0.06
+                current_tolerance_a = 0.03
+                power_tolerance_w = 0.31
+                evidence.add('measurement', channel=channel, mode=mode,
+                             keithley_voltage_v=sample.voltage_v,
+                             keithley_current_a=sample.current_a,
+                             keithley_power_api_w=sample.power_w,
+                             keithley_power_scpi_w=scpi_power,
+                             keithley_status_mask=raw_status,
+                             keithley_questionable_status_mask=questionable_status,
+                             voltage_difference_max_v=voltage_tolerance_v,
+                             current_difference_max_a=current_tolerance_a,
+                             power_difference_max_w=power_tolerance_w, **observed)
+                if abs(sample.voltage_v - observed['kel103_voltage_v']) > voltage_tolerance_v:
+                    raise SafetyError('Keithley/KEL103 voltage disagreement exceeds 0.06 V')
+                if abs(sample.current_a - observed['kel103_current_a']) > current_tolerance_a:
+                    raise SafetyError('Keithley/KEL103 current disagreement exceeds 0.03 A')
+                if abs(observed['kel103_power_w'] -
+                       observed['kel103_voltage_v'] * observed['kel103_current_a']) > power_tolerance_w:
+                    raise SafetyError('KEL103 power differs from V*I by more than its 300 W full-scale tolerance')
+                if abs(scpi_power - sample.power_w) > power_tolerance_w:
+                    raise SafetyError('MEAS:POW? differs from measured U*I by more than 0.31 W')
+                operation_mode = ('CV' if raw_status & 1 and not raw_status & 2 else
+                                  'CC' if raw_status & 2 and not raw_status & 1 else 'UNKNOWN')
+                questionable_mode = ('CV' if questionable_status & 1 and not questionable_status & 2 else
+                                     'CC' if questionable_status & 2 and not questionable_status & 1 else 'UNKNOWN')
+                if (not raw_status & 8 or operation_mode != mode or
+                        questionable_mode != mode or sample.regulation != mode):
+                    raise SafetyError(
+                        f'CH{channel} {mode} status mismatch: sample={sample.regulation}, '
+                        f'operation={raw_status}, questionable={questionable_status}')
+                _display_gate(evidence, channel, mode, observed)
+                dev.output(channel, False)
+                io.authorized_channel = None
+                _all_off(io)
+                load.set_input(False)
+                off_token = f'CONFIRM H03 CH{channel} {mode} PSU=OFF LOAD=OFF'
+                _gate(off_token, f'Keithley и KEL103 INPUT опрошены и подтверждены как OFF. '
+                      'Проверьте оба дисплея и подтвердите OFF перед следующей точкой.')
+                evidence.add('operator_gate', token=off_token, channel=channel,
+                             mode=mode, psu_output='OFF', load_input='OFF')
+            previous_channel = channel
+        dev.emergency_off()
+        _all_off(io)
+        io.write('INST:NSEL 1')
+        io.write('SYST:LOC')
+        if io.index != len(io.plan):
+            raise ValueError(f'incomplete H03 command plan: {io.index}/{len(io.plan)}')
+        cases = (4 if start_channel == 2 else 2 if start_channel == 3 else 6)
+        outcome, reason = 'PASS', f'{cases} CV/CC cases and all OFF checks completed; review evidence'
+    except BaseException as exc:
+        outcome = 'ABORTED' if not io.live or isinstance(exc, (InterruptedError, KeyboardInterrupt, TimeoutError)) else 'FAIL'
+        reason = f'H03 stopped: {type(exc).__name__}: {exc}; manual OFF verification required'
+        evidence.add('stage_error', exception_type=type(exc).__name__,
+                     message=str(exc), live_link=io.live)
+        if io.live:
+            io.cleanup = True
+            try:
+                dev.emergency_off()
+                if load.live:
+                    load.set_input(False)
+                io.write('SYST:LOC')
+            except BaseException as cleanup_exc:
+                outcome, reason = 'ABORTED', 'shutdown unconfirmed; UNKNOWN OUTPUT STATE'
+                evidence.add('cleanup_error', exception_type=type(cleanup_exc).__name__)
+        else:
+            reason = 'I/O failure; UNKNOWN OUTPUT STATE; no retry or reconnect'
+    finally:
+        try: transport.close()
+        except BaseException:
+            outcome, reason = 'ABORTED', 'transport close failed; manual OFF check required'
+        try: load.close()
+        except BaseException:
+            outcome, reason = 'ABORTED', 'KEL103 transport close failed; manual OFF check required'
+        evidence.add('query_outcome', outcome=outcome, stop_reason=reason,
+                     firmware=evidence.firmware,
+                     verification='HW OBSERVED' if outcome == 'PASS' else 'HW UNVERIFIED')
+        print(f'{outcome}: {reason}\nПроверьте физически CH1/CH2/CH3 OFF и INPUT KEL103 OFF.')
+    return outcome

@@ -4,7 +4,7 @@
 @author Project contributors
 @date 2026-10-25
 @version 0.2.0
-@brief Gated H01/H02 and a bounded registry of subsequent qualification stages.
+@brief Gated H01/H02/H03 and a bounded registry of subsequent qualification stages.
 @details No import or dry run opens a port. Powered stages remain guarded until
          their preceding evidence and operator-specific load details are reviewed.
 """
@@ -51,6 +51,11 @@ def stages():
     return result
 
 
+def stage_passed(status: str) -> bool:
+    """Accept a reviewed PASS with an explanatory suffix, never a prefix match."""
+    return re.fullmatch(r'PASS(?:\s+\(.*\))?', status.strip()) is not None
+
+
 def software_metadata():
     """Identify the checked-out implementation, including uncommitted sources."""
     def git(*args):
@@ -84,7 +89,8 @@ class Evidence:
         return value
 
     def add(self, event: str, **fields):
-        if fields.get('command') == '*IDN?' and 'response' in fields:
+        if (fields.get('command') == '*IDN?' and 'response' in fields
+                and not event.startswith('kel103_')):
             parts = fields['response'].split(',')
             if len(parts) == 4:
                 serial = parts[2].strip()
@@ -108,7 +114,7 @@ def open_transport(port):
     return SerialTransport(port, baudrate=9600, timeout=2.0)
 
 
-def preflight(test_id, port):
+def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_channel=1):
     """Print a human-readable card; never contact hardware."""
     row = stages()[test_id]
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
@@ -139,6 +145,34 @@ def preflight(test_id, port):
         for command in command_plan(): print('  ' + command)
         print('Failure path, known live link only: OUTP 0; SYST:ERR?; per-channel OFF; SYST:ERR?; SYST:LOC.\n'
               'Внутри apply_profile/verify_profile возможна более ранняя попытка OUTP 0; план запрещает иные отклонения.')
+        return
+    if test_id == 'H03':
+        from channel_stage import TOKEN as token, RESUME_CH2_TOKEN, RESUME_CH3_TOKEN, command_plan
+        selected_plan = command_plan(start_channel)
+        digest = hashlib.sha256('\n'.join(selected_plan).encode()).hexdigest()
+        print(f'Порт: {port}; USB–TTL UART 9600 8N1, один владелец. Независимые CH1–CH3; '
+              f'без DUT/перемычек; KEL103 UDP {load_host}:{load_port}; один канал включён за раз.\n'
+              f'Продолжение с CH{start_channel}; предыдущие точки должны быть в приложенном evidence.\n'
+              'Уставки профиля: каждый CH V=4.00 V, I=0.500 A; cap 4.00 V / 0.500 A.\n'
+              'CV: CR 40.0 Ω, ожидается ~4.00 V / 0.100 A / 0.400 W.\n'
+              'CC: CH I=0.250 A, CR 12.0 Ω, ожидается ~3.00 V / 0.250 A / 0.750 W.\n'
+              'На каждую точку: при PSU OFF оператор подключает KEL103 только к целевому CH; '
+              'runner проверяет INPUT OFF, задаёт CR по UDP, включает INPUT и считывает U/I/P. '
+              'После измерения Keithley OFF, все каналы проверяются OFF, runner выключает '
+              'KEL INPUT и проверяет OFF.\n'
+              'Паузы: подключение CH1, перестановки CH1→CH2 и CH2→CH3, дисплейная сверка.\n'
+              'Остановить при любом коде SYST:ERR?, несоответствии режима, ответов, OFF или связи. '
+              'При I/O-ошибке UNKNOWN OUTPUT STATE, не повторять команды.\n'
+              'KEL103: *IDN?, :INP?, :FUNC?, :RES?, :MEAS:VOLT?, :MEAS:CURR?, '
+              ':MEAS:POW?; разрешённые writes: :FUNC CR, :RES 12/40OHM, :INP ON/OFF.\n'
+              'Keithley MEAS:POW? записывается в evidence. На каждой точке отдельно читаются '
+              'operation и questionable condition-регистры канала; любой mode/status mismatch '
+              'останавливает тест.\n'
+              f'Точный Keithley SCPI-plan SHA256: {digest}; команд: {len(selected_plan)}.\n'
+              f'Первый допуск до открытия порта: '
+              f'{RESUME_CH2_TOKEN if start_channel == 2 else RESUME_CH3_TOKEN if start_channel == 3 else token}\n'
+              'Дальнейшие подтверждения подключения, CR и перестановки запрашиваются отдельно внутри runner.\n'
+              'Финальное физическое подтверждение: CONFIRM H03 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF')
         return
     if test_id != 'H01':
         print('BLOCKED для выполнения: сначала разбор H01, паспорт нагрузки и отдельная полная карточка.\n'
@@ -269,12 +303,35 @@ def report(path):
             print('```json\n' + json.dumps(event, ensure_ascii=False, indent=2) + '\n```\n')
 
 
+def validate_h03_checkpoint(path, start_channel):
+    """Require reviewed PASS evidence and final OFF proof for prior channels."""
+    events = [json.loads(line) for line in Path(path).read_text(encoding='utf-8').splitlines()]
+    if not events or any(event.get('test_id') != 'H03' for event in events):
+        raise ValueError('prior evidence is not an H03 event log')
+    passed = {(event.get('channel'), event.get('mode'))
+              for event in events if event.get('event') == 'measurement_review'
+              and event.get('review_outcome') == 'PASS'}
+    expected = {(channel, mode) for channel in range(1, start_channel)
+                for mode in ('CV', 'CC')}
+    if not expected <= passed:
+        missing = ', '.join(f'CH{ch} {mode}' for ch, mode in sorted(expected - passed))
+        raise ValueError(f'prior H03 points lack reviewed PASS: {missing}')
+    if not any(event.get('event') == 'outcome' and event.get('physical_off_confirmed') is True
+               for event in events):
+        raise ValueError('prior H03 run lacks final operator OFF confirmation')
+    print(f'H03 checkpoint accepted: reviewed {len(expected)} prior points; prior log retained.')
+
+
 def main(argv=None):
-    """Dry run is the default; H01/H02 each require their own operator gate."""
+    """Dry run is default; each prepared hardware group has its own operator gate."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('list', 'preflight', 'run', 'report', 'abort'))
     parser.add_argument('test_id', nargs='?', choices=tuple(stages()))
     parser.add_argument('--port', default='/dev/ttyUSB1')
+    parser.add_argument('--load-host', default='192.168.22.106')
+    parser.add_argument('--load-port', type=int, default=18190)
+    parser.add_argument('--start-channel', type=int, choices=(1, 2, 3), default=1)
+    parser.add_argument('--prior-evidence', type=Path)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--execute', action='store_true')
     mode.add_argument('--dry-run', action='store_true')
@@ -293,20 +350,38 @@ def main(argv=None):
               'Этот CLI однопроходный; другой работающий процесс остановите Ctrl-C. Не переподключаться автоматически.')
         return 0
     if args.test_id is None: parser.error('preflight/run requires one test ID')
-    preflight(args.test_id, args.port)
+    preflight(args.test_id, args.port, args.load_host, args.load_port, args.start_channel)
+    if args.test_id == 'H03' and args.start_channel > 1:
+        if args.prior_evidence is None:
+            parser.error('--prior-evidence is required when resuming H03 after a completed channel')
+        try:
+            validate_h03_checkpoint(args.prior_evidence, args.start_channel)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            parser.error(str(exc))
     if args.command == 'preflight' or not args.execute:
         print('DRY RUN: порт не открыт, SCPI не отправлены.')
         return 0
-    if args.test_id not in ('H01', 'H02'):
+    if args.test_id not in ('H01', 'H02', 'H03'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
-    if args.test_id == 'H02' and stages()['H01'][-1] != 'PASS':
+    if args.test_id in ('H02', 'H03') and not stage_passed(stages()['H01'][-1]):
         print('BLOCKED: требуется рассмотренный PASS H01; порт не открыт.')
+        return 2
+    if args.test_id == 'H03' and not stage_passed(stages()['H02'][-1]):
+        print('BLOCKED: требуется рассмотренный PASS H02; порт не открыт.')
         return 2
     token, final_token, runner = TOKEN, FINAL_TOKEN, h01
     if args.test_id == 'H02':
         from profile_stage import TOKEN as token, FINAL_TOKEN as final_token, h02
         runner = h02
+    if args.test_id == 'H03':
+        from channel_stage import (TOKEN as token, RESUME_CH2_TOKEN, RESUME_CH3_TOKEN,
+                                  FINAL_TOKEN as final_token, h03)
+        if args.start_channel == 2:
+            token = RESUME_CH2_TOKEN
+        elif args.start_channel == 3:
+            token = RESUME_CH3_TOKEN
+        runner = h03
     if not sys.stdin.isatty():
         print('BLOCKED: требуется интерактивный терминал; пакетный ввод запрещён.')
         return 2
@@ -324,18 +399,35 @@ def main(argv=None):
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H%M%S.%fZ')
     evidence = Evidence(ROOT / f'reports/hardware/{now}_{args.test_id}/events.jsonl', args.test_id)
     evidence.add('metadata', **software_metadata(), port=args.port, baud=9600, framing='8N1',
-                 adapter=adapter, topology='independent; no jumpers; no DUT', load='disconnected; input OFF',
+                 adapter=adapter,
+                 topology='independent; no jumpers; no DUT',
+                 load=(f'KORAD KEL103; UDP port {args.load_port}; input OFF'
+                       if args.test_id == 'H03'
+                       else 'disconnected; input OFF'),
                  proposed_caps=('unchanged; initial unknown' if args.test_id == 'H01' else
+                                'each CH: V-cap 4.00 V, software I-cap 0.500 A; '
+                                'initial 4.00 V / 0.500 A' if args.test_id == 'H03' else
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
                  independent_meter=None)
     evidence.add('approval', token=token)
+    if args.test_id == 'H03' and args.start_channel > 1:
+        evidence.add('resume_from', start_channel=args.start_channel,
+                     prior_evidence=args.prior_evidence.name)
+    load = None
     try:
+        if args.test_id == 'H03':
+            from channel_stage import KEL103UDP
+            load = KEL103UDP(args.load_host, args.load_port, evidence=evidence)
         transport = open_transport(args.port)
     except Exception:
+        if load is not None:
+            try: load.close()
+            except Exception: pass
         evidence.add('outcome', outcome='ABORTED', stop_reason='port open failed; verify OFF manually')
         print(f'ABORTED: порт не открыт; проверить OFF вручную. Evidence: {evidence.path}')
         return 2
-    outcome = runner(transport, evidence)
+    outcome = (runner(transport, evidence, load, args.start_channel)
+               if args.test_id == 'H03' else runner(transport, evidence))
     physical_off = False
     try: physical_off = input(f'После ручной проверки введите {final_token}: ').strip() == final_token
     except (EOFError, KeyboardInterrupt): pass
