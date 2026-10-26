@@ -25,6 +25,28 @@ class TestQualification(unittest.TestCase):
         import qualification
         return qualification
 
+    def test_adapter_confirmation_must_match_selected_serial_port(self):
+        q = self.module()
+
+        class Port:
+            device = '/dev/ttyUSB3'
+            vid = 0x10C4
+            pid = 0xEA60
+            description = 'CP2102 USB to UART Bridge Controller'
+
+        class WrongPort:
+            device = '/dev/ttyUSB1'
+            vid = 0x0403
+            pid = 0x6010
+            description = 'FTDI Dual RS232-HS'
+
+        ports = [Port(), WrongPort()]
+        self.assertTrue(q.verify_serial_adapter('/dev/ttyUSB3', 'TTL 10C4:EA60', ports))
+        with self.assertRaisesRegex(ValueError, 'does not match'):
+            q.verify_serial_adapter('/dev/ttyUSB1', 'TTL 10C4:EA60', ports)
+        with self.assertRaisesRegex(ValueError, 'does not match'):
+            q.verify_serial_adapter('/dev/ttyUSB3', 'TTL 0403:6010', ports)
+
     def test_dry_run_never_constructs_transport(self):
         q = self.module()
         for args in (['list'], ['preflight', 'H01'], ['run', 'H01'],
@@ -739,8 +761,9 @@ class TestQualification(unittest.TestCase):
                         return H02_PANEL_TOKEN
                     if H02_DEBUG_TOKEN in prompt: return H02_DEBUG_TOKEN
                     raise AssertionError(prompt)
+                output = io.StringIO()
                 with patch('builtins.input', side_effect=confirm), \
-                        contextlib.redirect_stdout(io.StringIO()):
+                        contextlib.redirect_stdout(output):
                     outcome = h02(fake, evidence)
                 records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
                 self.assertEqual(outcome, 'PASS' if bad == 'none' else 'ABORTED' if bad == 'timeout' else 'FAIL',
@@ -748,6 +771,9 @@ class TestQualification(unittest.TestCase):
                 self.assertTrue(fake.closed)
                 self.assertFalse(any(cmd in ('OUTP 1', 'CHAN:OUTP 1', 'SYST:RWLOCK', '*CLS', '*RST') for cmd in fake.cmds))
                 if bad == 'none':
+                    self.assertIn('выберите канал кнопкой CH1/CH2/CH3, нажмите V-set', output.getvalue())
+                    self.assertIn('введите значение и нажмите Enter', output.getvalue())
+                    self.assertIn('Не меняйте Max Volt Set', output.getvalue())
                     self.assert_driver_path(evidence, fake)
                     self.assertEqual(fake.active_ch, 1)
                     for ch, (limit, current_cap, voltage, current) in enumerate(

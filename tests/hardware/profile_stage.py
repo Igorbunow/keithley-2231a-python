@@ -148,10 +148,12 @@ def h02(transport, evidence):
                 if io.commands != before: raise ValueError('invalid setpoint reached transport')
                 evidence.add('case', channel=ch, check=f'{field}={value} rejected before SCPI', outcome='PASS')
 
-        print('Проверка панели: Max Volt Set должен быть CH1=2.00 V, CH2=3.00 V, '
-              'CH3=4.00 V; все выходы OFF, нагрузка физически отключена. Запросите '
-              'V-set выше каждого индивидуального предела: 2.01/3.01/4.01 V. '
-              'Прибор должен ограничить readback до 2.00/3.00/4.00 V.')
+        print('Проверка панели: Max Volt Set (V Protect) уже задан CH1=2.00 V, '
+              'CH2=3.00 V, CH3=4.00 V. Не меняйте Max Volt Set. Все выходы OFF, '
+              'нагрузка физически отключена. Для каждого канала выберите канал кнопкой '
+              'CH1/CH2/CH3, нажмите V-set, введите значение и нажмите Enter: '
+              'CH1=2.01 V, CH2=3.01 V, CH3=4.01 V. V-set должен стать '
+              '2.00/3.00/4.00 V соответственно. Выходы не включать.')
         dev.diagnostic_write('SYST:LOC')
         from common import operator_gate
         operator_gate(H02_PANEL_TOKEN, 'После панели введите точное подтверждение.', io)

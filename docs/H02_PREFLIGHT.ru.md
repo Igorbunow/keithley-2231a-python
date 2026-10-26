@@ -149,8 +149,12 @@ CONFIRM H02 INDEPENDENT ALL_OFF LOAD=DISCONNECTED CH1=V1.00_I0.100_VCAP2.00_ICAP
 Перед аппаратным запуском убедитесь, что провода нагрузки сняты со всех клемм,
 CH1–CH3 OFF. Runner сначала задаст и прочитает Max Volt Set CH1/CH2/CH3=`2/3/4 V`,
 `Output Recall=Off`, сетевой выключатель доступен. При panel gate runner временно
-переведёт прибор в Local. На панели задайте `V-set=4.01 V` по очереди для CH1, CH2
-и CH3, не включая выходы. Вернитесь в Remote только по команде runner. Подтверждение:
+переведёт прибор в Local. Не меняйте Max Volt Set / V Protect. Для каждого канала
+выберите его кнопкой CH1/CH2/CH3, нажмите `V-set`, введите числовое значение и
+нажмите `Enter`: CH1 `2.01 V`, CH2 `3.01 V`, CH3 `4.01 V`. Ожидаемые итоговые
+V-set: `2.00/3.00/4.00 V`; выходы не включать. Вернитесь в Remote только по команде
+runner. Это последовательность из официального Reference Manual, §2 «Check the
+output», steps 7–10. Подтверждение:
 
 ```text
 CONFIRM H02 PANEL MAXV CH1=2.01 CLAMPED=2.00 CH2=3.01 CLAMPED=3.00 CH3=4.01 CLAMPED=4.00 ALL_OFF

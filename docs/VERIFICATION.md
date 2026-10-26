@@ -1,6 +1,6 @@
 # Feature verification matrix
 
-**Current source requalification:** H01 passed read-only and H02 passed no-load profile application/readback on the shared driver/diagnostic path (both HW OBSERVED; physical OFF confirmed). H03 has started but its first CC point stopped safely before measurement; the false OFF status source was corrected and full H03 replay is pending. H04/H04P remain NOT_RUN; H05 previously ABORTED before energizing and requires replay. Earlier stage results are historical evidence for their recorded revisions. Offline results do not qualify hardware behavior.
+**Current source requalification:** H01 passed read-only. H02 passed its varied OFF-only profile, panel clamp, library soft-cap and gated instrument-rejection checks (HW OBSERVED); the first replay stopped because panel key instructions were ambiguous, then passed after the instructions were corrected. H03 passed functionally with a CH3 OPER status caveat; H04/H04P are reviewed PASS for their recorded scopes; H05 requires replay. Earlier results are historical evidence for recorded revisions. Offline results do not qualify hardware behavior.
 
 [English](VERIFICATION.md) | [Русский](VERIFICATION.ru.md) · [Hardware test procedure](HARDWARE_TESTS.md)
 
@@ -22,12 +22,12 @@
 | COM-04 | Raw TCP-to-UART bridge | SIM TESTED (local loopback) | **HW UNVERIFIED** | MCU firmware/version + loss/fragment tests |
 | COM-05 | Shared normal/diagnostic dispatcher, explicit profile bypass, driver-controlled tracing | SIM TESTED | **HW UNVERIFIED (replay required)** | [Requalification plan](REQUALIFICATION.ru.md) |
 | LOAD-01 | KEL103 control over UDP or USB CDC serial | SIM TESTED (UDP and USB CDC fixtures) | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (USB H04P)** | 21 KEL103 comparisons and full input sequencing; [H04P report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
-| PRF-01 | Applying independent guarded profile with distinct per-channel setpoints | SIM TESTED (1/1.5/2 V and 0.1/0.2/0.3 A) | **H02 varied-profile replay NOT_RUN**; previous shared-value profile was HW OBSERVED | [H02 baseline evidence](hardware_reports/2026-10-26T150528.467723Z_H02_qualification.md) |
-| PRF-02 | Hardware `VOLT:LIM` setpoint ceiling setting/readback, varied by channel | SIM TESTED (2/3/4 V) | **H02 varied-limit replay NOT_RUN**; prior 4.00 V common limit was HW OBSERVED | [H02 baseline evidence](hardware_reports/2026-10-26T150528.467723Z_H02_qualification.md) |
+| PRF-01 | Applying independent guarded profile with distinct per-channel setpoints | SIM TESTED (1/1.5/2 V and 0.1/0.2/0.3 A) | **HW OBSERVED PASS (H02)** | [H02 report](hardware_reports/2026-10-26T164414.981773Z_H02_qualification.md) |
+| PRF-02 | Hardware `VOLT:LIM` setpoint ceiling setting/readback, varied by channel | SIM TESTED (2/3/4 V) | **HW OBSERVED PASS (H02)** | [H02 report](hardware_reports/2026-10-26T164414.981773Z_H02_qualification.md) |
 | PRF-03 | Software cap/health integrity alarms | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only tamper)** | out-of-band limit and setpoint changes detected; profile disarmed |
 | PRF-04 | Full rated-range profile (`unrestricted()`) | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only)** | rated-bound profile readbacks, zero voltage setpoint, outputs OFF |
 | PRF-05 | `power_only` API denylist/fixed preset | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (H04 OFF-only; H04P fixed presets energized)** | profile guards and fixed preset exercised; timer behavior remains unverified |
-| PRF-06 | Per-channel `Max Volt Set` clamp, library soft cap, instrument rejection under explicitly gated profile bypass | SIM TESTED with distinct CH values | **H02 extended replay NOT_RUN**; prior hardware evidence: **H04/H04P observed** | H02 uses panel 2.01/3.01/4.01→2/3/4 V, API reject above each cap before SCPI and debug `VOLT 2.01/3.01/4.01` expected error 120; previous setpoints 1/1.5/2 V must persist. `VOLT:LIM` is a setpoint ceiling, not independent analog OVP. |
+| PRF-06 | Per-channel `Max Volt Set` clamp, library soft cap, instrument rejection under explicitly gated profile bypass | SIM TESTED with distinct CH values | **HW OBSERVED PASS (H02; OFF-only)** | Panel 2.01/3.01/4.01→2/3/4 V; API rejected above individual V/I caps before SCPI; gated debug probes returned error 120 and preserved 1/1.5/2 V. `VOLT:LIM` is a setpoint ceiling, not independent analog OVP. [Report](hardware_reports/2026-10-26T164414.981773Z_H02_qualification.md) |
 | PRF-07 | Low-power profile CV/CC boundaries and independent KEL103 comparison | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (H04P; 21 points)** | 3 channels × CV/CC points and fixed preset; unrestricted rated limits not energized; [report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
 | SEQ-01 | Fixed `power_only` CH1→CH2→CH3 power-up and reverse power-down, profile guards and measured delays | **SIM TESTED** | **HW UNVERIFIED (H05 ABORTED before energizing; missing Remote entry fixed; powered retest pending)** | TDS 3064B x10 capture of all six edges, actual PSU status/readbacks, KEL103 CR22 on CH1; common-negative wiring means isolation is outside this test |
 | OUT-01 | Individual output enable/disable | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)** | per-channel `CHAN:OUTP?`, lamp/readback/independent dummy load |
@@ -67,10 +67,11 @@ These results are **SIM TESTED** only. See the [audit](hardware_reports/2026-10-
 `tools/hw_qualify.py list`, `preflight` and `run` default to dry run; no port opens.
 H01 has a read-only scenario with its own interactive gate: remote/local control,
 selected-channel queries, all-channel ON status bits and two error queue reads.
-H02 has a manually gated OFF-only profile scenario. Its initial hardware attempt
-failed on an in-session `*IDN?` firmware mismatch, then the corrected scenario passed;
-the offline suite is 48/48. See the [H02 operator card](H02_PREFLIGHT.ru.md) and both
-physical reports below. H03 is functionally **PASS with a CH3 status caveat** across all six connected-load CV/CC points and final OFF checks; the latest strict runner outcome is PARTIAL because CH3 OPER omits redundant mode bits on firmware 1.04-1.04 while QUES, API, displays and KEL103 comparisons agree. See the newest report below. KEL103 UDP
+H02 has a manually gated OFF-only profile scenario. The corrected run passed varied
+profile application/readback, panel clamps, API soft rejection and instrument error 120
+probes; see [H02 report](hardware_reports/2026-10-26T164414.981773Z_H02_qualification.md).
+The first panel attempt remains recorded as incomplete because its operator instructions
+were ambiguous. H03 is functionally **PASS with a CH3 status caveat** across all six connected-load CV/CC points and final OFF checks; the latest strict runner outcome is PARTIAL because CH3 OPER omits redundant mode bits on firmware 1.04-1.04 while QUES, API, displays and KEL103 comparisons agree. See the newest report below. KEL103 UDP
 control was exercised on hardware for CH2. H04 is reviewed **PASS for OFF-only scope**;
 H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05–H12/O01/O02 remain pending individual review.
 
@@ -235,6 +236,15 @@ offline regressions are **SIM TESTED** only; they have not been repeated on hard
 See the [updated H02 card](H02_PREFLIGHT.ru.md).
 
 ### H02 replay on the shared driver path — 2026-10-26
+
+The corrected varied-value replay is **HW OBSERVED PASS** for the complete H02
+OFF-only scope: profile application/readback, panel clamp on all channels, API
+pre-SCPI rejection, and explicitly armed debug-bypass instrument rejection. The
+panel returned 2/3/4 V after 2.01/3.01/4.01 V requests; instrument probes returned
+`120, "Parameter overflowed"` and preserved 1/1.5/2 V setpoints. Outputs and load
+were confirmed OFF. The earlier attempt stopped before CH2/CH3 because panel
+instructions were ambiguous; it is retained as an incomplete historical attempt.
+See [corrected H02 report](hardware_reports/2026-10-26T164414.981773Z_H02_qualification.md).
 
 [Current-source H02 evidence](hardware_reports/2026-10-26T150528.467723Z_H02_qualification.md).
 The initial readbacks were CH1/CH2/CH3 = 2.20/3.30/4.40 V at 0.100 A, each with

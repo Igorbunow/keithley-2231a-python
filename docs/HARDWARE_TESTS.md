@@ -11,12 +11,18 @@
 > simulation; H07 is a 2–5 minute run. Diode DUTs and longer stress runs need
 > separate approval. The overview below does not authorize those actions.
 
-H02: [OFF-only profile operator card](H02_PREFLIGHT.ru.md). Its baseline profile
-application was physically observed. The pending protection replay uses distinct
+H02: [OFF-only profile operator card](H02_PREFLIGHT.ru.md). The baseline profile
+application and protection replay passed on hardware with distinct
 CH1/CH2/CH3 setpoints and caps: V=`1.00/1.50/2.00 V`, I=`0.100/0.200/0.300 A`,
 V-cap=`2.00/3.00/4.00 V`, software I-cap=`0.300/0.400/0.500 A`. It checks panel
 clamp, API soft rejection before SCPI and an explicitly gated instrument rejection.
-These new checks are offline tested only and await their own hardware gate.
+The first replay stopped at the panel check because the button instructions were
+ambiguous; the exact front-panel sequence was added and the corrected run passed.
+Panel clamp returned 2/3/4 V after requests 2.01/3.01/4.01 V, API soft guards
+rejected above-cap requests before SCPI, and the armed debug probes returned
+instrument error 120 while preserving 1/1.5/2 V setpoints. Outputs stayed OFF and
+the disconnected load stayed OFF. See the [corrected report](hardware_reports/2026-10-26T164414.981773Z_H02_qualification.md)
+and [incomplete first replay](hardware_reports/2026-10-26T163157.369595Z_H02_qualification.md).
 
 ### Cross-channel value rule
 

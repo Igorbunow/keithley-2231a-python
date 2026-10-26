@@ -122,6 +122,28 @@ def open_transport(port):
     return SerialTransport(port, baudrate=9600, timeout=2.0)
 
 
+def verify_serial_adapter(port, adapter, available_ports=None):
+    """Require the operator-confirmed USB VID:PID to match the selected port."""
+    match = re.search(r'(?<![0-9A-Fa-f])([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?![0-9A-Fa-f])', adapter)
+    if match is None:
+        raise ValueError('Adapter confirmation must include USB VID:PID, for example 10C4:EA60')
+    if available_ports is None:
+        from serial.tools import list_ports
+        available_ports = list_ports.comports()
+    selected = Path(port).resolve()
+    for candidate in available_ports:
+        if Path(candidate.device).resolve() != selected:
+            continue
+        actual = (candidate.vid, candidate.pid)
+        expected = (int(match.group(1), 16), int(match.group(2), 16))
+        if actual == expected:
+            return True
+        actual_text = ('unknown' if None in actual else f'{actual[0]:04X}:{actual[1]:04X}')
+        raise ValueError(f'USB adapter {port} is {actual_text}, does not match confirmed '
+                         f'{expected[0]:04X}:{expected[1]:04X}')
+    raise ValueError(f'USB adapter port {port} is not present in serial-port inventory')
+
+
 def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_channel=1,
               load_transport='udp', load_serial_port='/dev/ttyACM0', diagnose_status=False,
               load_connected=False):
@@ -599,6 +621,11 @@ def main(argv=None):
         adapter = input('Проверенный USB–TTL адаптер (модель, USB VID:PID; без серийного номера): ').strip()
         if not adapter:
             print('BLOCKED: не указан проверенный адаптер.')
+            return 2
+        try:
+            verify_serial_adapter(args.port, adapter)
+        except (ImportError, OSError, ValueError) as exc:
+            print(f'BLOCKED: {exc}; последовательный порт не открыт.')
             return 2
         while input(f'Подтверждение: {token}\n> ').strip() != token:
             print('Подтверждение не распознано; ожидаю повторный ввод. Для остановки — Ctrl-C.')
