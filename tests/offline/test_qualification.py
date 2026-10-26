@@ -924,6 +924,8 @@ class TestQualification(unittest.TestCase):
                 outcome = h04(fake, evidence)
             self.assertEqual(outcome, 'PASS')
             self.assertIn('Max Volt Set', output.getvalue())
+            self.assertIn('CH1=2.00 V, CH2=3.00 V, CH3=4.00 V', output.getvalue())
+            self.assertIn('нажмите V-set, введите 2.01 и Enter', output.getvalue())
             self.assert_driver_path(evidence, fake)
             self.assertIn('4.01 V', output.getvalue())
             self.assertTrue(fake.closed)
