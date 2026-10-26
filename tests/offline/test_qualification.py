@@ -52,6 +52,7 @@ class TestQualification(unittest.TestCase):
         for args in (['list'], ['preflight', 'H01'], ['run', 'H01'],
                      ['preflight', 'H02'], ['run', 'H02'],
                      ['preflight', 'H05'], ['run', 'H05'],
+                     ['preflight', 'H06'], ['run', 'H06'],
                      ['run', 'H09'], ['abort'], ['report']):
             with self.subTest(args=args), patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
                 with contextlib.redirect_stdout(io.StringIO()):
@@ -70,6 +71,140 @@ class TestQualification(unittest.TestCase):
             self.assertIn('10% при включении и 90% при выключении', text)
             self.assertIn('пересечения 0.5 V', text)
             self.assertIn('НЕ ВКЛЮЧАТЬ ВЫХОДЫ', text)
+
+    def test_h06_preflight_is_explicit_and_offline(self):
+        q = self.module()
+        with patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                q.preflight('H06', '/dev/ttyUSB3', load_transport='serial',
+                            load_serial_port='/dev/ttyACM0')
+            text = output.getvalue()
+            self.assertIn('KEL103 USB /dev/ttyACM0, 115200 8N1', text)
+            self.assertIn('CR 22 Ω', text)
+            self.assertIn('только к одному каналу за раз', text)
+            self.assertIn('AC power-cycle', text)
+            self.assertIn('Разрешение на H06 timer pass', text)
+            self.assertIn('LOAD=KEL103 DISCONNECTED USB=/dev/ttyACM0 BAUD=115200', text)
+
+    def test_h06_timer_expiry_and_reenable_use_common_driver_path(self):
+        from h06_stage import h06
+        from test_driver import FakeTransport
+
+        class Clock:
+            now = 10.0
+            def monotonic(self): return self.now
+            def sleep(self, seconds): self.now += seconds
+
+        class TimedTransport(FakeTransport):
+            def __init__(self, clock):
+                super().__init__()
+                self.clock = clock
+                self.enabled_at = {}
+
+            def _expire(self):
+                for channel, values in self.values.items():
+                    if (values['CHAN:OUTP'] and values['OUTP:TIM:STAT'] and
+                            self.clock.now - self.enabled_at.get(channel, self.clock.now) >=
+                            values['OUTP:TIM:DEL']):
+                        values['CHAN:OUTP'] = 0.0
+
+            def write(self, command):
+                super().write(command)
+                if command.startswith('CHAN:OUTP 1'):
+                    self.enabled_at[self.active_ch] = self.clock.now
+
+            def query(self, command):
+                self._expire()
+                return super().query(command)
+
+        class Load:
+            def __init__(self, transport):
+                self.transport = transport
+                self.input = 'OFF'
+                self.resistance = None
+                self.live = True
+                self.closed = False
+
+            def identify(self): return 'KORAD-KEL103 V3.30 SN:[REDACTED]'
+            def input_state(self): return self.input
+            def configure_cr(self, resistance):
+                raise AssertionError('H06 must use the bounded CR configuration path')
+            def configure_h04p_cr(self, resistance):
+                if self.input != 'OFF' or resistance != 22.0:
+                    raise AssertionError('invalid CR setup')
+                self.resistance = resistance
+            def set_input(self, enabled):
+                self.input = 'ON' if enabled else 'OFF'
+            def measurements(self):
+                values = self.transport.values[self.target_channel]
+                enabled = bool(values['CHAN:OUTP'])
+                voltage = values['VOLT'] if enabled and self.input == 'ON' else 0.0
+                current = voltage / self.resistance if self.resistance else 0.0
+                return {'kel103_voltage_v': voltage, 'kel103_current_a': current,
+                        'kel103_power_w': voltage * current}
+            def close(self): self.closed = True
+
+        clock = Clock()
+        raw = TimedTransport(clock)
+        load = Load(raw)
+        answers = [
+            'CONFIRM H06 CONNECT CH1 ALL_OFF LOAD=OFF',
+            'CONFIRM H06 MOVE CH1->CH2 ALL_OFF LOAD=OFF',
+            'CONFIRM H06 MOVE CH2->CH3 ALL_OFF LOAD=OFF',
+            'CONFIRM H06 DISCONNECT CH3 ALL_OFF LOAD=OFF',
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H06')
+            with patch('h06_stage.time.monotonic', clock.monotonic), \
+                    patch('h06_stage.time.sleep', clock.sleep), \
+                    patch('builtins.input', side_effect=answers), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                outcome = h06(raw, evidence, load)
+            events = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            self.assertEqual(outcome, 'PARTIAL',
+                             [event for event in events
+                              if event['event'] in ('stage_error', 'cleanup_error', 'query_outcome')])
+            self.assert_driver_path(evidence, raw)
+            expiries = [event for event in events if event['event'] == 'timer_expiry']
+            reenabled = [event for event in events if event['event'] == 'timer_reenable']
+            self.assertEqual([event['channel'] for event in expiries], [1, 2, 3])
+            self.assertTrue(all(2.5 <= event['elapsed_s'] <= 4.0 for event in expiries))
+            self.assertEqual([event['channel'] for event in reenabled], [1, 2, 3])
+            self.assertEqual(raw.cmds.count('CHAN:OUTP 1'), 6)
+            self.assertEqual(raw.cmds.count('OUTP:TIM:DEL 3.0'), 3)
+            self.assertFalse(any(raw.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+            self.assertTrue(all(raw.values[ch]['OUTP:TIM:STAT'] == 0 for ch in (1, 2, 3)))
+            self.assertEqual(load.input, 'OFF')
+            self.assertTrue(load.closed)
+            self.assertIn('Output Recall AC power-cycle remains separately gated',
+                          evidence.path.read_text())
+
+            failed_clock = Clock()
+            failed_raw = TimedTransport(failed_clock)
+            failed_load = Load(failed_raw)
+            def fail_cr_setup(resistance):
+                raise ValueError(f'unsupported CR value: {resistance}')
+            failed_load.configure_h04p_cr = fail_cr_setup
+            with tempfile.TemporaryDirectory() as failed_tmp:
+                failed_evidence = self.module().Evidence(
+                    Path(failed_tmp) / 'events.jsonl', 'H06')
+                with patch('h06_stage.time.monotonic', failed_clock.monotonic), \
+                        patch('h06_stage.time.sleep', failed_clock.sleep), \
+                        patch('builtins.input', return_value='CONFIRM H06 CONNECT CH1 ALL_OFF LOAD=OFF'), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    failed_outcome = h06(failed_raw, failed_evidence, failed_load)
+                failed_events = [json.loads(line) for line in
+                                 failed_evidence.path.read_text().splitlines()]
+                self.assertEqual(failed_outcome, 'FAIL')
+                self.assertFalse(any(event['event'] == 'cleanup_error'
+                                     for event in failed_events))
+                self.assertEqual(failed_raw.cmds.count('OUTP:TIM:STAT 0'), 6)
+                self.assertFalse(any(failed_raw.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+                self.assertTrue(all(failed_raw.values[ch]['OUTP:TIM:STAT'] == 0
+                                    for ch in (1, 2, 3)))
+                self.assertEqual(failed_load.input, 'OFF')
+                self.assert_driver_path(failed_evidence, failed_raw)
 
     def test_h05_scope_edge_analysis_and_transport_allowlist(self):
         from h05_stage import H05Scope, decode_isf, transitions, qualified_transitions

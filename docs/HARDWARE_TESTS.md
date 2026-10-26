@@ -86,7 +86,7 @@ Record `*IDN?`, SCPI version, selected channel readbacks, basic output states, s
 
 1. At low voltage/current, switch only CH1 ON then OFF; repeat CH2/CH3. Verify independent terminal voltages with a DMM and front-panel indicators.
 2. Increase load slowly to transition from CV into CC; confirm actual panel mode and `STAT:OPER:INST:ISUMx:COND?` bit mapping and response latency. Verify per-channel profile trip on mode mismatch.
-3. Test timer at low energy (e.g., 2 seconds) and record whether *remote* output activation starts it, its error in seconds, and if it changes other channels.
+3. H06 qualifies timers on CH1/CH2/CH3 with different 1.00/1.50/2.00 V setpoints and a KEL103 CR 22 Ω load, one channel at a time. Configure 3.0 s while OFF, measure remote-ON to output-OFF (acceptance window 2.5–4.0 s), then disable the timer and verify re-enable remains ON for 0.5 s. Output Recall power-cycle is a separate manual approval; it is not performed by the timer runner. See [H06 preflight](H06_PREFLIGHT.ru.md).
 4. During a safe dummy-load run disconnect the serial cable and/or kill the TCP bridge. Record if output stays ON; design external protection accordingly. Do not claim emergency SCPI OFF can work through a lost link.
 
 ## Stage 4 — power-only profile
