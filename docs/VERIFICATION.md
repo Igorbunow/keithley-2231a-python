@@ -1,6 +1,6 @@
 # Feature verification matrix
 
-**Current source requalification:** H01 passed read-only on the shared driver/diagnostic path (HW OBSERVED; physical OFF confirmed). H02/H03/H04/H04P remain NOT_RUN and H05 previously ABORTED before energizing; replay is required. Earlier stage PASS/HW VERIFIED results are historical evidence for their recorded revisions. Offline results do not qualify hardware behavior.
+**Current source requalification:** H01 passed read-only and H02 passed no-load profile application/readback on the shared driver/diagnostic path (both HW OBSERVED; physical OFF confirmed). H03/H04/H04P remain NOT_RUN; H05 previously ABORTED before energizing and requires replay. Earlier stage results are historical evidence for their recorded revisions. Offline results do not qualify hardware behavior.
 
 [English](VERIFICATION.md) | [Русский](VERIFICATION.ru.md) · [Hardware test procedure](HARDWARE_TESTS.md)
 
@@ -22,8 +22,8 @@
 | COM-04 | Raw TCP-to-UART bridge | SIM TESTED (local loopback) | **HW UNVERIFIED** | MCU firmware/version + loss/fragment tests |
 | COM-05 | Shared normal/diagnostic dispatcher, explicit profile bypass, driver-controlled tracing | SIM TESTED | **HW UNVERIFIED (replay required)** | [Requalification plan](REQUALIFICATION.ru.md) |
 | LOAD-01 | KEL103 control over UDP or USB CDC serial | SIM TESTED (UDP and USB CDC fixtures) | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (USB H04P)** | 21 KEL103 comparisons and full input sequencing; [H04P report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
-| PRF-01 | Applying independent guarded profile, output-OFF-first | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only)** | no-load SCPI and front panel + readbacks |
-| PRF-02 | Hardware `VOLT:LIM` setting/readback | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only)** | instrument limit readbacks, outputs OFF |
+| PRF-01 | Applying independent guarded profile, output-OFF-first | SIM TESTED | **HW OBSERVED (current H02; no-load profile applied and verified on all 3 CH)**; previous source: **HW VERIFIED (H04; OFF-only)** | [H02 evidence](hardware_reports/2026-10-26T150528.467723Z_H02_qualification.md) |
+| PRF-02 | Hardware `VOLT:LIM` setting/readback | SIM TESTED | **HW OBSERVED (current H02; 4.00 V limit/state readback on all 3 CH, outputs OFF)**; previous source: **HW VERIFIED (H04; OFF-only)** | [H02 evidence](hardware_reports/2026-10-26T150528.467723Z_H02_qualification.md) |
 | PRF-03 | Software cap/health integrity alarms | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only tamper)** | out-of-band limit and setpoint changes detected; profile disarmed |
 | PRF-04 | Full rated-range profile (`unrestricted()`) | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only)** | rated-bound profile readbacks, zero voltage setpoint, outputs OFF |
 | PRF-05 | `power_only` API denylist/fixed preset | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (H04 OFF-only; H04P fixed presets energized)** | profile guards and fixed preset exercised; timer behavior remains unverified |
@@ -218,7 +218,20 @@ The operator confirmed all outputs OFF, load OFF/disconnected, and 1.00 V / 0.10
 setpoints on every channel. See [first attempt](hardware_reports/2026-10-25T213651.354322Z_H02_qualification.md)
 and [corrected H02 PASS](hardware_reports/2026-10-25T214134.648837Z_H02_qualification.md).
 H02 is **HW OBSERVED PASS** for the no-load profile application/readback; PRF-01/PRF-02
-broader electrical behavior remains **HW UNVERIFIED**. No later stage is authorized.
+broader electrical behavior remained **HW UNVERIFIED**. At that time no later stage was authorized.
+
+### H02 replay on the shared driver path — 2026-10-26
+
+[Current-source H02 evidence](hardware_reports/2026-10-26T150528.467723Z_H02_qualification.md).
+The initial readbacks were CH1/CH2/CH3 = 2.20/3.30/4.40 V at 0.100 A, each with
+4.50 V limit enabled and output/timer OFF. The library applied and verified 1.00 V /
+0.100 A, 4.00 V limit enabled, independent topology, and outputs/timers OFF on all
+three channels. All 167 error-queue checks returned `0, "No error"`. Three unarmed ON
+requests and 18 invalid V/I setpoint attempts were rejected before SCPI. Final internal
+measurements with outputs off were 0.00371838/0.00152016/0 V and 0/0/0.000290878 A;
+measurement accuracy was not evaluated. Operator confirmed physical OFF. This is
+**HW OBSERVED PASS** for the no-load profile scope; H03 is the next group and remains
+separately gated.
 
 ### H03 — all six CV/CC functional points reviewed PASS; CH3 OPER caveat recorded
 

@@ -344,6 +344,9 @@ class TestQualification(unittest.TestCase):
     def test_reviewed_pass_and_requalification_are_distinct(self):
         q = self.module()
         self.assertTrue(q.stage_passed('**PASS (OFF-only; reviewed)**'))
+        self.assertTrue(q.stage_passed(q.stages()['H01'][-1]))
+        self.assertTrue(q.stage_passed(
+            '**PASS (HW OBSERVED; reviewed; [evidence](report.md))**'))
         self.assertFalse(q.stage_passed('NOT_RUN (requalification; historical PASS)'))
 
     def test_h03_resume_requires_reviewed_prior_points_and_off_confirmation(self):
