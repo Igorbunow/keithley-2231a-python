@@ -34,14 +34,14 @@ comparison requires equal values, retain that equal-value point and add a separa
 varied channel check; do not use identical values as the only cross-channel check.
 Never vary values beyond the limits of the hardware profile or the documented test.
 
-H03: [KEL103 load and transition operator card](H03_PREFLIGHT.ru.md). CH1, CH2 and CH3
-CV/CC points have physical measurements and live display confirmations. The last CH3 run
-compared both Keithley/KEL103 readings within tolerance and recorded 192 `SYST:ERR?`
-replies of `0, "No error"`. However, CH3 returned operation status `8` in both CV and CC,
-while questionable status returned `1` (CV) and `2` (CC). This contradicts the manual's
-mode-bit definition for both channel summaries; status interpretation remains unresolved
-and H03 is PARTIAL. All channels and KEL103 INPUT were read and confirmed OFF. The corrected library now returns CV/CC from questionable status on physical CH3 replay, while retaining operation status `8` as an unqualified manual discrepancy. H03 remains PARTIAL. All outputs/load were confirmed OFF. See the
-[latest H03 report](hardware_reports/2026-10-26T003341.714219Z_H03_qualification.md).
+H03: [KEL103 load and transition operator card](H03_PREFLIGHT.ru.md). The current-runner
+replay passed all six channel/mode points with live display confirmations, independent
+KEL103 comparisons, per-channel OFF checks and final physical OFF confirmation. The
+697 actual `SYST:ERR?` responses were all `0, "No error"`. CH3 retains a status caveat:
+OPER=`8` in CV and CC, while QUES=`1`/`2`, library readback, panel and load agree on the
+mode. A preceding CH2 CC disagreement was traced to the load still being wired to CH3;
+the corrected CH1-start run passed CH2 CC. See the
+[current H03 report](hardware_reports/2026-10-26T174052.170220Z_H03_qualification.md).
 
 The next CH3 resume aborted before configuration: KEL103 UDP `*IDN?` timed out;
 cleanup then read `-200, "Execution error"` after `OUTP 0`. The error response cannot
@@ -117,7 +117,7 @@ Record `*IDN?`, SCPI version, selected channel readbacks, basic output states, s
 Fill [`hardware_reports/TEMPLATE.md`](hardware_reports/TEMPLATE.md) for each ID, include equipment/firmware/source commit/environment, expected-vs-actual values, screenshots/logs, and explicit pass/fail. Update the exact feature row in [`VERIFICATION.md`](VERIFICATION.md). Keep raw reports private until serial numbers, device identities and network configuration are redacted. No automatic promotion from simulator tests.
 
 
-H03 reviewed disposition: **PASS for the tested functional scope** (all three channels in CV and CC, panel/load comparison and final OFF). Caveat: CH3 OPER returns ON only (`8`) for CV and CC on firmware 1.04-1.04; QUES and library mode readback agree with the panel. The runner's raw PARTIAL is retained as a status-model discrepancy, not a functional failure. H04 completed **PASS for OFF-only scope**: distinct 2.00/3.00/4.00 V Max Volt Set values clamped panel attempts of 2.01/3.01/4.01 V; SCPI confirmed the clamp; API requests above per-channel V/I caps were rejected before SCPI; tamper checks passed. All outputs stayed OFF and `SYST:ERR?` remained `0, "No error"`. H04-Powered also passed for the low-power profile scope with 21 measured points; unrestricted rated limits are not verified. See the H04P report and qualification matrix.
+H03 current-runner disposition: **PASS for the tested functional scope** (all three channels in CV and CC, panel/load comparison and final OFF). Caveat: CH3 OPER returns ON only (`8`) for CV and CC on firmware 1.04-1.04; QUES and library mode readback agree with the panel. An earlier runner report recorded PARTIAL under its stricter status criterion; the current six-point replay is PASS. H04 completed **PASS for OFF-only scope**: distinct 2.00/3.00/4.00 V Max Volt Set values clamped panel attempts of 2.01/3.01/4.01 V; SCPI confirmed the clamp; API requests above per-channel V/I caps were rejected before SCPI; tamper checks passed. All outputs stayed OFF and `SYST:ERR?` remained `0, "No error"`. H04-Powered also passed for the low-power profile scope with 21 measured points; unrestricted rated limits are not verified. See the H04P report and qualification matrix.
 
 ## H04-Powered — profile boundary supplement (completed)
 

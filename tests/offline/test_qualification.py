@@ -360,6 +360,7 @@ class TestQualification(unittest.TestCase):
         self.assertIn('CR 12.0 Ω', text)
         self.assertIn('считывает U/I/P', text)
         self.assertIn('перестановки CH1→CH2 и CH2→CH3', text)
+        self.assertIn('отсутствующие CV/CC-биты OPER записываются как оговорка', text)
         self.assertIn('DRY RUN', text)
         with contextlib.redirect_stdout(output := io.StringIO()):
             q.preflight('H03', '/dev/ttyUSB1', start_channel=3)
@@ -371,12 +372,15 @@ class TestQualification(unittest.TestCase):
                         load_serial_port='/dev/ttyACM0', load_connected=True)
         text = output.getvalue()
         self.assertIn('CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 CONNECTED '
-                      'USB=/dev/ttyACM0 BAUD=115200 RECALL=OFF VCAP=4.00 '
-                      'ICAP=0.500 ERRBASE=CHECK', text)
+                      'USB=/dev/ttyACM0 BAUD=115200 RECALL=OFF CH1=V1.00_I0.100_'
+                      'VCAP4.00_ICAP0.300 CH2=V1.50_I0.200_VCAP4.05_ICAP0.400 '
+                      'CH3=V2.00_I0.300_VCAP4.10_ICAP0.500 ERRBASE=CHECK', text)
         self.assertIn('перед профилем проверит все выходы OFF', text)
 
     def test_reviewed_pass_and_requalification_are_distinct(self):
         q = self.module()
+        self.assertTrue(q.stage_passed(q.stages()['H02'][-1]))
+        self.assertTrue(q.stage_passed(q.stages()['H03'][-1]))
         self.assertTrue(q.stage_passed('**PASS (OFF-only; reviewed)**'))
         self.assertTrue(q.stage_passed(q.stages()['H01'][-1]))
         self.assertTrue(q.stage_passed(
@@ -420,6 +424,18 @@ class TestQualification(unittest.TestCase):
             ch2_path.write_text('\n'.join(json.dumps(event) for event in ch2_events), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, 'OFF confirmation'):
                 q.validate_h03_checkpoint([ch1_path, ch2_path], 3)
+
+    def test_h03_profile_starts_with_distinct_channel_values_and_caps(self):
+        from channel_stage import profile
+
+        channel_values = tuple(
+            (channel.initial_voltage, channel.initial_current,
+             channel.max_voltage, channel.max_current)
+            for channel in profile().channels)
+        self.assertEqual(channel_values, (
+            (1.00, 0.100, 4.00, 0.300),
+            (1.50, 0.200, 4.05, 0.400),
+            (2.00, 0.300, 4.10, 0.500)))
 
     def test_h03_success_trace_and_error_170_stop(self):
         """Exercise the bounded H03 source/load flow using simulated I/O only."""
@@ -510,6 +526,9 @@ class TestQualification(unittest.TestCase):
                 if (command.upper().startswith(('STAT:OPER:', 'STATUS:OPERATION:')) and channel == 3
                         and getattr(self, 'channel3_status_override', None) is not None):
                     return str(self.channel3_status_override)
+                if (command.upper().startswith(('STAT:QUES:', 'STATUS:QUESTIONABLE:')) and channel == 3
+                        and getattr(self, 'channel3_status_override', None) is not None):
+                    return '2' if self.values[channel]['CURR'] == .25 else '1'
                 return '10' if self.values[channel]['CURR'] == .25 else '9'
 
             def write(self, command):
@@ -542,6 +561,10 @@ class TestQualification(unittest.TestCase):
             self.assertEqual(sum(command == 'CHAN:OUTP 0' for command in fake.cmds), 6)
             self.assertFalse(any(fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
             self.assertEqual(evidence.path.read_text().count('"event": "measurement"'), 6)
+            live_load_checks = [record for record in records
+                                if record['event'] == 'kel103_input_during_measurement']
+            self.assertEqual(len(live_load_checks), 6)
+            self.assertTrue(all(record['input_state'] == 'ON' for record in live_load_checks))
             self.assertIn('"outcome": "PASS"', evidence.path.read_text())
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -608,7 +631,7 @@ class TestQualification(unittest.TestCase):
             evidence = q.Evidence(Path(tmp) / 'channel3_status_mismatch.jsonl', 'H03')
             with patch('builtins.input', side_effect=operator_answers()), contextlib.redirect_stdout(io.StringIO()):
                 outcome = h03(fake, evidence, load)
-            self.assertEqual(outcome, 'PARTIAL')
+            self.assertEqual(outcome, 'PASS')
             self.assertFalse(any(fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
             self.assertEqual(load.input, 'OFF')
             events = [json.loads(line) for line in evidence.path.read_text().splitlines()]
@@ -616,14 +639,14 @@ class TestQualification(unittest.TestCase):
                               if event.get('event') == 'measurement'
                               and event.get('channel') == 3 and event.get('mode') == 'CV')
             self.assertEqual(diagnostic['keithley_status_mask'], 8)
-            self.assertEqual(diagnostic['keithley_questionable_status_mask'], 9)
+            self.assertEqual(diagnostic['keithley_questionable_status_mask'], 1)
             self.assertTrue(any(event.get('event') == 'operator_display_confirmation'
                                 and event.get('channel') == 3 and event.get('keithley_panel_mode') == 'CV'
                                 for event in events))
             self.assertEqual([event['mode'] for event in events
                               if event.get('event') == 'measurement'
                               and event.get('channel') == 3], ['CV', 'CC'])
-            self.assertEqual(sum(event.get('event') == 'status_unqualified'
+            self.assertEqual(sum(event.get('event') == 'status_caveat'
                                  and event.get('channel') == 3 for event in events), 2)
             self.assertFalse(any(event.get('event') == 'stage_error' for event in events))
 
@@ -657,7 +680,7 @@ class TestQualification(unittest.TestCase):
                     patch('channel_stage.time.sleep'), \
                     contextlib.redirect_stdout(io.StringIO()):
                 outcome = h03(fake, evidence, load, start_channel=3, diagnose_status=True)
-            self.assertEqual(outcome, 'PARTIAL')
+            self.assertEqual(outcome, 'PASS')
             records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
             snapshots = [record for record in records if record['event'] == 'status_diagnostic']
             self.assertEqual([(record['mode'], record['phase'], record['selected_channel'])
@@ -670,6 +693,7 @@ class TestQualification(unittest.TestCase):
                 self.assertEqual(record['responses']['STAT:OPER:INST:ISUM3:COND?'], '8')
                 self.assertEqual(record['responses'][
                     'STATus:OPERation:INSTrument:ISUMmary3:CONDition?'], '8')
+            self.assertEqual(sum(record['event'] == 'status_caveat' for record in records), 2)
             self.assertEqual(fake.cmds.count('CHAN:OUTP 1'), 2)
             self.assertFalse(any(fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
             self.assertEqual(load.input, 'OFF')

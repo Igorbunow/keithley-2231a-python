@@ -19,12 +19,9 @@ from common import StageAdapter, operator_gate, require_outputs
 
 from keithley2231a import ChannelProfile, Keithley2231A, Profile, SafetyError
 
-TOKEN = ('CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED '
-         'LAN=UDP:18190 RECALL=OFF VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
-RESUME_CH2_TOKEN = ('CONFIRM H03 RESUME_CH2 INDEPENDENT ALL_OFF '
-                    'LOAD=KEL103 INPUT=OFF LAN=UDP:18190 VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
-RESUME_CH3_TOKEN = ('CONFIRM H03 RESUME_CH3 INDEPENDENT ALL_OFF '
-                    'LOAD=KEL103 INPUT=OFF LAN=UDP:18190 VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
+PROFILE_TOKEN = ('CH1=V1.00_I0.100_VCAP4.00_ICAP0.300 '
+                 'CH2=V1.50_I0.200_VCAP4.05_ICAP0.400 '
+                 'CH3=V2.00_I0.300_VCAP4.10_ICAP0.500')
 FINAL_TOKEN = 'CONFIRM H03 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
 MODES = ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?')
 OFF = tuple(f'STAT:OPER:INST:ISUM{ch}:COND?' for ch in (1, 2, 3))
@@ -53,14 +50,14 @@ def approval_token(start_channel, load_transport='udp', load_host='192.168.22.10
     if start_channel == 1:
         if load_connected:
             return ('CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 CONNECTED '
-                    f'{connection} RECALL=OFF VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
+                    f'{connection} RECALL=OFF {PROFILE_TOKEN} ERRBASE=CHECK')
         return ('CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED '
-                f'{connection} RECALL=OFF VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
+                f'{connection} RECALL=OFF {PROFILE_TOKEN} ERRBASE=CHECK')
     if start_channel not in (2, 3):
         raise ValueError('start channel must be 1, 2 or 3')
     action = 'DIAGNOSTIC_CH3' if diagnose_status else f'RESUME_CH{start_channel}'
     return (f'CONFIRM H03 {action} INDEPENDENT ALL_OFF '
-            f'LOAD=KEL103 INPUT=OFF {connection} VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
+            f'LOAD=KEL103 INPUT=OFF {connection} {PROFILE_TOKEN} ERRBASE=CHECK')
 
 
 class KEL103UDP:
@@ -316,10 +313,12 @@ class KEL103Serial(KEL103UDP):
 
 
 def profile():
-    """Conservative 4 V / 0.5 A caps; outputs remain OFF after application."""
-    return Profile('H03 CV CC qualification', tuple(
-        ChannelProfile(4.0, 0.5, 4.0, 0.5, expected_regulation='auto')
-        for _ in (1, 2, 3)), wiring='independent', lock_front_panel=False,
+    """Distinct safe starting values and per-channel caps; outputs remain OFF."""
+    return Profile('H03 CV CC qualification', (
+        ChannelProfile(4.00, 0.300, 1.00, 0.100, expected_regulation='auto'),
+        ChannelProfile(4.05, 0.400, 1.50, 0.200, expected_regulation='auto'),
+        ChannelProfile(4.10, 0.500, 2.00, 0.300, expected_regulation='auto')),
+        wiring='independent', lock_front_panel=False,
         verify_every_s=3600.0)
 
 
@@ -337,10 +336,12 @@ class H03Scope(StageAdapter):
          'VOLT:LIM?', 'VOLT?')
     )
     WRITES = frozenset(
-        ('CHAN:OUTP 0', 'CHAN:OUTP 1', 'CURR 0', 'CURR 0.250', 'CURR 0.500', 'INST:NSEL 1',
+        ('CHAN:OUTP 0', 'CHAN:OUTP 1', 'CURR 0', 'CURR 0.100', 'CURR 0.200',
+         'CURR 0.250', 'CURR 0.300', 'CURR 0.400', 'CURR 0.500', 'INST:NSEL 1',
          'INST:NSEL 2', 'INST:NSEL 3', 'OUTP 0', 'OUTP:PARALLEL 0', 'OUTP:SER 0',
-         'OUTP:TIM:STAT 0', 'OUTP:TRAC 0', 'SYST:LOC', 'SYST:REM', 'VOLT 0', 'VOLT 4.00',
-         'VOLT:LIM 4.00', 'VOLT:LIM:STAT 1')
+         'OUTP:TIM:STAT 0', 'OUTP:TRAC 0', 'SYST:LOC', 'SYST:REM', 'VOLT 0',
+         'VOLT 1.00', 'VOLT 1.50', 'VOLT 2.00', 'VOLT 4.00',
+         'VOLT:LIM 4.00', 'VOLT:LIM 4.05', 'VOLT:LIM 4.10', 'VOLT:LIM:STAT 1')
     )
     MAX_SECONDS = 600
 
@@ -424,10 +425,15 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False,
         dev.apply_profile(profile())
         if not dev.armed or dev.faulted or dev.profile.wiring != 'independent':
             raise SafetyError('H03 profile not armed in independent mode')
-        evidence.add('profile', name='H03 CV CC qualification', voltage_cap_v=4.0,
-                     current_cap_a=0.5, initial_voltage_v=4.0, initial_current_a=0.5,
+        evidence.add('profile', name='H03 CV CC qualification',
+                     voltage_cap_v=[4.00, 4.05, 4.10],
+                     current_cap_a=[0.300, 0.400, 0.500],
+                     initial_voltage_v=[1.00, 1.50, 2.00],
+                     initial_current_a=[0.100, 0.200, 0.300],
                      load_model='KORAD KEL103')
-        print(f'Профиль готов, все выходы должны быть OFF. KEL103 CR/INPUT '
+        print('Исходные уставки CH1/2/3: 1.00/1.50/2.00 V и 0.100/0.200/0.300 A; '
+              'пределы 4.00/4.05/4.10 V и 0.300/0.400/0.500 A. '
+              f'Профиль готов, все выходы должны быть OFF. KEL103 CR/INPUT '
               f'управляются через {load_transport_name} только после подтверждения '
               'подключения и PSU OFF.')
         # A CH2 resume starts with the load still on CH1 and needs a move gate.
@@ -442,9 +448,11 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False,
                 evidence.add('operator_gate', token=move, action='load relocation',
                              from_channel=previous_channel, to_channel=channel)
             for mode, resistance in (('CV', '40.0'), ('CC', '12.0')):
-                if mode == 'CC':
-                    # Change only the target-channel current setpoint while OFF.
-                    dev.set_channel(channel, current=0.250)
+                # Move from the distinct safe initial setpoint to the shared test
+                # voltage while the PSU and load input are both OFF.
+                cv_current = (0.300, 0.400, 0.500)[channel - 1]
+                target_current = cv_current if mode == 'CV' else 0.250
+                dev.set_channel(channel, voltage=4.0, current=target_current)
                 token = f'CONFIRM H03 CH{channel} {mode} CR={resistance} CONNECTED PSU=OFF'
                 connection_prompt = (
                     f'CH{channel}: Keithley OFF; INPUT KEL103 OFF. Проверьте подключение KEL103 '
@@ -468,6 +476,11 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False,
                 dev.output(channel, True)
                 output_started = time.monotonic()
                 require_outputs(dev, {ch: ch == channel for ch in (1, 2, 3)})
+                load_input = load.input_state()
+                evidence.add('kel103_input_during_measurement', channel=channel, mode=mode,
+                             input_state=load_input)
+                if load_input != 'ON':
+                    raise SafetyError(f'KEL103 INPUT changed to {load_input} after PSU enable')
                 sample = dev.read_channel(channel)
                 if not sample.enabled:
                     raise SafetyError(f'CH{channel} unexpectedly OFF during {mode} point')
@@ -528,8 +541,11 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False,
                     raise SafetyError(
                         f'CH{channel} {mode} questionable status mismatch: '
                         f'operation={raw_status}, questionable={questionable_status}')
-                if (not raw_status & 8 or operation_mode != mode or
-                        sample.regulation != mode):
+                status_ok = (bool(raw_status & 8) and sample.regulation == mode and
+                             (operation_mode == mode or
+                              (channel == 3 and operation_mode == 'UNKNOWN' and
+                               questionable_mode == mode)))
+                if not status_ok:
                     status_unqualified = True
                     evidence.add('status_unqualified', channel=channel, mode=mode,
                                  library_regulation=sample.regulation,
@@ -537,7 +553,14 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False,
                                  operation_mode=operation_mode,
                                  questionable_status=questionable_status,
                                  questionable_mode=questionable_mode,
-                                 reason='operation status did not confirm the panel/load-verified mode')
+                                 reason='output-on or consistent library/register mode evidence was missing')
+                elif operation_mode == 'UNKNOWN':
+                    evidence.add('status_caveat', channel=channel, mode=mode,
+                                 library_regulation=sample.regulation,
+                                 operation_status=raw_status,
+                                 questionable_status=questionable_status,
+                                 questionable_mode=questionable_mode,
+                                 reason='OPER reports output ON but omits CV/CC; library confirms mode from QUES')
                 dev.output(channel, False)
                 io.authorized_channel = None
                 require_outputs(dev)
@@ -554,10 +577,13 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False,
         dev.diagnostic_write('SYST:LOC')
         cases = (4 if start_channel == 2 else 2 if start_channel == 3 else 6)
         if status_unqualified:
-            outcome, reason = ('PARTIAL', f'{cases} CV/CC cases completed; operation status '
+            outcome, reason = ('PARTIAL', f'{cases} CV/CC cases completed; library status '
                                'did not qualify every mode; review evidence')
         else:
-            outcome, reason = 'PASS', f'{cases} CV/CC cases and all OFF checks completed; review evidence'
+            caveats = sum(1 for line in evidence.path.read_text().splitlines()
+                          if '"event": "status_caveat"' in line)
+            outcome, reason = 'PASS', (f'{cases} CV/CC cases and all OFF checks completed; '
+                                       f'{caveats} OPER mode-status caveat(s); review evidence')
     except BaseException as exc:
         outcome = 'ABORTED' if not io.live or isinstance(exc, (InterruptedError, KeyboardInterrupt, TimeoutError)) else 'FAIL'
         reason = f'H03 stopped: {type(exc).__name__}: {exc}; manual OFF verification required'

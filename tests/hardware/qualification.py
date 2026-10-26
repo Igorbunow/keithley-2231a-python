@@ -309,13 +309,17 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         digest = hashlib.sha256('\n'.join(selected_scope).encode()).hexdigest()
         load_connection = (f'KEL103 UDP {load_host}:{load_port}' if load_transport == 'udp'
                            else f'KEL103 USB {load_serial_port}, 115200 8N1')
+        from channel_stage import PROFILE_TOKEN
+        profile_values = PROFILE_TOKEN
         print(f'Порт: {port}; USB–TTL UART 9600 8N1, один владелец. Независимые CH1–CH3; '
               f'без DUT/перемычек; {load_connection}; выбран вручную, без failover; '
               'один канал включён за раз.\n'
               f'Продолжение с CH{start_channel}; предыдущие точки должны быть в приложенном evidence.\n'
-              'Уставки профиля: каждый CH V=4.00 V, I=0.500 A; cap 4.00 V / 0.500 A.\n'
+              f'Разные исходные уставки/пределы: {profile_values}.\n'
+              'Перед каждой точкой при PSU/Input OFF runner задаёт V=4.00 V; '
+              'CV использует I-cap канала 0.300/0.400/0.500 A.\n'
               'CV: CR 40.0 Ω, ожидается ~4.00 V / 0.100 A / 0.400 W.\n'
-              'CC: CH I=0.250 A, CR 12.0 Ω, ожидается ~3.00 V / 0.250 A / 0.750 W.\n'
+              'CC: V=4.00 V, I=0.250 A, CR 12.0 Ω; ожидается ~3.00 V / 0.250 A / 0.750 W.\n'
               'На каждую точку: при PSU OFF оператор подключает KEL103 только к целевому CH; '
               f'runner проверяет INPUT OFF, задаёт CR по {load_transport.upper()}, '
               'включает INPUT и считывает U/I/P. '
@@ -328,8 +332,9 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
               ':MEAS:POW?; разрешённые writes: :FUNC CR, :RES 12/40OHM, :INP ON/OFF.\n'
               'Keithley MEAS:POW? записывается в evidence. На каждой точке отдельно читаются '
               'operation и questionable condition-регистры канала. Если questionable status и панель '
-              'подтверждают режим, но operation status не подтверждает, точка получает PARTIAL, '
-              'оба прибора выключаются и разрешается запросить следующий режим после OFF gate.\n'
+              'подтверждают режим CH3, библиотека возвращает тот же режим и OPER содержит ON, '
+              'отсутствующие CV/CC-биты OPER записываются как оговорка. Если библиотечное состояние '
+              'не подтверждает режим, точка получает PARTIAL.\n'
               f'Разрешённые Keithley SCPI-команды SHA256: {digest}; команд: {len(selected_scope)}.\n'
               f'Первый допуск до открытия портов: {token}\n'
               'Дальнейшие подтверждения подключения, CR и перестановки запрашиваются отдельно внутри runner.\n'
@@ -345,7 +350,7 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
                   'Считываются все три condition-регистра и ENAB CH3; маски не изменяются. '
                   'Event-регистры, *CLS, *RST и калибровка не используются. '
                   'CV/CC, CR и пределы прежние. Диагностические данные требуют review; '
-                  'несоответствие operation status не скрывается и не переводится в PASS.')
+                  'отсутствие mode-битов OPER записывается как status caveat, не скрывается.')
             print('Подключение: KEL103 +/− только к CH3 +/−; CH1/CH2 свободны, без перемычек. '
                   'До запуска все выходы и INPUT OFF, Output Recall=Off проверить на панели. '
                   'Тестовый максимум CH3: 4.00 V / 0.500 A / 2 W; CC: лимит 0.250 A. '

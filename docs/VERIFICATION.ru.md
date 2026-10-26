@@ -1,6 +1,6 @@
 # Матрица подтверждения функций на оборудовании
 
-**Повторная квалификация текущего кода:** H01 пройден read-only. H02 прошёл OFF-only профиль с разными значениями, ограничение панели, soft-защиту библиотеки и gated-проверку отказа прибора (HW OBSERVED). Первый повтор остановился из-за неоднозначной инструкции кнопок; после её уточнения проверки прошли. H03 функционально PASS с оговоркой OPER CH3; H04/H04P прошли review в заявленных пределах; H05 ожидает повтора. Старые результаты относятся к записанным ревизиям. Offline не подтверждает работу прибора.
+**Повторная квалификация текущего кода:** H01 пройден read-only. H02 прошёл OFF-only профиль с разными значениями, ограничение панели, soft-защиту библиотеки и gated-проверку отказа прибора (HW OBSERVED). H03 прошёл все шесть CV/CC точек на текущем runner: подтверждены показания нагрузки и дисплеев, выключение каждого канала и финальный OFF. Сохраняется оговорка статуса OPER CH3=`8`, при QUES=`1/2` и согласии readback/панели/нагрузки. H04/H04P прошли review в заявленных пределах; H05 ожидает повтора. Offline не подтверждает работу прибора.
 
 [Русский](VERIFICATION.ru.md) | [English](VERIFICATION.md) · [Порядок испытаний](HARDWARE_TESTS.ru.md)
 
@@ -15,21 +15,21 @@
 | COM-03 | Другие запросы без записи (`VOLT?`, `STAT?`) | SIM TESTED | **HW OBSERVED (текущий H01; уставки/лимиты всех CH, статус выходов/таймеров, измерения, очередь ошибок)**; [протокол](hardware_reports/2026-10-26T145345.082772Z_H01_qualification.md) |
 | COM-04 | TCP–UART, одноклиентный мост | SIM TESTED (localhost) | **HW UNVERIFIED** |
 | COM-05 | Общий диспетчер API/диагностики, явный обход профиля и трассировка библиотекой | SIM TESTED | **HW UNVERIFIED (нужен повтор)**; [план](REQUALIFICATION.ru.md) |
-| LOAD-01 | Управление KEL103 по UDP или USB CDC serial | SIM TESTED (эмуляторы UDP и USB CDC) | **HW UNVERIFIED (ожидается повтор общего пути)**; прежний код: **HW OBSERVED (USB H04P; 21 сравнение с KEL103)** |
+| LOAD-01 | Управление KEL103 по UDP или USB CDC serial | SIM TESTED (эмуляторы UDP и USB CDC) | **HW OBSERVED (USB serial, текущий H03; KEL103 V3.30)** — CR 40/12 Ω, INPUT ON/OFF и показания при включённой нагрузке |
 | PRF-01 | Профиль с предварительным OFF и разными уставками по каналам | SIM TESTED (V=1/1.5/2 В, I=0.1/0.2/0.3 А) | **HW OBSERVED PASS (H02)** | [Протокол H02](hardware_reports/2026-10-26T164414.981773Z_H02_qualification.md) |
 | PRF-02 | Установка/чтение `VOLT:LIM`, разные потолки по каналам | SIM TESTED (2/3/4 В) | **HW OBSERVED PASS (H02)** | [Протокол H02](hardware_reports/2026-10-26T164414.981773Z_H02_qualification.md) |
 | PRF-03 | Контроль неизменности профиля и аварийная попытка OFF | SIM TESTED | **HW UNVERIFIED (ожидается повтор общего пути)**; прежний код: **HW VERIFIED (H04; tamper при OFF)** |
 | PRF-04 | Полный паспортный диапазон `unrestricted()` | SIM TESTED | **HW UNVERIFIED (ожидается повтор общего пути)**; прежний код: **HW VERIFIED (H04; только OFF)** |
 | PRF-05 | `power_only`, API denylist и фиксированный preset | SIM TESTED | **HW UNVERIFIED (ожидается повтор общего пути)**; прежний код: **HW OBSERVED (H04 OFF-only; preset H04P включался)** — таймеры не проверялись |
 | PRF-06 | Панельный `Max Volt Set`, soft cap и приборный отказ при явном debug bypass | SIM TESTED с разными каналами | **HW OBSERVED PASS (H02, только OFF)** | Панель 2.01/3.01/4.01→2/3/4 В; API отклонил превышения V/I до SCPI; разрешённые debug-пробы вернули error 120 и сохранили V-set 1/1.5/2 В. `VOLT:LIM` — предел уставки, не независимая аналоговая OVP. [Протокол](hardware_reports/2026-10-26T164414.981773Z_H02_qualification.md) |
-| PRF-07 | Низкомощные границы CV/CC и сравнение с KEL103 | SIM TESTED | **HW UNVERIFIED (ожидается повтор общего пути)**; прежний код: **HW OBSERVED (H04P; 21 точка)** — 3 канала, CV/CC и preset; паспортные unrestricted пределы не включались |
+| PRF-07 | Низкомощные границы CV/CC и сравнение с KEL103 | SIM TESTED | **PASS; HW OBSERVED (текущий H03 runner, 6 точек)** | Разные начальные V/I и caps; сверка дисплеев; CH3 OPER=`8`, при этом QUES/readback/панель совпадают. [Отчёт H03](hardware_reports/2026-10-26T174052.170220Z_H03_qualification.md). H04P — отдельный scope. |
 | SEQ-01 | Фиксированный `power_only`: CH1→CH2→CH3 и обратное выключение, запреты API и измеренные задержки | **SIM TESTED** | **HW UNVERIFIED (H05 ABORTED до включения; пропущенный вход в Remote исправлен, powered-повтор ожидается)** — захват TDS 3064B ×10 всех шести фронтов, readback PSU и KEL103 CR22 на CH1; схема с общим минусом не квалифицирует изоляцию |
-| OUT-01 | Включение/выключение отдельных каналов | SIM TESTED | **HW UNVERIFIED (ожидает повтора по общему пути)** |
+| OUT-01 | Включение/выключение отдельных каналов | SIM TESTED | **HW OBSERVED PASS (H03; каждый выход включался отдельно и проверялся OFF)** |
 | OUT-02 | Аппаратные таймеры | SIM TESTED | **HW UNVERIFIED** |
 | OUT-03 | Series CH1+CH2 | SIM TESTED (команды) | **HW UNVERIFIED** |
 | OUT-04 | Parallel CH1+CH2 | SIM TESTED (команды) | **HW UNVERIFIED** |
 | OUT-05 | Tracking CH1+CH2 | SIM TESTED (базовая логика) | **HW UNVERIFIED** |
-| MET-01 | Измерение U/I, определение CV/CC | SIM TESTED | **HW UNVERIFIED (ожидается повтор общего пути)**; прежний код: **HW OBSERVED (H03/H04P; оговорка CH3 OPER)** — режим подтверждён KEL103; OPER CH3 остаётся 8, QUES различает CV/CC; точность калиброванным DMM не проверена |
+| MET-01 | Измерение U/I, определение CV/CC | SIM TESTED | **HW OBSERVED PASS (текущий H03; оговорка OPER CH3)** — 6 сравнений с KEL103; OPER CH3=`8`, QUES различает CV/CC; точность калиброванным DMM не проверена |
 | MET-02 | CSV, статистика, А·ч/Вт·ч | SIM TESTED | **HW UNVERIFIED** |
 | IV-01 | ВАХ, пошаговая развертка, DMM callback | SIM TESTED | **HW UNVERIFIED** |
 | BEN-01 | Координатор нескольких PSU и DMM | SIM TESTED | **HW UNVERIFIED** |
@@ -62,8 +62,7 @@ Python 3.13.5 / pyserial 3.5, `PYTHONPATH=src python3 -m unittest discover -s te
 Карточка дополнена точной последовательностью кнопок из руководства. Проверки защиты
 H02 ещё требуют повторного аппаратного выполнения; offline-регрессии включают panel
 clamp, soft reject без SCPI и gated debug error 120. См. [карточку H02](H02_PREFLIGHT.ru.md).
-H03 — **PASS функционально с оговоркой** по шести connected-load точкам CV/CC и итоговому OFF; strict runner сообщает PARTIAL, так как OPER CH3 на прошивке 1.04-1.04 не возвращает биты CV/CC, но QUES, API, дисплей и KEL103 совпадают. Новый физический прогон и уточнение unloaded попытки приведены ниже. KEL103 по UDP
-физически проверено на CH2. H04 рассмотрен как **PASS только для сценария OFF**;
+H03 — **PASS с оговоркой** по шести connected-load точкам CV/CC, сверке дисплеев и итоговому OFF. Текущий runner завершился PASS; OPER CH3 на прошивке 1.04-1.04 не возвращает биты CV/CC, но QUES, readback библиотеки, дисплей и KEL103 совпадают. Подробности прогона приведены ниже. KEL103 по USB serial физически проверен в H03, по UDP ранее проверен на CH2. H04 рассмотрен как **PASS только для сценария OFF**;
 H04-Powered рассмотрен как **PASS для ограниченного профиля (HW OBSERVED)**. H05–H12/O01/O02 ждут индивидуального разбора.
 
 Подготовка runner H04 имеет статус **SIM TESTED**, не аппаратный. Подтверждённый
