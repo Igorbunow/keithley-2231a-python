@@ -381,6 +381,7 @@ class TestQualification(unittest.TestCase):
         q = self.module()
         self.assertTrue(q.stage_passed(q.stages()['H02'][-1]))
         self.assertTrue(q.stage_passed(q.stages()['H03'][-1]))
+        self.assertTrue(q.stage_passed(q.stages()['H04'][-1]))
         self.assertTrue(q.stage_passed('**PASS (OFF-only; reviewed)**'))
         self.assertTrue(q.stage_passed(q.stages()['H01'][-1]))
         self.assertTrue(q.stage_passed(

@@ -126,11 +126,13 @@ checks; see the [current H04 report](hardware_reports/2026-10-26T182004.069364Z_
 and [first failed attempt](hardware_reports/2026-10-26T180828.280308Z_H04_qualification.md).
 H04-Powered has completed separately; H05–H12/O01/O02 remain pending review/approval.
 
-## H04-Powered reviewed disposition — 2026-10-26
+## H04-Powered reviewed disposition — current-runner replay, 2026-10-26
 
 H04-Powered completed with **PASS for the bounded low-power profile scope**; the
-verification level remains **HW OBSERVED** because the runner executed from a dirty
-working tree based on source commit `2753bed544a5cb85ab0587e46b6f87402fe409e7`.
+verification level remains **HW OBSERVED** because this is physical observation, not
+calibrated metrology. This replay used the shared-path runner from source commit
+`ba3fabfe3afa7d1703b1dfa42b2c8b034dd36bf8`; the documented matrix-gate assertion was
+pending in the working tree.
 All 21 CV/CC and fixed `power_only` readings passed their KEL103 comparison thresholds.
 The three direct `VOLT 4.51` probes each returned the expected `120, "Parameter overflowed"`,
 preserved the 3.30 V setpoint, and left subsequent `SYST:ERR?` replies at
@@ -142,9 +144,12 @@ CH3 `STAT:OPER:INST:ISUM3:COND?` returned `8` while enabled for both CV and CC; 
 QUES status was `1` in CV and `2` in CC, and KEL103 measurements confirmed the modes.
 This is the same non-blocking status-bit caveat seen in H03. Firmware strings in `*IDN?`
 replies varied between `1.04-1.04` and `1.04-0.01`. No calibrated DMM was used and
-unrestricted rated limits were not energized. The latest offline suite after the CR=11 Ω
-guard fix passed 23/23 tests. See the [reviewed report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md),
-[raw event log](../reports/hardware/2026-10-26T123057.662164Z_H04P/events.jsonl), and
+unrestricted rated limits were not energized. The current run recorded 2,833 clean
+`0, "No error"` replies and exactly three expected `120, "Parameter overflowed"`
+responses from the gated hard-limit probes. Panel clamps, API rejects, all 21 readings,
+and final physical OFF confirmation passed. See the [current report](hardware_reports/2026-10-26T182637.334275Z_H04P_qualification.md),
+[raw event log](../reports/hardware/2026-10-26T182637.334275Z_H04P/events.jsonl),
+[prior reviewed report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md), and
 [qualification matrix](hardware_reports/qualification_matrix_2026-10-25.md).
 
 ## H01 attempt — 2026-10-26 MSK / 2026-10-25 UTC
