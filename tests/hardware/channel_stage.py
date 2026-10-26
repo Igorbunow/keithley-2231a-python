@@ -88,10 +88,10 @@ class KEL103UDP:
     READ_COMMANDS = frozenset(('*IDN?', ':INP?', ':FUNC?', ':RES?',
                                ':MEAS:VOLT?', ':MEAS:CURR?', ':MEAS:POW?'))
     WRITE_COMMANDS = frozenset((':FUNC CR', ':INP ON', ':INP OFF',
-                                ':RES 5OHM', ':RES 12OHM', ':RES 22OHM',
+                                ':RES 5OHM', ':RES 11OHM', ':RES 12OHM', ':RES 22OHM',
                                 ':RES 40OHM', ':RES 47OHM', ':RES 56OHM'))
-    H04P_RESISTANCES = (5.0, 12.0, 22.0, 47.0, 56.0)
-    VERIFIED_RESISTANCES = (5.0, 12.0, 22.0, 40.0, 47.0, 56.0)
+    H04P_RESISTANCES = (5.0, 11.0, 12.0, 22.0, 47.0, 56.0)
+    VERIFIED_RESISTANCES = (5.0, 11.0, 12.0, 22.0, 40.0, 47.0, 56.0)
 
     def __init__(self, host, port=18190, timeout=1.5, sock=None, evidence=None):
         self.host = str(ipaddress.IPv4Address(host))

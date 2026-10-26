@@ -12,19 +12,20 @@
 | COM-02 | `SYST:REM` и `*IDN?` | SIM TESTED | **HW VERIFIED (H01)** |
 | COM-03 | Другие запросы без записи (`VOLT?`, `STAT?`) | SIM TESTED | **HW VERIFIED (только подмножество H01)** |
 | COM-04 | TCP–UART, одноклиентный мост | SIM TESTED (localhost) | **HW UNVERIFIED** |
-| LOAD-01 | Управление KEL103 для H03 по UDP или USB CDC serial | UDP проверен на CH2; по USB наблюдались IDN, настройка/чтение CR, INPUT и телеметрия | **USB HW OBSERVED** (не полный проход этапа) |
+| LOAD-01 | Управление KEL103 по UDP или USB CDC serial | UDP проверен на H03 CH2; USB использован в H03 и H04P на CH1–CH3 | **HW OBSERVED (USB H04P; 21 сравнение с KEL103)** |
 | PRF-01 | Применение профиля с предварительным глобальным OFF | SIM TESTED | **HW VERIFIED (H04; только OFF)** |
 | PRF-02 | Установка аппаратного лимита `VOLT:LIM` | SIM TESTED | **HW VERIFIED (H04; только OFF)** |
 | PRF-03 | Контроль неизменности профиля и аварийная попытка OFF | SIM TESTED | **HW VERIFIED (H04; tamper при OFF)** |
 | PRF-04 | Полный паспортный диапазон `unrestricted()` | SIM TESTED | **HW VERIFIED (H04; только OFF)** |
-| PRF-05 | `power_only`, фиксированная и обратная последовательности | SIM TESTED | **HW VERIFIED (H04; только OFF)** |
-| PRF-06 | Поканальный clamp `Max Volt Set` и программные пределы voltage/current профиля | SIM TESTED | **HW VERIFIED (H04; только OFF)** — CH1/2/3: clamp 2/3/4 В, API отклоняет превышения до SCPI; [отчёт](hardware_reports/2026-10-26T095243.287282Z_H04_qualification.md) |
+| PRF-05 | `power_only`, API denylist и фиксированный preset | SIM TESTED | **HW OBSERVED (H04 OFF-only; preset H04P включался)** — таймеры не проверялись |
+| PRF-06 | Поканальный clamp `Max Volt Set` и программные пределы voltage/current профиля | SIM TESTED | **HW VERIFIED (H04; OFF-only) + HW OBSERVED (H04P; 4,50 В)** — H04 clamp 2/3/4 В; H04P clamp 4,51→4,50 В, API отклоняет превышения до SCPI; [H04](hardware_reports/2026-10-26T095243.287282Z_H04_qualification.md), [H04P](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
+| PRF-07 | Низкомощные границы CV/CC и сравнение с KEL103 | SIM TESTED | **HW OBSERVED (H04P; 21 точка)** — 3 канала, CV/CC и preset; паспортные unrestricted пределы не включались |
 | OUT-01 | Включение/выключение отдельных каналов | SIM TESTED | **HW UNVERIFIED** |
 | OUT-02 | Аппаратные таймеры | SIM TESTED | **HW UNVERIFIED** |
 | OUT-03 | Series CH1+CH2 | SIM TESTED (команды) | **HW UNVERIFIED** |
 | OUT-04 | Parallel CH1+CH2 | SIM TESTED (команды) | **HW UNVERIFIED** |
 | OUT-05 | Tracking CH1+CH2 | SIM TESTED (базовая логика) | **HW UNVERIFIED** |
-| MET-01 | Измерение U/I, определение CV/CC | SIM TESTED | **HW OBSERVED (H03; OPER3 расходится с manual)** |
+| MET-01 | Измерение U/I, определение CV/CC | SIM TESTED | **HW OBSERVED (H03/H04P; оговорка CH3 OPER)** — режим подтверждён KEL103; OPER CH3 остаётся 8, QUES различает CV/CC; точность калиброванным DMM не проверена |
 | MET-02 | CSV, статистика, А·ч/Вт·ч | SIM TESTED | **HW UNVERIFIED** |
 | IV-01 | ВАХ, пошаговая развертка, DMM callback | SIM TESTED | **HW UNVERIFIED** |
 | BEN-01 | Координатор нескольких PSU и DMM | SIM TESTED | **HW UNVERIFIED** |
@@ -57,7 +58,7 @@ Python 3.13.5 / pyserial 3.5, `PYTHONPATH=src python3 -m unittest discover -s te
 защитного исправления повтор прошёл. Offline-регрессии 48/48; см. [карточку H02](H02_PREFLIGHT.ru.md)
 и оба физических отчёта ниже. H03 — **PASS** по шести функциональным точкам CV/CC и итоговой проверке OFF; в OPER канала CH3 прошивка 1.04-1.04 не возвращает дублирующие биты режима, при этом QUES, API, дисплеи и сравнения с нагрузкой совпали (оговорка ниже). KEL103 по UDP
 физически проверено на CH2. H04 рассмотрен как **PASS только для сценария OFF**;
-H04-Powered и H05–H12/O01/O02 ждут индивидуального разбора.
+H04-Powered рассмотрен как **PASS для ограниченного профиля (HW OBSERVED)**. H05–H12/O01/O02 ждут индивидуального разбора.
 
 Подготовка runner H04 имеет статус **SIM TESTED**, не аппаратный. Подтверждённый
 офлайн-набор `PYTHONPATH=src python -m unittest discover -s tests -v` прошёл **68/68**:
@@ -100,7 +101,7 @@ H04-Powered отдельно проверяет clamp 4,50/4,51 В до подк
 См. [отчёт завершённого H04](hardware_reports/2026-10-26T095243.287282Z_H04_qualification.md),
 [расширенную попытку H04](hardware_reports/2026-10-26T093558.386640Z_H04_qualification.md)
 и [первоначальный H04](hardware_reports/2026-10-26T091619.638967Z_H04_qualification.md).
-H04-Powered и H05–H12/O01/O02 требуют отдельного рассмотрения и разрешения.
+H04-Powered завершён отдельным прогоном; H05–H12/O01/O02 требуют отдельного рассмотрения и разрешения.
 
 ## Попытка H01 — 2026-10-26 МСК / 2026-10-25 UTC
 
@@ -344,14 +345,22 @@ OFF прошли review. Для режима CH3 библиотека испол
 CH3. Калиброванный DMM не применялся. На момент этого review H04 ещё не запускался; позднее он прошёл с PASS для OFF-only объёма. См.
 [доказательства H03](hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md).
 
-H04-Powered подготовлен как отдельное низкоэнергетическое дополнение к OFF-only строке
-H04. В нём предусмотрено 21 автоматическое измерение KEL103 на CH1–CH3 (CV, CC и
-фиксированные уставки `power_only`); оператор делает паузу только для подключения,
-переноса и отключения нагрузки. Предел профиля — 4.50 В / 0.500 А, одновременно
-включается не более одного канала; превышения отклоняются локально до SCPI. Полный
-offline-набор прошёл **70/70** (`PYTHONPATH=src python3 -m unittest discover -s tests -v`),
-включая симуляцию 21 точки H04-Powered. Первые тесты выявили несовпадение проверки
-preflight-текста и недостаточный бюджет команд, который блокировал также аварийную
-очистку OFF; оба дефекта исправлены, для выключения и проверки состояния резервируются
-команды. Статус H04-Powered: **SIM TESTED, NOT_RUN на аппаратуре**. Keithley и KEL103
-не опрашивались.
+### Review H04-Powered — 2026-10-26
+
+H04-Powered завершился со статусом **PASS для ограниченного низкомощного профиля**;
+уровень доказательности — **HW OBSERVED**, так как runner запускался из изменённого
+рабочего дерева на базе commit `2753bed544a5cb85ab0587e46b6f87402fe409e7`. Все 21
+точка CV/CC и фиксированный preset `power_only` прошли сравнение с KEL103. Три прямые
+команды `VOLT 4.51` вернули ожидаемое `120, "Parameter overflowed"`, сохранили 3,30 В,
+после чего `SYST:ERR?` показывал `0, "No error"`. Панельные попытки на всех каналах
+ограничились 4,50 В. API отклонял превышения до SCPI; проверки неизменности
+`power_only` прошли. Все выходы и INPUT KEL103 проверялись OFF после точек и физически
+подтверждены в конце.
+
+На CH3 `STAT:OPER:INST:ISUM3:COND?` возвращал `8` при включённом выходе и в CV, и в CC;
+QUES возвращал `1` для CV и `2` для CC, а измерения KEL103 подтвердили режимы. Это та
+же оговорка status bit, что и в H03. Ответы `*IDN?` содержали firmware `1.04-1.04` и
+`1.04-0.01`. Калиброванный DMM не использовался; паспортные unrestricted пределы не
+включались. После исправления CR=11 Ω offline-набор прошёл 23/23. См. [отчёт H04P](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md),
+[сырой журнал](../reports/hardware/2026-10-26T123057.662164Z_H04P/events.jsonl) и
+[строку матрицы](hardware_reports/qualification_matrix_2026-10-25.md).

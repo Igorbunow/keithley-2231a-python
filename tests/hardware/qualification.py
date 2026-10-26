@@ -53,8 +53,12 @@ def stages():
 
 def stage_passed(status: str) -> bool:
     """Accept a reviewed PASS with an explanatory suffix, never a prefix match."""
-    return re.fullmatch(r'\*{0,2}PASS\*{0,2}(?:\s+\(.*\))?',
-                        status.strip()) is not None
+    normalized = status.strip()
+    if normalized.startswith('**') and normalized.endswith('**'):
+        normalized = normalized[2:-2].strip()
+    else:
+        normalized = re.sub(r'^\*\*(PASS)\*\*', r'\1', normalized)
+    return re.fullmatch(r'PASS(?:\s+\(.*\))?', normalized) is not None
 
 
 def software_metadata():
@@ -169,14 +173,17 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
               'is energized; its rated caps remain covered by OFF-only H04.\n'
               'Twenty-one automated readings: per channel CV at 3.30 V, its assigned value '
               '(CH1 2.20 V, CH2 3.30 V, CH3 4.40 V), and exact 4.50 V cap; CC at 0.100/0.250/0.500 A '
-              'with CR 22/12/5 Ω; then one fixed power_only preset. CV uses CR 47/56 Ω. '
+              'with CR 22/11/5 Ω; the 11 Ω point gives clear CC headroom at 0.250 A. '
+              'Then one fixed power_only preset. CV uses CR 47/56 Ω. '
               'Out-of-profile 4.51 V and 0.501 A are local API rejections with no SCPI.\n'
-              'Before connecting load: runner sets Max V=4.50 V on all channels and displays '
-              'readbacks; operator sets Protection Settings → Max Volt Set On at 4.50 V on '
-              'CH1/CH2/CH3, '
-              'tries V-set=4.51 V on CH1/CH2/CH3 with outputs OFF, and confirms each clamps '
-              'to 4.50 V. Runner reads back, restores 3.30 V, then library attempts 4.51 V and '
-              'must reject before SCPI. '
+              'Before connecting load: runner sets Max V=4.50 V on all channels. With all '
+              'outputs OFF, it first sends direct `VOLT 4.51` to each channel and requires '
+              'the instrument to reject it with error 120, preserve the 3.30 V setpoint, '
+              'and return to a clear error queue after that response is read. '
+              'Library attempts 4.51 V and must reject before SCPI. Then the operator sets '
+              'Protection Settings → Max Volt Set On at 4.50 V on CH1/CH2/CH3, tries a fresh '
+              'V-set=4.51 V on each with outputs OFF, and confirms each clamps to 4.50 V. '
+              'Runner reads back and restores 3.30 V before any load is connected. '
               f'Manual max-voltage confirmation: {H04P_MAXV_TOKEN}\n'
               'Every point: KEL INPUT OFF before setup, load readback verified, KEL INPUT ON, '
               'only selected PSU channel ON, PSU and KEL readings/status recorded, PSU OFF, '

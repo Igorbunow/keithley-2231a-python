@@ -21,7 +21,7 @@ from keithley2231a import (ChannelProfile, Keithley2231A, LimitsError, Profile,
 MODES = ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?')
 OFF = tuple(f'STAT:OPER:INST:ISUM{channel}:COND?' for channel in (1, 2, 3))
 CV_LOADS = {2.2: 47.0, 3.3: 47.0, 4.4: 47.0, 4.5: 56.0}
-CC_LOADS = {0.100: 22.0, 0.250: 12.0, 0.500: 5.0}
+CC_LOADS = {0.100: 22.0, 0.250: 11.0, 0.500: 5.0}
 CHANNEL_VOLTAGES = {1: 2.2, 2: 3.3, 3: 4.4}
 H04P_MAXV_TOKEN = ('CONFIRM H04P MAXV CH1=4.51 CLAMPED=4.50 '
                    'CH2=4.51 CLAMPED=4.50 CH3=4.51 CLAMPED=4.50 '
@@ -56,7 +56,7 @@ class PoweredProfileIO:
     _WRITE = re.compile(
         r'^(?:SYST:(?:REM|LOC)|OUTP 0|OUTP:(?:SER|PARALLEL|TRAC) 0|'
         r'INST:NSEL [123]|CHAN:OUTP [01]|OUTP:TIM:STAT 0|'
-        r'VOLT (?:0|2\.20|3\.00|3\.30|4\.40|4\.50)|'
+        r'VOLT (?:0|2\.20|3\.00|3\.30|4\.40|4\.50|4\.51)|'
         r'CURR (?:0|0\.100|0\.250|0\.500)|'
         r'VOLT:LIM 4\.50|VOLT:LIM:STAT 1)$')
 
@@ -67,6 +67,7 @@ class PoweredProfileIO:
         self.started = time.monotonic()
         self.selected = 1
         self.authorized_channel = None
+        self.remote_limit_probe_channel = None
         self.outputs = {channel: False for channel in (1, 2, 3)}
 
     def operator_input(self, prompt):
@@ -85,7 +86,7 @@ class PoweredProfileIO:
         return (command in ('SYST:REM', 'SYST:LOC', 'OUTP 0', 'OUTP:TIM:STAT 0') or
                 command.startswith('INST:NSEL ') or command == 'CHAN:OUTP 0')
 
-    def _transfer(self, command, query):
+    def _transfer(self, command, query, expected_error=None):
         self.commands += 1
         over_budget = (self.commands > MAX_COMMANDS or
                        time.monotonic() - self.started > MAX_SECONDS)
@@ -100,6 +101,10 @@ class PoweredProfileIO:
         if not query:
             if not self._WRITE.fullmatch(command):
                 raise ValueError(f'H04-Powered write not allowed: {command}')
+            if command == 'VOLT 4.51' and (
+                    self.remote_limit_probe_channel != self.selected or
+                    any(self.outputs.values())):
+                raise ValueError('4.51 V is allowed only for the OFF-state Max Volt probe')
             if command == 'CHAN:OUTP 1' and (
                     self.authorized_channel != self.selected or
                     any(state for channel, state in self.outputs.items()
@@ -129,7 +134,16 @@ class PoweredProfileIO:
         elif command.startswith('CHAN:OUTP '):
             self.outputs[self.selected] = command.endswith('1')
         if command != 'SYST:LOC':
-            self._check_error_queue(command)
+            if expected_error is None:
+                self._check_error_queue(command)
+            else:
+                response = self._transfer('SYST:ERR?', True)
+                code, message = response.split(',', 1)
+                if int(code.strip()) != expected_error or not message.strip():
+                    raise ValueError(
+                        f'expected instrument error {expected_error} after {command}; got {response}')
+                self.evidence.add('expected_instrument_rejection', command=command,
+                                  response=response, outcome='EXPECTED_REJECTION')
         return answer
 
     def _check_error_queue(self, source):
@@ -143,6 +157,15 @@ class PoweredProfileIO:
 
     def write(self, command):
         self._transfer(command, False)
+
+    def write_expected_error(self, command, code):
+        """Send the guarded 4.51 V probe and accept only its documented rejection."""
+        if command != 'VOLT 4.51' or code != 120:
+            raise ValueError('only the guarded voltage-limit probe may expect error 120')
+        if (self.remote_limit_probe_channel != self.selected or
+                any(self.outputs.values())):
+            raise SafetyError('voltage-limit rejection probe requires the selected output OFF')
+        self._transfer(command, False, expected_error=code)
 
 
 def _gate(token, prompt, io):
@@ -181,8 +204,6 @@ def _profile(access='control'):
 
 def _max_voltage_panel_gate(io, dev, evidence):
     """Verify the 4.50 V front-panel ceiling and library rejection before loading."""
-    profile = _profile(access='control')
-    dev.apply_profile(profile)
     dev.verify_profile()
     for channel in (1, 2, 3):
         io.write(f'INST:NSEL {channel}')
@@ -235,6 +256,38 @@ def _max_voltage_panel_gate(io, dev, evidence):
                      configured_max_v=4.5, scpi_sent=False,
                      **rejection)
     dev.emergency_off()
+
+
+def _remote_max_voltage_scpi_probe(io, evidence):
+    """Verify the instrument enforces Max Volt Set on direct remote setpoint writes."""
+    _all_off(io)
+    for channel in (1, 2, 3):
+        io.write(f'INST:NSEL {channel}')
+        enabled = bool(int(io.query('VOLT:LIM:STAT?')))
+        limit = float(io.query('VOLT:LIM?'))
+        output = bool(int(io.query('CHAN:OUTP?')))
+        if not enabled or abs(limit - 4.5) > .0049 or output:
+            raise SafetyError(f'CH{channel}: remote clamp probe requires 4.50 V limit enabled and OFF')
+        before = float(io.query('VOLT?'))
+        if abs(before - 3.3) > .0049:
+            raise SafetyError(f'CH{channel}: unexpected pre-probe setpoint {before} V')
+        io.remote_limit_probe_channel = channel
+        try:
+            io.write_expected_error('VOLT 4.51', code=120)
+        finally:
+            io.remote_limit_probe_channel = None
+        actual = float(io.query('VOLT?'))
+        output = bool(int(io.query('CHAN:OUTP?')))
+        if abs(actual - before) > .0049 or output:
+            raise SafetyError(f'CH{channel}: rejected remote setpoint changed output or setpoint')
+        evidence.add('case', channel=channel,
+                     check='remote SCPI max-voltage rejection', requested_voltage_v=4.51,
+                     configured_limit_v=limit, limit_enabled=enabled,
+                     error_code=120, actual_voltage_v=actual, unchanged=True,
+                     output_off=not output, outcome='PASS')
+        evidence.add('case', channel=channel,
+                     check='remote rejection leaves setpoint unchanged',
+                     voltage_set_v=actual, outcome='PASS')
 
 
 def _expect_local_rejection(dev, io, channel, *, voltage=None, current=None):
@@ -316,18 +369,28 @@ def _measure_point(dev, io, evidence, load, channel, *, phase, point,
         load.set_input(False)
 
 
-def _all_off_except(io, target):
-    states = {}
-    for channel, command in enumerate(OFF, 1):
-        raw = io.query(command)
-        value = float(raw)
-        if not math.isfinite(value) or value != int(value) or not 0 <= value <= 255:
-            raise SafetyError(f'invalid CH{channel} status: {raw}')
-        enabled = bool(int(value) & 8)
-        if enabled != (channel == target):
-            raise SafetyError(f'expected only CH{target} ON; CH{channel}={raw}')
-        states[channel] = int(value)
-    return states
+def _all_off_except(io, target, *, settle_timeout_s=3.0):
+    """Verify one output and tolerate delayed OPER ON-bit propagation after enable."""
+    deadline = time.monotonic() + settle_timeout_s
+    while True:
+        states = {}
+        for channel, command in enumerate(OFF, 1):
+            raw = io.query(command)
+            value = float(raw)
+            if (not math.isfinite(value) or value != int(value) or
+                    not 0 <= value <= 255):
+                raise SafetyError(f'invalid CH{channel} status: {raw}')
+            enabled = bool(int(value) & 8)
+            if channel != target and enabled:
+                raise SafetyError(f'expected only CH{target} ON; CH{channel}={raw}')
+            states[channel] = int(value)
+        if states[target] & 8:
+            return states
+        if not bool(int(io.query('CHAN:OUTP?'))):
+            raise SafetyError(f'CH{target} output turned OFF before OPER ON-bit appeared')
+        if time.monotonic() >= deadline:
+            raise SafetyError(f'CH{target} OPER ON-bit did not appear within {settle_timeout_s:g} s')
+        time.sleep(.1)
 
 
 def h04_powered(transport, evidence, load):
@@ -354,6 +417,9 @@ def h04_powered(transport, evidence, load):
             raise SafetyError('independent wiring required for H04-Powered')
         if load.input_state() != 'OFF':
             raise SafetyError('KEL103 INPUT must remain OFF during maximum voltage check')
+        dev.apply_profile(_profile(access='control'))
+        dev.verify_profile()
+        _remote_max_voltage_scpi_probe(io, evidence)
         _max_voltage_panel_gate(io, dev, evidence)
         safe_load_identity = re.sub(r'(?i)(SN\s*:?\s*)[^,\s]+',
                                     r'\1[REDACTED]', load_identity)

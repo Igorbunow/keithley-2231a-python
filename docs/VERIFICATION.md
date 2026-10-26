@@ -18,19 +18,20 @@
 | COM-02 | `SYST:REM` + `*IDN?` | basic query fake | **HW VERIFIED (H01)** | menu Main 1.04 / Aux 0.01; raw revision observations 1.04-1.04 and 1.04-0.01 |
 | COM-03 | Additional read-only SCPI (`VOLT?`, `STAT?`, `SYST:VERS?`) | SIM TESTED | **HW VERIFIED (H01 subset only)** | `examples/probe.py` output vs front panel |
 | COM-04 | Raw TCP-to-UART bridge | SIM TESTED (local loopback) | **HW UNVERIFIED** | MCU firmware/version + loss/fragment tests |
-| LOAD-01 | KEL103 H03 control over UDP or USB CDC serial | UDP physically exercised on CH2; USB IDN, CR setup/readback, INPUT control and telemetry observed | **USB HW OBSERVED** (not a complete pass) | USB H03 CH3 test review; status interpretation remains open |
+| LOAD-01 | KEL103 control over UDP or USB CDC serial | UDP exercised on H03 CH2; USB exercised for H03 and H04P CH1–CH3 | **HW OBSERVED (USB H04P)** | 21 KEL103 comparisons and full input sequencing; [H04P report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
 | PRF-01 | Applying independent guarded profile, output-OFF-first | SIM TESTED | **HW VERIFIED (H04; OFF-only)** | no-load SCPI and front panel + readbacks |
 | PRF-02 | Hardware `VOLT:LIM` setting/readback | SIM TESTED | **HW VERIFIED (H04; OFF-only)** | instrument limit readbacks, outputs OFF |
 | PRF-03 | Software cap/health integrity alarms | SIM TESTED | **HW VERIFIED (H04; OFF-only tamper)** | out-of-band limit and setpoint changes detected; profile disarmed |
 | PRF-04 | Full rated-range profile (`unrestricted()`) | SIM TESTED | **HW VERIFIED (H04; OFF-only)** | rated-bound profile readbacks, zero voltage setpoint, outputs OFF |
-| PRF-05 | `power_only` API denylist/fixed sequence | SIM TESTED | **HW VERIFIED (H04; OFF-only)** | immutable profile and fixed setpoints verified; energizing/timing not tested |
-| PRF-06 | Per-channel `Max Volt Set` clamp plus library voltage/current profile caps | SIM TESTED | **HW VERIFIED (H04; OFF-only)** | CH1/2/3 clamps 2/3/4 V; above-cap API requests rejected before SCPI; [report](hardware_reports/2026-10-26T095243.287282Z_H04_qualification.md) |
+| PRF-05 | `power_only` API denylist/fixed preset | SIM TESTED | **HW OBSERVED (H04 OFF-only; H04P fixed presets energized)** | profile guards and fixed preset exercised; timer behavior remains unverified |
+| PRF-06 | Per-channel `Max Volt Set` clamp plus library voltage/current profile caps | SIM TESTED | **HW VERIFIED (H04; OFF-only) + HW OBSERVED (H04P; 4.50 V)** | H04 clamps 2/3/4 V; H04P clamps 4.51 to 4.50 V and rejects above-cap API requests before SCPI; [H04](hardware_reports/2026-10-26T095243.287282Z_H04_qualification.md), [H04P](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
+| PRF-07 | Low-power profile CV/CC boundaries and independent KEL103 comparison | SIM TESTED | **HW OBSERVED (H04P; 21 points)** | 3 channels × CV/CC points and fixed preset; unrestricted rated limits not energized; [report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
 | OUT-01 | Individual output enable/disable | SIM TESTED | **HW UNVERIFIED** | per-channel lamp/readback/independent dummy load |
 | OUT-02 | Timers and command-triggered expiration | SIM TESTED | **HW UNVERIFIED** | characterize manual/remote operation |
 | OUT-03 | Series combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
 | OUT-04 | Parallel combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
 | OUT-05 | Tracking and ratio/timer behavior | SIM TESTED (basic) | **HW UNVERIFIED** | real tracking readback and timed output |
-| MET-01 | Read voltage/current/status and inferred CV/CC | SIM TESTED | **HW OBSERVED (H03; OPER3 manual discrepancy)** | CV/CC confirmed by KEL103 and panels; calibrated DMM accuracy unverified; [diagnosis](hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md) |
+| MET-01 | Read voltage/current/status and inferred CV/CC | SIM TESTED | **HW OBSERVED (H03/H04P; CH3 OPER caveat)** | CV/CC confirmed by KEL103; CH3 OPER stays 8 while QUES distinguishes CV/CC; calibrated DMM accuracy unverified; [H03](hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md), [H04P](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
 | MET-02 | CSV, min/max/mean/stddev, Ah/Wh arithmetic | SIM TESTED | **HW UNVERIFIED** | duration run + independent reference |
 | IV-01 | Single-channel voltage sweep + external sample callback | SIM TESTED | **HW UNVERIFIED** | resistor/diode test with series protection |
 | BEN-01 | Multi-PSU host coordination / generic meter | SIM TESTED | **HW UNVERIFIED** | dual PSU + DMM comparison with clock uncertainty |
@@ -67,7 +68,7 @@ failed on an in-session `*IDN?` firmware mismatch, then the corrected scenario p
 the offline suite is 48/48. See the [H02 operator card](H02_PREFLIGHT.ru.md) and both
 physical reports below. H03 is reviewed **PASS** for its six functional CV/CC points and final OFF checks; CH3 OPER omits redundant mode bits on firmware 1.04-1.04 while QUES, API, displays and load comparisons agree (caveat below). KEL103 UDP
 control was exercised on hardware for CH2. H04 is reviewed **PASS for OFF-only scope**;
-H04-Powered and H05–H12/O01/O02 remain pending individual review.
+H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05–H12/O01/O02 remain pending individual review.
 
 H04 runner preparation is **SIM TESTED**, not hardware verified. The approved offline
 suite `PYTHONPATH=src python -m unittest discover -s tests -v` passed **68/68** after
@@ -102,15 +103,36 @@ status/readback remained OFF. The runner restored 1.00 V / 0.100 A on CH1/CH2 an
 1.00 V / 0.101 A on CH3; the operator confirmed all outputs OFF and the load disconnected.
 The instrument was accessed on `/dev/ttyUSB3` at 9600 8N1. The menu firmware is Main
 1.04 / Aux 0.01; `*IDN?` produced both `1.04-0.01` and `1.04-1.04` during the run,
-recorded as raw revision observations rather than identity. No output was energized;
-powered limits and electrical regulation remain unverified. H04-Powered repeats a
-4.50/4.51 V clamp check before connecting the load. The reference manual describes
+recorded as raw revision observations rather than identity. No output was energized in
+H04; powered limits and electrical regulation were checked separately in H04-Powered,
+which passed its bounded 4.50/4.51 V clamp and low-power regulation scope. The reference manual describes
 `Max Volt Set` as the maximum settable through V-set
 ([Tektronix/Keithley 2231A reference manual, section 3](https://download.tek.com/manual/077100401_Referencemanual.pdf)).
 See the [completed H04 report](hardware_reports/2026-10-26T095243.287282Z_H04_qualification.md),
 [expanded H04 attempt](hardware_reports/2026-10-26T093558.386640Z_H04_qualification.md)
 and [initial H04 profile report](hardware_reports/2026-10-26T091619.638967Z_H04_qualification.md).
-H04-Powered and H05–H12/O01/O02 remain pending separate review/approval.
+H04-Powered has now completed separately; H05–H12/O01/O02 remain pending review/approval.
+
+## H04-Powered reviewed disposition — 2026-10-26
+
+H04-Powered completed with **PASS for the bounded low-power profile scope**; the
+verification level remains **HW OBSERVED** because the runner executed from a dirty
+working tree based on source commit `2753bed544a5cb85ab0587e46b6f87402fe409e7`.
+All 21 CV/CC and fixed `power_only` readings passed their KEL103 comparison thresholds.
+The three direct `VOLT 4.51` probes each returned the expected `120, "Parameter overflowed"`,
+preserved the 3.30 V setpoint, and left subsequent `SYST:ERR?` replies at
+`0, "No error"`. Panel requests also clamped at 4.50 V on each channel. API cap guards
+and `power_only` immutability checks passed before SCPI. All outputs and KEL103 INPUT
+were verified OFF after each point and physically confirmed OFF at completion.
+
+CH3 `STAT:OPER:INST:ISUM3:COND?` returned `8` while enabled for both CV and CC; its
+QUES status was `1` in CV and `2` in CC, and KEL103 measurements confirmed the modes.
+This is the same non-blocking status-bit caveat seen in H03. Firmware strings in `*IDN?`
+replies varied between `1.04-1.04` and `1.04-0.01`. No calibrated DMM was used and
+unrestricted rated limits were not energized. The latest offline suite after the CR=11 Ω
+guard fix passed 23/23 tests. See the [reviewed report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md),
+[raw event log](../reports/hardware/2026-10-26T123057.662164Z_H04P/events.jsonl), and
+[qualification matrix](hardware_reports/qualification_matrix_2026-10-25.md).
 
 ## H01 attempt — 2026-10-26 MSK / 2026-10-25 UTC
 
@@ -349,7 +371,9 @@ PARTIAL outcome records its strict manual bit comparison and remains in the raw 
 This does not block use of CH3. No calibrated DMM was used. H04 was NOT_RUN when this H03 review was written; the later H04 outcome is PASS for OFF-only scope.
 See [H03 evidence](hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md).
 
-H04-Powered is a separately prepared, low-energy supplement to the OFF-only H04 matrix
+### H04-Powered preparation snapshot (before the physical run)
+
+H04-Powered was prepared as a low-energy supplement to the OFF-only H04 matrix
 row. It defines 21 automated KEL103-controlled readings across CH1–CH3 (CV, CC and
 fixed `power_only` presets), with operator pauses only to connect, move or disconnect
 the load. The profile ceiling is 4.50 V / 0.500 A, one channel energized at a time;
@@ -357,5 +381,6 @@ out-of-profile requests are checked for local rejection before SCPI. The full of
 suite passed **70/70** (`PYTHONPATH=src python3 -m unittest discover -s tests -v`),
 including the simulated 21-point H04-Powered flow. Initial tests exposed a mismatched
 preflight assertion and an undersized command budget that also blocked OFF cleanup;
-both were fixed, and the runner now reserves bounded shutdown commands. H04-Powered is
-**SIM TESTED, NOT_RUN on hardware**. No instrument or load was accessed.
+both were fixed, and the runner now reserves bounded shutdown commands. At that earlier
+snapshot H04-Powered was **SIM TESTED only** and no instrument or load had been accessed;
+its later physical result is recorded in the H04-Powered reviewed disposition above.

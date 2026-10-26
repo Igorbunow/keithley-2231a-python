@@ -102,23 +102,30 @@ Record `*IDN?`, SCPI version, selected channel readbacks, basic output states, s
 Fill [`hardware_reports/TEMPLATE.md`](hardware_reports/TEMPLATE.md) for each ID, include equipment/firmware/source commit/environment, expected-vs-actual values, screenshots/logs, and explicit pass/fail. Update the exact feature row in [`VERIFICATION.md`](VERIFICATION.md). Keep raw reports private until serial numbers, device identities and network configuration are redacted. No automatic promotion from simulator tests.
 
 
-H03 reviewed disposition: **PASS for the tested functional scope** (all three channels in CV and CC, panel/load comparison and final OFF). Caveat: CH3 OPER returns ON only (`8`) for CV and CC on firmware 1.04-1.04; QUES and library mode readback agree with the panel. The runner's raw PARTIAL is retained as a status-model discrepancy, not a functional failure. H04 completed **PASS for OFF-only scope**: distinct 2.00/3.00/4.00 V Max Volt Set values clamped panel attempts of 2.01/3.01/4.01 V; SCPI confirmed the clamp; API requests above per-channel V/I caps were rejected before SCPI; tamper checks passed. All outputs stayed OFF and `SYST:ERR?` remained `0, "No error"`. Powered limits and electrical regulation are not verified. See the completed H04 report and qualification matrix. H04-Powered verifies a uniform 4.50/4.51 V clamp before connecting the load.
+H03 reviewed disposition: **PASS for the tested functional scope** (all three channels in CV and CC, panel/load comparison and final OFF). Caveat: CH3 OPER returns ON only (`8`) for CV and CC on firmware 1.04-1.04; QUES and library mode readback agree with the panel. The runner's raw PARTIAL is retained as a status-model discrepancy, not a functional failure. H04 completed **PASS for OFF-only scope**: distinct 2.00/3.00/4.00 V Max Volt Set values clamped panel attempts of 2.01/3.01/4.01 V; SCPI confirmed the clamp; API requests above per-channel V/I caps were rejected before SCPI; tamper checks passed. All outputs stayed OFF and `SYST:ERR?` remained `0, "No error"`. H04-Powered also passed for the low-power profile scope with 21 measured points; unrestricted rated limits are not verified. See the H04P report and qualification matrix.
 
-## H04-Powered — profile boundary supplement (prepared, NOT RUN)
+## H04-Powered — profile boundary supplement (completed)
 
 H04 remains OFF-only for unrestricted rated limits. H04-Powered is an additive
 low-energy group: 21 automated readings across independent CH1–CH3, with a KEL103
 controlled as a CR load. The runner uses `control` and `power_only` profiles capped at
 4.50 V / 0.500 A and allows only one PSU output ON. CV points use 47 Ω (56 Ω at
-4.50 V); CC points use 22/12/5 Ω at 0.100/0.250/0.500 A. Each channel also gets a
+4.50 V); CC points use 22/11/5 Ω at 0.100/0.250/0.500 A. The 11 Ω point provides
+clear current-limit headroom at 0.250 A; 12 Ω sat too close to the CV/CC boundary on
+the physical load. Each channel also gets a
 3.30 V baseline and its assigned 2.20/3.30/4.40 V point. Requests for 4.51 V and
 0.501 A must be rejected in software before SCPI. No unrestricted profile is energized.
 
-Before any load connection, the runner also applies the 4.50 V cap with all outputs
-OFF, displays the per-channel readbacks, and asks the operator to confirm that the
-front-panel `Protection Settings → Max Volt Set` is On at 4.50 V and that an attempted
-V-set=4.51 V clamps to 4.50 V on each channel. The runner independently reads back
-that value, restores 3.30 V, and checks that a 4.51 V library request fails before SCPI.
+Before any load connection, the runner applies the 4.50 V cap and, with every output
+OFF, first sends direct `VOLT 4.51` writes on CH1–CH3. Each instrument readback must
+reject the request with SCPI error `120, "Parameter overflowed"`, retain the prior
+3.30 V setpoint, and return an empty error queue after the expected response is read.
+It then checks that a 4.51 V library request fails before SCPI. Finally, it displays the
+per-channel readbacks and asks the operator to confirm that front-panel `Protection
+Settings → Max Volt Set` is On at 4.50 V and that a fresh V-set=4.51 V panel attempt
+clamps to 4.50 V on each channel. The runner reads back the result and restores 3.30 V.
+This order tests the direct instrument clamp before the separate panel and local
+library V/I-cap checks.
 H04 performs the panel/API check with distinct 2.00/3.00/4.00 V maxima and varied
 setpoints/current limits. These panel checks follow the vendor
 manual's Max Volt Set description (maximum voltage adjustable using V-set).
@@ -128,8 +135,22 @@ Recall Off, all PSU outputs OFF and KEL INPUT OFF, disconnect other circuits and
 all jumpers. The runner configures CR and collects KEL103 and PSU readings itself.
 Operator pauses occur only to connect the load to CH1, move it CH1→CH2 and CH2→CH3,
 then disconnect it from CH3, always with PSU outputs and KEL INPUT OFF. Follow the
-exact H04P preflight token; any mismatch or instrument error stops the stage. The
-runner allows 5000 normal PSU commands / 900 seconds and reserves a bounded tail for
-OFF and state verification after a command/time budget fault. Offline verification
-passed 70/70, including the simulated 21-point flow. This is SIM TESTED only; no
-hardware was accessed. See the H04P row in the [qualification matrix](hardware_reports/qualification_matrix_2026-10-25.md).
+exact H04P preflight token; any mismatch or unexpected instrument error stops the stage.
+The direct over-limit SCPI probe expects and records error `120, "Parameter overflowed"`,
+then verifies the prior setpoint and an empty error queue. The runner allows 5000 normal
+PSU commands / 900 seconds and reserves a bounded tail for OFF and state verification
+after a command/time budget fault. After enabling a point, it allows up to 3 seconds for
+the OPER ON status bit to appear while requiring the selected output readback to remain
+ON and every other channel OFF. Offline verification passed 73/73, including the
+simulated 21-point flow. The 2026-10-26 physical run passed all 21 readings and profile
+guards. Three direct `VOLT 4.51` probes returned the expected
+`120, "Parameter overflowed"`, preserved 3.30 V, and left the error queue clear. Panel
+attempts on all channels clamped at 4.50 V. Measured CV/CC points agreed with KEL103
+within runner thresholds; output and load INPUT were verified OFF after each point and
+physically confirmed OFF at the end. Identification replies reported both firmware
+strings `1.04-1.04` and `1.04-0.01`. CH3 OPER showed only ON (`8`) in CV and CC while
+QUES and independent measurements agreed with the mode. This is a status-bit caveat.
+Outcome: PASS / HW OBSERVED; no calibrated metrology or unrestricted rated limits are
+claimed. See the [H04P report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md),
+[raw event log](../reports/hardware/2026-10-26T123057.662164Z_H04P/events.jsonl), and
+[qualification matrix](hardware_reports/qualification_matrix_2026-10-25.md).

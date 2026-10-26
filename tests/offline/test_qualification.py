@@ -161,6 +161,14 @@ class TestQualification(unittest.TestCase):
         self.assertEqual(fake.sent, [b':INP?\n', b':FUNC CR\n', b':FUNC?\n',
                                      b':RES 40OHM\n', b':FUNC?\n', b':RES?\n'])
 
+        h04p = DatagramFake((b'OFF', b'CR', b'CR', b'11.000OHM', b'OFF', b'ON'))
+        load = KEL103UDP('192.168.22.106', sock=h04p)
+        self.assertEqual(load.configure_h04p_cr(11.0), 11.0)
+        load.set_input(True)
+        self.assertEqual(h04p.sent, [b':INP?\n', b':FUNC CR\n', b':FUNC?\n',
+                                     b':RES 11OHM\n', b':FUNC?\n', b':RES?\n',
+                                     b':INP?\n', b':INP ON\n', b':INP?\n'])
+
         active = DatagramFake((b'ON',))
         load = KEL103UDP('192.168.22.106', sock=active)
         with self.assertRaises(Exception): load.configure_cr(12.0)
@@ -247,6 +255,11 @@ class TestQualification(unittest.TestCase):
             q.preflight('H03', '/dev/ttyUSB1', start_channel=3)
         self.assertIn('CONFIRM H03 RESUME_CH3 INDEPENDENT ALL_OFF', output.getvalue())
         self.assertIn('questionable', output.getvalue().lower())
+
+    def test_h04_reviewed_matrix_pass_is_accepted_for_dependent_stages(self):
+        q = self.module()
+        self.assertTrue(q.stage_passed('**PASS (OFF-only; reviewed)**'))
+        self.assertTrue(q.stage_passed(q.stages()['H04'][-1]))
 
     def test_h03_resume_requires_reviewed_prior_points_and_off_confirmation(self):
         q = self.module()
@@ -711,7 +724,7 @@ class TestQualification(unittest.TestCase):
         self.assertIn('3.30', card)
         self.assertIn('4.40', card)
         self.assertIn('CR 22', card)
-        self.assertIn('CR 22/12/5', card)
+        self.assertIn('CR 22/11/5', card)
         self.assertIn('Max Volt Set', card)
         self.assertIn('H04P MAXV', card)
         self.assertIn('DRY RUN', card)
@@ -746,6 +759,8 @@ class TestQualification(unittest.TestCase):
                 self.load = load
                 self.load.transport = self
                 self.modes = {}
+                self.pending_error = None
+                self.status_warmup = {channel: 0 for channel in (1, 2, 3)}
             def metrics(self, channel):
                 values = self.values[channel]
                 if values['CHAN:OUTP'] == 0 or self.load.input != 'ON':
@@ -755,7 +770,22 @@ class TestQualification(unittest.TestCase):
                 if demand_a >= limit_a:
                     return limit_a * self.load.resistance, limit_a, 'CC'
                 return target_v, demand_a, 'CV'
+            def write(self, command):
+                if command == 'CHAN:OUTP 1':
+                    self.status_warmup[self.active_ch] = 2
+                if command == 'VOLT 4.51':
+                    self.cmds.append(command)
+                    if (self.values[self.active_ch]['VOLT:LIM:STAT'] != 1 or
+                            self.values[self.active_ch]['CHAN:OUTP'] != 0):
+                        raise AssertionError('unsafe remote max-voltage probe')
+                    self.pending_error = '120,Parameter overflowed'
+                    return
+                return super().write(command)
             def query(self, command):
+                if command == 'SYST:ERR?' and self.pending_error:
+                    response = self.pending_error
+                    self.pending_error = None
+                    return response
                 key = command.upper().removesuffix('?')
                 if key in ('MEAS:VOLT', 'MEAS:CURR', 'MEAS:POW'):
                     voltage, current, mode = self.metrics(self.active_ch)
@@ -766,6 +796,9 @@ class TestQualification(unittest.TestCase):
                     enabled = bool(self.values[channel]['CHAN:OUTP'])
                     voltage, current, mode = self.metrics(channel)
                     self.modes[channel] = mode
+                    if enabled and self.status_warmup[channel]:
+                        self.status_warmup[channel] -= 1
+                        return '0'
                     return str((8 if enabled else 0) |
                                (1 if enabled and mode == 'CV' else
                                 2 if enabled and mode == 'CC' else 0))
@@ -792,7 +825,7 @@ class TestQualification(unittest.TestCase):
             with patch('builtins.input', side_effect=panel_clamps_to_limit), \
                     contextlib.redirect_stdout(io.StringIO()):
                 result = h04_powered(fake, evidence, load)
-            self.assertEqual(result, 'PASS')
+            self.assertEqual(result, 'PASS', evidence.path.read_text())
             self.assertTrue(fake.closed)
             self.assertTrue(load.closed)
             self.assertEqual(load.input, 'OFF')
@@ -800,7 +833,7 @@ class TestQualification(unittest.TestCase):
                                 for values in fake.values.values()))
             self.assertFalse(any(command in ('OUTP 1', 'SYST:RWLOCK', '*RST', '*CLS')
                                  for command in fake.cmds))
-            self.assertNotIn('VOLT 4.51', fake.cmds)
+            self.assertEqual(fake.cmds.count('VOLT 4.51'), 3)
             records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
             points = [record for record in records if record['event'] == 'measurement']
             self.assertEqual(len(points), 21)
@@ -808,6 +841,17 @@ class TestQualification(unittest.TestCase):
                           if record.get('check') == 'max voltage boundary rejected by API']
             self.assertEqual([record['channel'] for record in maxv_cases], [1, 2, 3])
             self.assertTrue(all(record['scpi_sent'] is False for record in maxv_cases))
+            remote_rejections = [record for record in records
+                                 if record.get('check') == 'remote SCPI max-voltage rejection']
+            self.assertEqual([record['channel'] for record in remote_rejections], [1, 2, 3])
+            self.assertEqual([record['actual_voltage_v'] for record in remote_rejections],
+                             [3.3, 3.3, 3.3])
+            self.assertTrue(all(record['error_code'] == 120 for record in remote_rejections))
+            panel_gate_index = next(index for index, record in enumerate(records)
+                                    if record.get('phase') == 'front_panel_max_voltage_clamp')
+            remote_probe_index = next(index for index, record in enumerate(records)
+                                      if record.get('check') == 'remote SCPI max-voltage rejection')
+            self.assertLess(remote_probe_index, panel_gate_index)
             self.assertEqual({point['channel'] for point in points}, {1, 2, 3})
             self.assertEqual({point['mode'] for point in points}, {'CV', 'CC'})
             self.assertEqual(sum(record['event'] == 'operator_gate' for record in records), 5)
