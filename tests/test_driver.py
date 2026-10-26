@@ -12,6 +12,8 @@ class FakeTransport:
                             'VOLT:LIM:STAT': 0., 'CHAN:OUTP': 0.,
                             'OUTP:TIM:DEL': 10., 'OUTP:TIM:STAT': 0.} for ch in (1,2,3)}
         self.flags = {'OUTP:SER': 0., 'OUTP:PARALLEL': 0., 'OUTP:TRAC': 0., 'OUTP:STAT:ALL': 0.}
+        self.operation_status_masks = {ch: None for ch in (1, 2, 3)}
+        self.questionable_status_masks = {ch: 0 for ch in (1, 2, 3)}
         self.failed_query = None
         self.closed = False
 
@@ -48,7 +50,12 @@ class FakeTransport:
         if key == 'MEAS:CURR': return str(self.values[self.active_ch]['CURR']/2)
         if key.startswith('STAT:OPER:INST:ISUM') and key.endswith(':COND'):
             ch = int(key.split('ISUM')[1].split(':')[0])
+            if self.operation_status_masks[ch] is not None:
+                return str(self.operation_status_masks[ch])
             return '9' if self.values[ch]['CHAN:OUTP'] else '0'
+        if key.startswith('STAT:QUES:INST:ISUM') and key.endswith(':COND'):
+            ch = int(key.split('ISUM')[1].split(':')[0])
+            return str(self.questionable_status_masks[ch])
         if key == 'SYST:ERR': return '0,No error'
         if key == 'SYST:VERS': return '1999.0'
         if key in ('*STB','STAT:QUES:COND','STAT:OPER:COND'): return '0'
@@ -123,6 +130,29 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(sample.voltage_set_v, 1.0)
         self.assertEqual(sample.current_limit_set_a, .1)
         self.assertEqual(sample.regulation, 'OFF')
+
+    def test_regulation_uses_documented_questionable_status_when_operation_mode_is_clear(self):
+        self.dev.output(3, True)
+        self.fake.operation_status_masks[3] = 8
+        self.fake.questionable_status_masks[3] = 1
+
+        sample = self.dev.read_channel(3)
+
+        self.assertEqual(sample.regulation, 'CV')
+        self.assertEqual(sample.operation_status_mask, 8)
+        self.assertEqual(sample.questionable_status_mask, 1)
+
+        self.fake.operation_status_masks[3] = 9
+        self.fake.questionable_status_masks[3] = 2
+        conflicting = self.dev.read_channel(3)
+        self.assertEqual(conflicting.regulation, 'UNKNOWN')
+        self.assertEqual(conflicting.operation_status_mask, 9)
+        self.assertEqual(conflicting.questionable_status_mask, 2)
+
+        self.fake.operation_status_masks[3] = 9
+        self.fake.questionable_status_masks[3] = 3
+        ambiguous = self.dev.read_channel(3)
+        self.assertEqual(ambiguous.regulation, 'UNKNOWN')
 
     def test_sequence_and_timer(self):
         self.dev.sequence([(0,1,True),(0,2,True),(0,1,False)])

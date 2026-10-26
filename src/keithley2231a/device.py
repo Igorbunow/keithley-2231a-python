@@ -31,6 +31,8 @@ class Reading:
     label: str  # CH1, CH2, CH3, or CH1+CH2 for series/parallel
     voltage_set_v: float | None = None
     current_limit_set_a: float | None = None
+    operation_status_mask: int | None = None
+    questionable_status_mask: int | None = None
 
 class Keithley2231A:
     def __init__(self, transport: Transport):
@@ -452,9 +454,28 @@ class Keithley2231A:
                 if volts < -.05 or amps < -.03:
                     raise SafetyError(f'Unexpected negative measurement CH{ch}: {volts}, {amps}')
                 mode = 'UNKNOWN'
+                operation_mask = None
+                questionable_mask = None
                 if with_regulation:
-                    mask = int(self._num(f'STAT:OPER:INST:ISUM{ch}:COND?'))
-                    mode = 'CV' if mask & 1 and not mask & 2 else 'CC' if mask & 2 and not mask & 1 else 'UNKNOWN'
+                    operation_mask = int(self._num(f'STAT:OPER:INST:ISUM{ch}:COND?'))
+                    questionable_mask = int(self._num(f'STAT:QUES:INST:ISUM{ch}:COND?'))
+
+                    def decode_regulation(mask: int) -> str | None:
+                        cv, cc = bool(mask & 1), bool(mask & 2)
+                        if cv and cc:
+                            return 'UNKNOWN'
+                        if not cv and not cc:
+                            return None
+                        return 'CV' if cv else 'CC'
+
+                    operation_mode = decode_regulation(operation_mask)
+                    questionable_mode = decode_regulation(questionable_mask)
+                    if ('UNKNOWN' in (operation_mode, questionable_mode) or
+                            (operation_mode is not None and questionable_mode is not None
+                             and operation_mode != questionable_mode)):
+                        mode = 'UNKNOWN'
+                    else:
+                        mode = operation_mode or questionable_mode or 'UNKNOWN'
                 if not enabled: mode = 'OFF'
                 spec = self._profile.channels[ch - 1]
                 combined = self._profile.wiring in ('series', 'parallel') and ch == 1
@@ -483,7 +504,9 @@ class Keithley2231A:
                                regulation=mode, enabled=enabled,
                                label="CH1+CH2" if combined else f"CH{ch}",
                                voltage_set_v=None if combined else voltage_set,
-                               current_limit_set_a=None if combined else current_set)
+                               current_limit_set_a=None if combined else current_set,
+                               operation_status_mask=operation_mask,
+                               questionable_status_mask=questionable_mask)
             except Exception as exc:
                 self._trip(f'Measurement failed: {exc}')
 

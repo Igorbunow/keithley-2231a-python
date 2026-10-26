@@ -1,8 +1,8 @@
 # Hardware qualification matrix / Матрица аппаратной квалификации
 
-Исходная матрица из CODEX_HARDWARE_ROADMAP.ru.md, 2026-10-25. Current result: H01 PASS after an aborted first attempt; H02 PASS after a failed first attempt; H03 PARTIAL (CH1/CH2 CV/CC reviewed PASS; CH3 CV status mismatch, CH3 CC pending); H04–H12/O01/O02 NOT_RUN.
+Исходная матрица из CODEX_HARDWARE_ROADMAP.ru.md, 2026-10-25. Current result: H01 PASS after an aborted first attempt; H02 PASS after a failed first attempt; H03 PARTIAL (CH1/CH2 CV/CC reviewed PASS; CH3 CV and CC function, display and electrical comparison observed PASS; status interpretation unresolved); H04–H12/O01/O02 NOT_RUN.
 
-Latest H03 CH3 resume aborted before a measurement: KEL103 `*IDN?` timed out, and the
+An earlier H03 CH3 resume aborted before a measurement: KEL103 `*IDN?` timed out, and the
 cleanup sequence read `-200, "Execution error"` after its first `OUTP 0`. The response
 does not identify its originating command. Library emergency shutdown now enters Remote
 before OFF. Offline regression is SIM TESTED 56/56; physical replay remains pending fresh
@@ -14,7 +14,7 @@ Outcome and feature verification level are independent. Existing UART/SYST:REM/*
 | --- | --- | --- | --- | --- |
 | **H01** | Пассивный SCPI-preflight, идентификация, чтение статусных и mode-регистров, парсер ошибок | Все три OUT OFF, вход нагрузки OFF; без физических перемычек | Ответы воспроизводимы; нет таймаутов/сдвигов ответов; `*IDN?` корректен | PASS |
 | **H02** | Безнагрузочная установка защищённого профиля: все 3 канала, `VOLT:LIM`/state, readback, отказ на недопустимых V/I, неактивированный ON | Независимые каналы, нагрузка отсоединена | После применения все OFF, уставки/лимиты соответствуют профилю, отказы не отправлены в SCPI | PASS (second attempt; first FAIL) |
-| **H03** | **Все 3 канала × CV и CC**, индивидуальный ON/OFF, измерение U/I/P и статус CV/CC | Нагрузка последовательно CH1→CH2→CH3, CR 40 Ω / CR 12 Ω; KEL103 UDP/18190; паузы на проводку и дисплеи | CV и CC соответствуют индикации и независимому измерению; другие каналы остаются OFF | PARTIAL (CH1/CH2 CV/CC reviewed PASS; CH3 CV returned status 8 without CV/CC; CC pending) |
+| **H03** | **Все 3 канала × CV и CC**, индивидуальный ON/OFF, измерение U/I/P и статус CV/CC | Нагрузка последовательно CH1→CH2→CH3, CR 40 Ω / CR 12 Ω; KEL103 по явно выбранному UDP/18190 или USB serial; паузы на проводку и дисплеи | CV и CC соответствуют индикации и независимому измерению; другие каналы остаются OFF | PARTIAL (CH1/CH2 CV/CC reviewed PASS; CH3 CV/CC function, display and electrical comparison observed PASS; status interpretation unresolved; USB control HW OBSERVED) |
 | **H04** | Профильные ограничения: защищённый, `unrestricted()` в маломощном сценарии; внешняя подмена уставки/лимита при OFF; аварийная реакция/запрет смены профиля | Независимая схема, все OFF для tamper | Нет программного выхода за cap; активный профиль неизменяем; обнаруживается смена **точных** уставок `power_only` | NOT_RUN |
 | **H05** | `power_only`: предварительная фиксация уставок, запрет `set_channel`/`timer`/произвольной последовательности, CH1→CH2→CH3 и обратное выключение с паузами | Независимая схема, нагрузка на одном CH, остальные без нагрузки; независимый DMM/осциллограф желателен | Реальные статусы и порядок правильны; тайминги проверены с указанной погрешностью; если нет физического измерения всех фронтов — лишь PARTIAL | NOT_RUN |
 | **H06** | Таймеры CH1/CH2/CH3, отключение по таймеру, повторное включение, влияние `Output Recall` | Независимые каналы; нагрузка поочерёдно или холостой ход с измерением | Выход отключается в установленном окне; не происходит непрошеного автозапуска. Проверка recall после AC power-cycle — отдельное ручное разрешение | NOT_RUN |
@@ -41,21 +41,44 @@ NOT_RUN. H03 attempt 1 ran CH1 CV/CC with long, thin leads and stopped on a volt
 comparison mismatch. The voltage differences divided by load current imply 0.324 Ω and
 0.325 Ω, suggesting lead/contact drop. After fitting short 10 AWG leads, attempt 2
 produced reviewed PASS on CH1 CV and CC: Keithley/KEL103 were 3.9988/3.998 V at
-0.0986824/0.099 A for CV, and 3.01538/3.008 V at 0.249777/0.250 A for CC. The operator
-corrected the mistyped CC panel mode; status mask 10 agreed. All OFF was confirmed.
-The runner's raw outcome remains FAIL due to the typo, while both reviewed points are
-retained as PASS. See the H03 [event log](../../reports/hardware/2026-10-25T222742.371680Z_H03/events.jsonl)
+0.0986824/0.099 A for CV, and 3.01538/3.008 V at 0.249777/0.250 A for CC. Status mask 10 and the operator-confirmed CC panel agreed. All OFF was confirmed;
+both reviewed points are PASS. See the H03 [event log](../../reports/hardware/2026-10-25T222742.371680Z_H03/events.jsonl)
 and [review report](2026-10-25T222742.371680Z_H03_qualification.md).
 
 KEL103 read-only UDP/18190 preflight returned V3.30, INPUT OFF, CR and zero measurements.
 H03 resumed at CH2: CV returned Keithley 3.9931 V / 0.0986671 A / 0.394513 W (status 9)
 and KEL103 3.9924 V / 0.0999 A / 0.3988 W; CC returned 3.00772 V / 0.249603 A /
 0.750575 W (status 10) and KEL103 3.0037 V / 0.2503 A / 0.7518 W. The operator
-confirmed both displays and OFF after both points. CH3 CV returned 3.99326 V /
-0.0998173 A but operation status 8 (ON without CV/CC bits), repeatedly; error queue
-remained zero. CH3's 5 V nameplate limit is distinct from CH1/CH2's 30 V; this test used
-4 V / 0.5 A. The runner safely shut down and operator confirmed all OFF. This point is
-not passed; cause remains under investigation. See [latest H03 evidence](2026-10-25T231834.474816Z_H03_qualification.md).
+confirmed both displays and OFF after both points. Earlier CH3 CV returned operation
+status 8 (ON without CV/CC bits), repeatedly; error queue remained zero. A later USB
+attempt measured Keithley 3.99493 V / 0.100668 A / 0.402329 W and KEL103 4.0003 V /
+0.0999 A / 0.3996 W, with operation status 8 and questionable status 1 (CV); all error
+queue replies were zero. The operator retrospectively confirmed panel CV / KEL CR /
+INPUT ON, then confirmed all OFF after shutdown. Display confirmation arrived too late
+for the live gate; run remains ABORTED and point is not passed. The official manual
+assigns CV/CC bits 0/1 to both channel status summaries and ON bit 3 to operation summary,
+so operation status conflicts with the manual, questionable status, panel and measurements.
+The 5 V CH3 rating was respected with 4 V / 0.5 A. USB KEL CR setup/readback, INPUT
+control and powered telemetry are HW OBSERVED only. See [latest H03 report](2026-10-25T235757.702842Z_H03_qualification.md)
+and [earlier CH3 report](2026-10-25T231834.474816Z_H03_qualification.md).
+
+The corrected retry accepted the exact wiring and live display gates, configured KEL103
+CR 40 Ω / INPUT ON, and measured Keithley 3.99493 V / 0.0989667 A / 0.395529 W and
+KEL103 4.0003 V / 0.0999 A / 0.3996 W. Electrical comparison and live panel confirmation passed; all error replies were zero.
+The runner stopped at its status guard (`UNKNOWN`, `OPER=8`, `QUES=1`); this is not an
+SCPI error and does not indicate that CV failed to operate. Status interpretation/source
+remains unresolved. All channels and load were shut down and confirmed OFF. See [physical evidence](2026-10-26T000805.061853Z_H03_qualification.md).
+
+The next gated USB run completed CH3 CV and CC with live PSU/KEL103 display confirmations.
+CV: Keithley 3.99576 V / 0.0998173 A / 0.398929 W; KEL103 4.0003 V / 0.0999 A /
+0.3996 W; `OPER=8`, `QUES=1`. CC: Keithley 2.98031 V / 0.249532 A / 0.743684 W;
+KEL103 2.9840 V / 0.2487 A / 0.7421 W; `OPER=8`, `QUES=2`. Both comparisons passed H03
+tolerances and all 190 error-queue reads were `0, "No error"`. The operation status omits
+the documented CV/CC bits in both modes while the questionable status, panel and electrical
+measurements agree; this telemetry discrepancy remains unresolved. Thus CH3 mode behavior
+is physically observed in both modes, while H03 remains PARTIAL on status qualification.
+All channels and KEL103 INPUT were read OFF and final physical OFF was confirmed. See
+[latest report](2026-10-26T002312.484924Z_H03_qualification.md) and [raw event log](../../reports/hardware/2026-10-26T002312.484924Z_H03/events.jsonl).
 
 H01 attempt: [2026-10-26 local / 2026-10-25 UTC report](2026-10-25T210502.973378Z_H01_preflight.md).
 Stopped on OUTP:PARA? after an I/O exception. Last channel ON bits were 0/0/0;
@@ -73,7 +96,7 @@ OFF bits remained 0; `SYST:ERR?` returned `0, "No error"` before and after. CH2/
 not active protection). PSU meter readings are uncalibrated and have no independent DMM comparison.
 
 H03 attempt 1 stopped on the CH1 voltage mismatch. After replacing the leads, attempt 2
-measured CH1 CV/CC within criteria; the operator corrected a CV→CC typo. The CH2
+measured CH1 CV/CC within criteria; the panel showed the tested CC mode. The CH2
 continuation then passed CV/CC with display confirmations and all-OFF checks. CH3 CV
 returned operation status 8 without CV/CC bits despite 3.99326 V / 0.0998173 A; all
 error-queue replies were zero. CH3 uses a distinct 5 V rating (CH1/2: 30 V), while this

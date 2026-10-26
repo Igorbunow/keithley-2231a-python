@@ -18,6 +18,7 @@
 | COM-02 | `SYST:REM` + `*IDN?` | basic query fake | **HW VERIFIED (H01)** | terminal record fw 1.04-1.04 |
 | COM-03 | Additional read-only SCPI (`VOLT?`, `STAT?`, `SYST:VERS?`) | SIM TESTED | **HW VERIFIED (H01 subset only)** | `examples/probe.py` output vs front panel |
 | COM-04 | Raw TCP-to-UART bridge | SIM TESTED (local loopback) | **HW UNVERIFIED** | MCU firmware/version + loss/fragment tests |
+| LOAD-01 | KEL103 H03 control over UDP or USB CDC serial | UDP physically exercised on CH2; USB IDN, CR setup/readback, INPUT control and telemetry observed | **USB HW OBSERVED** (not a complete pass) | USB H03 CH3 test review; status interpretation remains open |
 | PRF-01 | Applying independent guarded profile, output-OFF-first | SIM TESTED | **HW UNVERIFIED** | no-load SCPI and front panel + readbacks |
 | PRF-02 | Hardware `VOLT:LIM` setting/readback | SIM TESTED | **HW UNVERIFIED** | instrument limits verified on dummy load |
 | PRF-03 | Software cap/health integrity alarms | SIM TESTED | **HW UNVERIFIED** | out-of-band modification test with safe load |
@@ -171,10 +172,8 @@ suggesting lead/contact resistance; this is an inference.
 After installing short 10 AWG leads, a second run measured CH1 CV as Keithley
 3.9988 V / 0.0986824 A / 0.39477 W and KEL103 3.998 V / 0.099 A / 0.3982 W. CH1 CC
 measured Keithley 3.01538 V / 0.249777 A / 0.75292 W and KEL103 3.008 V / 0.250 A /
-0.7539 W. The CC SCPI status was 10; the operator later confirmed the panel showed CC
-and that the earlier `CV` entry was a typing error. The runner stopped safely on that
-entry, and the operator confirmed all channels and load OFF. Both CH1 points are now
-reviewed PASS; raw failure history is preserved. CH2 CV/CC were later measured and
+0.7539 W. The CC SCPI status was 10 and the panel showed CC. The operator confirmed
+all channels and load OFF. Both CH1 points are now reviewed PASS. CH2 CV/CC were later measured and
 the operator confirmed both displays. CV: Keithley 3.9931 V / 0.0986671 A /
 0.394513 W, status 9; KEL103 3.9924 V / 0.0999 A / 0.3988 W. CC: Keithley
 3.00772 V / 0.249603 A / 0.750575 W, status 10; KEL103 3.0037 V / 0.2503 A /
@@ -198,19 +197,46 @@ status diagnostic is prepared but has not been run. See the
 [H03 report](hardware_reports/2026-10-25T231834.474816Z_H03_qualification.md) and
 [event log](../reports/hardware/2026-10-25T231834.474816Z_H03/events.jsonl).
 
-The Keithley manual confirms bit 3 is output ON and bit 1/2 are CV/CC. The library
+The Keithley manual defines bit 3 as output ON and bits 0/1 as CV/CC in the operation
+channel summary. The library
 emergency-off path enters Remote, requests global OFF, checks all channels and
 individually issues `CHAN:OUTP 0` for any remaining ON channel. The full offline suite is
 56/56 SIM TESTED.
-H03 remains PARTIAL. A focused diagnostic update records the CH3 questionable-condition
-register alongside operation status and requests panel confirmation before failing on a
-status mismatch. It does not substitute one register for the other or waive a mismatch.
-The offline regression passed 56/56. A fresh approval is required before another powered
-CH3 test.
+H03 remains PARTIAL because CH3 mode-status telemetry is unqualified. The latest live-gated
+USB run completed both CH3 points. CV: Keithley 3.99576 V / 0.0998173 A / 0.398929 W;
+KEL103 4.0003 V / 0.0999 A / 0.3996 W. CC: Keithley 2.98031 V / 0.249532 A /
+0.743684 W; KEL103 2.9840 V / 0.2487 A / 0.7421 W. The operator confirmed PSU CV then
+CC, KEL CR and INPUT ON at the live gates. Both electrical comparisons met H03 tolerances.
+All 190 Keithley `SYST:ERR?` replies were `0, "No error"`. For both powered points,
+`STAT:OPER:INST:ISUM3:COND?` returned `8` (ON only), while
+`STAT:QUES:INST:ISUM3:COND?` returned `1` (CV) and `2` (CC), respectively. The Keithley
+manual specifies CV/CC bits 0/1 in both channel summary registers and ON bit 3 in the
+operation summary. The library defect is now localized: `read_channel()` decoded regulation
+only from operation status. It now reads both registers, uses a single documented mode when
+the other has no mode bit, returns both masks on `Reading`, and reports UNKNOWN if the
+registers conflict. The strict H03 runner still records operation status separately. Offline
+regression passed 60/60; powered CH3 CV/CC replay is still required to verify the change on
+the instrument. All three outputs and KEL103 INPUT were read OFF, and the operator confirmed
+the final OFF state. See the [latest report](hardware_reports/2026-10-26T002312.484924Z_H03_qualification.md)
+and [raw event log](../reports/hardware/2026-10-26T002312.484924Z_H03/events.jsonl).
 
-Latest CH3 resume stopped before load or PSU profile configuration: KEL103 `*IDN?`
+An earlier CH3 resume stopped before load or PSU profile configuration: KEL103 `*IDN?`
 timed out. During cleanup, the first Keithley command was `OUTP 0` while the instrument
 was in Local; the following `SYST:ERR?` returned `-200, "Execution error"`. This response
 does not identify its originating command. The library now sends `SYST:REM` before
 emergency OFF. The corrected path is simulation-tested only; see the
 [attempt report](hardware_reports/2026-10-25T233455.502881Z_H03_qualification.md).
+
+The KEL103 USB CDC serial path is an explicit H03 option
+(`--load-transport serial --load-serial-port /dev/ttyACM0`, 115200 8N1). It uses the
+existing H03 query/write allowlist, latches uncertain link failures and never switches
+automatically from UDP. USB command framing/baud are community-derived; KORAD confirms
+the interface exists but does not publish protocol details on its product page. In the
+latest authorized attempt USB returned KEL103 V3.30 and INPUT OFF; shutdown's `:INP OFF`
+also read back OFF. The later authorized H03 CH3 run verified USB CR 40 Ω setup/readback,
+INPUT ON/OFF control, and KEL telemetry while powered (HW OBSERVED, not a complete
+stage pass). The Keithley error queue returned `170, "Invalid command"` on the earlier
+attempt after `SYST:REM`, but no queue baseline
+was taken before that command, so attribution is unknown. The runner now checks and
+records the queue before any mutation. The current offline suite passes 59/59. See the
+[H03 procedure](H03_PREFLIGHT.ru.md), [earlier attempt report](hardware_reports/2026-10-25T235449.217553Z_H03_qualification.md), and [powered CH3 report](hardware_reports/2026-10-25T235757.702842Z_H03_qualification.md).

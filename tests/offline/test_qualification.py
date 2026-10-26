@@ -39,11 +39,11 @@ class TestQualification(unittest.TestCase):
         self.assertEqual(plan.count('STAT:OPER:INST:ISUM1:COND?'), 29)
         self.assertEqual(plan.count('STAT:OPER:INST:ISUM2:COND?'), 29)
         self.assertEqual(plan.count('STAT:OPER:INST:ISUM3:COND?'), 29)
-        self.assertEqual(plan.count('STAT:QUES:INST:ISUM1:COND?'), 2)
-        self.assertEqual(plan.count('STAT:QUES:INST:ISUM2:COND?'), 2)
-        self.assertEqual(plan.count('STAT:QUES:INST:ISUM3:COND?'), 2)
+        self.assertEqual(plan.count('STAT:QUES:INST:ISUM1:COND?'), 4)
+        self.assertEqual(plan.count('STAT:QUES:INST:ISUM2:COND?'), 4)
+        self.assertEqual(plan.count('STAT:QUES:INST:ISUM3:COND?'), 4)
         self.assertNotIn('OUTP 1', plan)
-        self.assertEqual(TOKEN, 'CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED LAN=UDP:18190 RECALL=OFF VCAP=4.00 ICAP=0.500')
+        self.assertEqual(TOKEN, 'CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED LAN=UDP:18190 RECALL=OFF VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
         self.assertEqual(FINAL_TOKEN, 'CONFIRM H03 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF')
         with tempfile.TemporaryDirectory() as tmp:
             fake = FakeTransport()
@@ -96,6 +96,60 @@ class TestQualification(unittest.TestCase):
         load = KEL103UDP('192.168.22.106', sock=unconfigured)
         with self.assertRaises(Exception): load.set_input(True)
         self.assertEqual(unconfigured.sent, [])
+
+    def test_kel103_serial_uses_bounded_lf_protocol_and_latches_link_errors(self):
+        from channel_stage import KEL103Serial
+
+        class SerialFake:
+            def __init__(self): self.sent, self.replies, self.closed = [], [b'OFF\r\n'], False
+            @property
+            def in_waiting(self): return 0
+            def write(self, payload): self.sent.append(payload); return len(payload)
+            def flush(self): pass
+            def readline(self, size): return self.replies.pop(0)
+            def close(self): self.closed = True
+
+        fake = SerialFake()
+        load = KEL103Serial('/dev/ttyACM0', serial_port=fake)
+        self.assertEqual(load.query(':INP?'), 'OFF')
+        load.write(':INP OFF')
+        self.assertEqual(fake.sent, [b':INP?\n', b':INP OFF\n'])
+        with self.assertRaises(ValueError): load.write(':SYST:FACTRESET')
+        load.close()
+        self.assertTrue(fake.closed)
+
+        failed = SerialFake()
+        failed.replies = [b'']
+        load = KEL103Serial('/dev/ttyACM0', serial_port=failed)
+        with self.assertRaisesRegex(OSError, 'incomplete/oversized'):
+            load.query(':INP?')
+        with self.assertRaisesRegex(OSError, 'link uncertain'):
+            load.query(':INP?')
+        self.assertEqual(failed.sent, [b':INP?\n'])
+
+    def test_kel103_serial_refuses_wrong_usb_device_before_open(self):
+        from channel_stage import KEL103Serial
+        from serial.tools import list_ports
+        with patch.object(list_ports, 'comports', return_value=[
+                type('Port', (), {'device': '/dev/ttyACM0', 'vid': 0x10C4,
+                                  'pid': 0xEA60})()]), \
+             patch('serial.Serial') as serial_open:
+            with self.assertRaisesRegex(OSError, 'identity mismatch'):
+                KEL103Serial('/dev/ttyACM0')
+            serial_open.assert_not_called()
+
+    def test_h03_usb_load_preflight_requires_explicit_usb_identity(self):
+        q = self.module()
+        output = io.StringIO()
+        with patch.object(q, 'open_transport', side_effect=AssertionError('PSU port opened')):
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(q.main(['preflight', 'H03', '--load-transport', 'serial',
+                                         '--load-serial-port', '/dev/ttyACM0']), 0)
+        text = output.getvalue()
+        self.assertIn('USB /dev/ttyACM0', text)
+        self.assertIn('115200 8N1', text)
+        self.assertIn('USB=/dev/ttyACM0 BAUD=115200', text)
+        self.assertIn('ERRBASE=CHECK', text)
 
     def test_h03_preflight_is_offline_and_states_manual_load_points(self):
         q = self.module()
@@ -193,6 +247,9 @@ class TestQualification(unittest.TestCase):
                 key = command.upper().removesuffix('?')
                 if key == 'SYST:ERR':
                     self.cmds.append(command)
+                    if getattr(self, 'initial_170', False) and not self.initial_170_consumed:
+                        self.initial_170_consumed = True
+                        return '170,"Invalid command"'
                     if getattr(self, 'inject_170', False):
                         self.inject_170 = False
                         return '170,"Invalid command"'
@@ -255,6 +312,19 @@ class TestQualification(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = MeterFake()
+            fake.initial_170 = True
+            fake.initial_170_consumed = False
+            load = LoadFake()
+            evidence = q.Evidence(Path(tmp) / 'preexisting170.jsonl', 'H03')
+            with contextlib.redirect_stdout(io.StringIO()):
+                outcome = h03(fake, evidence, load)
+            self.assertEqual(outcome, 'FAIL')
+            self.assertEqual(fake.cmds[0], 'SYST:ERR?')
+            self.assertNotIn('OUTP:SER 0', fake.cmds)
+            self.assertIn('pre-existing instrument error', evidence.path.read_text())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = MeterFake()
             load = LoadFake()
             fake.fail_next_limit = True
             evidence = q.Evidence(Path(tmp) / 'error170.jsonl', 'H03')
@@ -292,7 +362,7 @@ class TestQualification(unittest.TestCase):
             evidence = q.Evidence(Path(tmp) / 'channel3_status_mismatch.jsonl', 'H03')
             with patch('builtins.input', side_effect=operator_answers()), contextlib.redirect_stdout(io.StringIO()):
                 outcome = h03(fake, evidence, load)
-            self.assertEqual(outcome, 'FAIL')
+            self.assertEqual(outcome, 'PARTIAL')
             self.assertFalse(any(fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
             self.assertEqual(load.input, 'OFF')
             events = [json.loads(line) for line in evidence.path.read_text().splitlines()]
@@ -304,9 +374,12 @@ class TestQualification(unittest.TestCase):
             self.assertTrue(any(event.get('event') == 'operator_display_confirmation'
                                 and event.get('channel') == 3 and event.get('keithley_panel_mode') == 'CV'
                                 for event in events))
-            self.assertTrue(any(event.get('event') == 'stage_error'
-                                and 'operation=8, questionable=9' in event.get('message', '')
-                                for event in events))
+            self.assertEqual([event['mode'] for event in events
+                              if event.get('event') == 'measurement'
+                              and event.get('channel') == 3], ['CV', 'CC'])
+            self.assertEqual(sum(event.get('event') == 'status_unqualified'
+                                 and event.get('channel') == 3 for event in events), 2)
+            self.assertFalse(any(event.get('event') == 'stage_error' for event in events))
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = MeterFake()

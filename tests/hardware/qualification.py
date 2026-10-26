@@ -114,7 +114,8 @@ def open_transport(port):
     return SerialTransport(port, baudrate=9600, timeout=2.0)
 
 
-def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_channel=1):
+def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_channel=1,
+              load_transport='udp', load_serial_port='/dev/ttyACM0'):
     """Print a human-readable card; never contact hardware."""
     row = stages()[test_id]
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
@@ -147,30 +148,36 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
               'Внутри apply_profile/verify_profile возможна более ранняя попытка OUTP 0; план запрещает иные отклонения.')
         return
     if test_id == 'H03':
-        from channel_stage import TOKEN as token, RESUME_CH2_TOKEN, RESUME_CH3_TOKEN, command_plan
+        from channel_stage import approval_token, command_plan
+        token = approval_token(start_channel, load_transport, load_host,
+                               load_port, load_serial_port)
         selected_plan = command_plan(start_channel)
         digest = hashlib.sha256('\n'.join(selected_plan).encode()).hexdigest()
+        load_connection = (f'KEL103 UDP {load_host}:{load_port}' if load_transport == 'udp'
+                           else f'KEL103 USB {load_serial_port}, 115200 8N1')
         print(f'Порт: {port}; USB–TTL UART 9600 8N1, один владелец. Независимые CH1–CH3; '
-              f'без DUT/перемычек; KEL103 UDP {load_host}:{load_port}; один канал включён за раз.\n'
+              f'без DUT/перемычек; {load_connection}; выбран вручную, без failover; '
+              'один канал включён за раз.\n'
               f'Продолжение с CH{start_channel}; предыдущие точки должны быть в приложенном evidence.\n'
               'Уставки профиля: каждый CH V=4.00 V, I=0.500 A; cap 4.00 V / 0.500 A.\n'
               'CV: CR 40.0 Ω, ожидается ~4.00 V / 0.100 A / 0.400 W.\n'
               'CC: CH I=0.250 A, CR 12.0 Ω, ожидается ~3.00 V / 0.250 A / 0.750 W.\n'
               'На каждую точку: при PSU OFF оператор подключает KEL103 только к целевому CH; '
-              'runner проверяет INPUT OFF, задаёт CR по UDP, включает INPUT и считывает U/I/P. '
+              f'runner проверяет INPUT OFF, задаёт CR по {load_transport.upper()}, '
+              'включает INPUT и считывает U/I/P. '
               'После измерения Keithley OFF, все каналы проверяются OFF, runner выключает '
               'KEL INPUT и проверяет OFF.\n'
               'Паузы: подключение CH1, перестановки CH1→CH2 и CH2→CH3, дисплейная сверка.\n'
-              'Остановить при любом коде SYST:ERR?, несоответствии режима, ответов, OFF или связи. '
+              'Остановить при любом коде SYST:ERR?, расхождении questionable status/панели, измерений, OFF или связи. '
               'При I/O-ошибке UNKNOWN OUTPUT STATE, не повторять команды.\n'
               'KEL103: *IDN?, :INP?, :FUNC?, :RES?, :MEAS:VOLT?, :MEAS:CURR?, '
               ':MEAS:POW?; разрешённые writes: :FUNC CR, :RES 12/40OHM, :INP ON/OFF.\n'
               'Keithley MEAS:POW? записывается в evidence. На каждой точке отдельно читаются '
-              'operation и questionable condition-регистры канала; любой mode/status mismatch '
-              'останавливает тест.\n'
+              'operation и questionable condition-регистры канала. Если questionable status и панель '
+              'подтверждают режим, но operation status не подтверждает, точка получает PARTIAL, '
+              'оба прибора выключаются и разрешается запросить следующий режим после OFF gate.\n'
               f'Точный Keithley SCPI-plan SHA256: {digest}; команд: {len(selected_plan)}.\n'
-              f'Первый допуск до открытия порта: '
-              f'{RESUME_CH2_TOKEN if start_channel == 2 else RESUME_CH3_TOKEN if start_channel == 3 else token}\n'
+              f'Первый допуск до открытия портов: {token}\n'
               'Дальнейшие подтверждения подключения, CR и перестановки запрашиваются отдельно внутри runner.\n'
               'Финальное физическое подтверждение: CONFIRM H03 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF')
         return
@@ -333,6 +340,9 @@ def main(argv=None):
     parser.add_argument('--port', default='/dev/ttyUSB1')
     parser.add_argument('--load-host', default='192.168.22.106')
     parser.add_argument('--load-port', type=int, default=18190)
+    parser.add_argument('--load-transport', choices=('udp', 'serial'), default='udp',
+                        help='explicit KEL103 connection; never auto-switches on failure')
+    parser.add_argument('--load-serial-port', default='/dev/ttyACM0')
     parser.add_argument('--start-channel', type=int, choices=(1, 2, 3), default=1)
     parser.add_argument('--prior-evidence', type=Path, action='append',
                         help='H03 evidence log; repeat once per completed-channel log when resuming')
@@ -354,7 +364,8 @@ def main(argv=None):
               'Этот CLI однопроходный; другой работающий процесс остановите Ctrl-C. Не переподключаться автоматически.')
         return 0
     if args.test_id is None: parser.error('preflight/run requires one test ID')
-    preflight(args.test_id, args.port, args.load_host, args.load_port, args.start_channel)
+    preflight(args.test_id, args.port, args.load_host, args.load_port,
+              args.start_channel, args.load_transport, args.load_serial_port)
     if args.test_id == 'H03' and args.start_channel > 1:
         if args.prior_evidence is None:
             parser.error('--prior-evidence is required when resuming H03; repeat for each prior channel log')
@@ -379,12 +390,9 @@ def main(argv=None):
         from profile_stage import TOKEN as token, FINAL_TOKEN as final_token, h02
         runner = h02
     if args.test_id == 'H03':
-        from channel_stage import (TOKEN as token, RESUME_CH2_TOKEN, RESUME_CH3_TOKEN,
-                                  FINAL_TOKEN as final_token, h03)
-        if args.start_channel == 2:
-            token = RESUME_CH2_TOKEN
-        elif args.start_channel == 3:
-            token = RESUME_CH3_TOKEN
+        from channel_stage import approval_token, FINAL_TOKEN as final_token, h03
+        token = approval_token(args.start_channel, args.load_transport,
+                               args.load_host, args.load_port, args.load_serial_port)
         runner = h03
     if not sys.stdin.isatty():
         print('BLOCKED: требуется интерактивный терминал; пакетный ввод запрещён.')
@@ -406,6 +414,9 @@ def main(argv=None):
                  adapter=adapter,
                  topology='independent; no jumpers; no DUT',
                  load=(f'KORAD KEL103; UDP port {args.load_port}; input OFF'
+                       if args.test_id == 'H03' and args.load_transport == 'udp' else
+                       f'KORAD KEL103; USB serial {args.load_serial_port}; '
+                       '115200 8N1 (community-derived; physical verification pending); input OFF'
                        if args.test_id == 'H03'
                        else 'disconnected; input OFF'),
                  proposed_caps=('unchanged; initial unknown' if args.test_id == 'H01' else
@@ -420,8 +431,10 @@ def main(argv=None):
     load = None
     try:
         if args.test_id == 'H03':
-            from channel_stage import KEL103UDP
-            load = KEL103UDP(args.load_host, args.load_port, evidence=evidence)
+            from channel_stage import KEL103Serial, KEL103UDP
+            load = (KEL103UDP(args.load_host, args.load_port, evidence=evidence)
+                    if args.load_transport == 'udp' else
+                    KEL103Serial(args.load_serial_port, evidence=evidence))
         transport = open_transport(args.port)
     except Exception:
         if load is not None:

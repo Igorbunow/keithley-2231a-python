@@ -18,14 +18,32 @@ import time
 from keithley2231a import ChannelProfile, Keithley2231A, Profile, SafetyError
 
 TOKEN = ('CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED '
-         'LAN=UDP:18190 RECALL=OFF VCAP=4.00 ICAP=0.500')
+         'LAN=UDP:18190 RECALL=OFF VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
 RESUME_CH2_TOKEN = ('CONFIRM H03 RESUME_CH2 INDEPENDENT ALL_OFF '
-                    'LOAD=KEL103 INPUT=OFF LAN=UDP:18190 VCAP=4.00 ICAP=0.500')
+                    'LOAD=KEL103 INPUT=OFF LAN=UDP:18190 VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
 RESUME_CH3_TOKEN = ('CONFIRM H03 RESUME_CH3 INDEPENDENT ALL_OFF '
-                    'LOAD=KEL103 INPUT=OFF LAN=UDP:18190 VCAP=4.00 ICAP=0.500')
+                    'LOAD=KEL103 INPUT=OFF LAN=UDP:18190 VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
 FINAL_TOKEN = 'CONFIRM H03 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
 MODES = ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?')
 OFF = tuple(f'STAT:OPER:INST:ISUM{ch}:COND?' for ch in (1, 2, 3))
+
+
+def approval_token(start_channel, load_transport='udp', load_host='192.168.22.106',
+                   load_port=18190, load_serial_port='/dev/ttyACM0'):
+    """Return the exact H03 approval bound to the selected load connection."""
+    if load_transport == 'udp':
+        connection = f'LAN=UDP:{load_port}'
+    elif load_transport == 'serial':
+        connection = f'USB={load_serial_port} BAUD=115200'
+    else:
+        raise ValueError('load transport must be udp or serial')
+    if start_channel == 1:
+        return ('CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED '
+                f'{connection} RECALL=OFF VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
+    if start_channel not in (2, 3):
+        raise ValueError('start channel must be 1, 2 or 3')
+    return (f'CONFIRM H03 RESUME_CH{start_channel} INDEPENDENT ALL_OFF '
+            f'LOAD=KEL103 INPUT=OFF {connection} VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
 
 
 class KEL103UDP:
@@ -47,6 +65,7 @@ class KEL103UDP:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError('KEL103 timeout must be finite and positive')
         self.port, self.endpoint = port, (self.host, port)
+        self.transport = 'UDP'
         self.timeout, self.evidence = timeout, evidence
         if sock is None:
             route = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -178,6 +197,86 @@ class KEL103UDP:
         self.sock.close()
 
 
+class KEL103Serial(KEL103UDP):
+    """Bounded H03 adapter for the KEL103 USB CDC serial interface.
+
+    @details USB serial command framing and the 115200 baud line setting are
+             community-documented and require physical confirmation on this unit.
+             This adapter never performs automatic fallback from UDP.
+    """
+    def __init__(self, port='/dev/ttyACM0', timeout=1.5, serial_port=None,
+                 evidence=None):
+        if not isinstance(port, str) or not port:
+            raise ValueError('KEL103 serial port must be a non-empty path')
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError('KEL103 timeout must be finite and positive')
+        if serial_port is None:
+            import serial
+            import os
+            from serial.tools import list_ports
+            matching = [item for item in list_ports.comports()
+                        if item.device == port and item.vid == 0x0416
+                        and item.pid == 0x5011]
+            if len(matching) != 1:
+                raise OSError('KEL103 USB adapter identity mismatch; expected 0416:5011')
+            serial_port = serial.Serial(
+                port=port, baudrate=115200, bytesize=8, parity='N', stopbits=1,
+                timeout=timeout, write_timeout=timeout, xonxoff=False,
+                rtscts=False, dsrdtr=False,
+                **({'exclusive': True} if os.name == 'posix' else {}))
+        self.port, self.timeout, self.evidence = port, timeout, evidence
+        self.transport = 'USB serial (community protocol)'
+        self.sock = serial_port
+        self.live = True
+        self.verified_resistance = None
+
+    def query(self, command):
+        if not self.live:
+            raise OSError('KEL103 link uncertain; no further serial commands')
+        if command not in self.READ_COMMANDS:
+            raise ValueError(f'KEL103 query is not permitted in H03: {command}')
+        self._event('kel103_query', command=command)
+        try:
+            if self.sock.in_waiting:
+                raise OSError('unsolicited/stale KEL103 serial input')
+            payload = (command + '\n').encode('ascii')
+            if self.sock.write(payload) != len(payload):
+                raise OSError('short KEL103 serial write')
+            self.sock.flush()
+            data = self.sock.readline(4097)
+            if not data.endswith(b'\n') or len(data) > 4096:
+                raise OSError('incomplete/oversized KEL103 serial response')
+            response = data.decode('ascii').strip()
+            if not response:
+                raise OSError('empty KEL103 serial response')
+        except BaseException as exc:
+            self.live = False
+            self._event('kel103_io_error', command=command,
+                        exception_type=type(exc).__name__)
+            raise
+        safe_response = re.sub(r'(?i)(SN\s*:\s*)[^,\s]+', r'\1[REDACTED]', response)
+        self._event('kel103_read', command=command, response=safe_response)
+        print(f'KEL103 {command}: {safe_response}')
+        return response
+
+    def write(self, command):
+        if not self.live:
+            raise OSError('KEL103 link uncertain; no further serial commands')
+        if command not in self.WRITE_COMMANDS:
+            raise ValueError(f'KEL103 write is not permitted in H03: {command}')
+        self._event('kel103_write', command=command)
+        try:
+            payload = (command + '\n').encode('ascii')
+            if self.sock.write(payload) != len(payload):
+                raise OSError('short KEL103 serial write')
+            self.sock.flush()
+        except BaseException as exc:
+            self.live = False
+            self._event('kel103_io_error', command=command,
+                        exception_type=type(exc).__name__)
+            raise
+
+
 def profile():
     """Conservative 4 V / 0.5 A caps; outputs remain OFF after application."""
     return Profile('H03 CV CC qualification', tuple(
@@ -211,6 +310,7 @@ def command_plan(start_channel=1):
             select(ch); add('VOLT:LIM:STAT?', 'VOLT:LIM?')
             check_setpoints(ch)
     # Public apply_profile() success trace.
+    plan.append('SYST:ERR?')  # Attribute any queued error before the first mutation.
     add('SYST:REM', '*IDN?', 'OUTP 0', *OFF,
         'OUTP:SER 0', 'OUTP:PARALLEL 0', 'OUTP:TRAC 0')
     for ch in (1, 2, 3):
@@ -234,7 +334,8 @@ def command_plan(start_channel=1):
             status()
             # read_channel(): selected output, U/I, setpoints and status bits.
             select(ch); add('CHAN:OUTP?', 'MEAS:VOLT?', 'MEAS:CURR?', 'VOLT?',
-                            'CURR?', f'STAT:OPER:INST:ISUM{ch}:COND?', 'MEAS:POW?',
+                            'CURR?', f'STAT:OPER:INST:ISUM{ch}:COND?',
+                            f'STAT:QUES:INST:ISUM{ch}:COND?', 'MEAS:POW?',
                             f'STAT:OPER:INST:ISUM{ch}:COND?',
                             f'STAT:QUES:INST:ISUM{ch}:COND?')
             select(ch); add('CHAN:OUTP 0', 'CHAN:OUTP?')
@@ -355,20 +456,33 @@ def h03(transport, evidence, load, start_channel=1):
     io = StageIO(transport, evidence, start_channel)
     dev = Keithley2231A(io)
     outcome, reason = 'ABORTED', 'incomplete H03'
+    status_unqualified = False
     try:
         load.identify()
         if load.input_state() != 'OFF':
             raise SafetyError('KEL103 INPUT must be OFF at H03 start')
-        evidence.add('kel103_preflight', host='redacted', port=load.port,
-                     transport='UDP', input_state='OFF')
+        load_transport_name = getattr(load, 'transport', type(load).__name__)
+        evidence.add('kel103_preflight', connection=load.port,
+                     transport=load_transport_name, input_state='OFF')
+        baseline_error = io.query('SYST:ERR?')
+        try:
+            error_code, error_message = baseline_error.split(',', 1)
+            clean_queue = int(error_code.strip()) == 0 and bool(error_message.strip())
+        except (ValueError, TypeError):
+            clean_queue = False
+        evidence.add('instrument_error_queue_baseline', response=baseline_error,
+                     clean=clean_queue)
+        if not clean_queue:
+            raise ValueError(f'pre-existing instrument error before H03: {baseline_error}')
         dev.apply_profile(guarded_profile())
         if not dev.armed or dev.faulted or dev.profile.wiring != 'independent':
             raise SafetyError('H03 profile not armed in independent mode')
         evidence.add('profile', name='H03 CV CC qualification', voltage_cap_v=4.0,
                      current_cap_a=0.5, initial_voltage_v=4.0, initial_current_a=0.5,
                      load_model='KORAD KEL103')
-        print('Профиль готов, все выходы должны быть OFF. KEL103 CR/INPUT '
-              'управляются по UDP только после подтверждения подключения и PSU OFF.')
+        print(f'Профиль готов, все выходы должны быть OFF. KEL103 CR/INPUT '
+              f'управляются через {load_transport_name} только после подтверждения '
+              'подключения и PSU OFF.')
         # A CH2 resume starts with the load still on CH1 and needs a move gate.
         # A CH3 resume is used after the prior CH3 point stopped safely, so the
         # load is already on CH3 and only the per-point connection gate applies.
@@ -443,11 +557,20 @@ def h03(transport, evidence, load, start_channel=1):
                                   'CC' if raw_status & 2 and not raw_status & 1 else 'UNKNOWN')
                 questionable_mode = ('CV' if questionable_status & 1 and not questionable_status & 2 else
                                      'CC' if questionable_status & 2 and not questionable_status & 1 else 'UNKNOWN')
-                if (not raw_status & 8 or operation_mode != mode or
-                        questionable_mode != mode or sample.regulation != mode):
+                if questionable_mode != mode:
                     raise SafetyError(
-                        f'CH{channel} {mode} status mismatch: sample={sample.regulation}, '
+                        f'CH{channel} {mode} questionable status mismatch: '
                         f'operation={raw_status}, questionable={questionable_status}')
+                if (not raw_status & 8 or operation_mode != mode or
+                        sample.regulation != mode):
+                    status_unqualified = True
+                    evidence.add('status_unqualified', channel=channel, mode=mode,
+                                 library_regulation=sample.regulation,
+                                 operation_status=raw_status,
+                                 operation_mode=operation_mode,
+                                 questionable_status=questionable_status,
+                                 questionable_mode=questionable_mode,
+                                 reason='operation status did not confirm the panel/load-verified mode')
                 dev.output(channel, False)
                 io.authorized_channel = None
                 _all_off(io)
@@ -465,7 +588,11 @@ def h03(transport, evidence, load, start_channel=1):
         if io.index != len(io.plan):
             raise ValueError(f'incomplete H03 command plan: {io.index}/{len(io.plan)}')
         cases = (4 if start_channel == 2 else 2 if start_channel == 3 else 6)
-        outcome, reason = 'PASS', f'{cases} CV/CC cases and all OFF checks completed; review evidence'
+        if status_unqualified:
+            outcome, reason = ('PARTIAL', f'{cases} CV/CC cases completed; operation status '
+                               'did not qualify every mode; review evidence')
+        else:
+            outcome, reason = 'PASS', f'{cases} CV/CC cases and all OFF checks completed; review evidence'
     except BaseException as exc:
         outcome = 'ABORTED' if not io.live or isinstance(exc, (InterruptedError, KeyboardInterrupt, TimeoutError)) else 'FAIL'
         reason = f'H03 stopped: {type(exc).__name__}: {exc}; manual OFF verification required'

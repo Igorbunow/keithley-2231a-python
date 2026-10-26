@@ -19,21 +19,28 @@ identity change before configuration. The corrected H02 rerun passed with identi
 reports and verification log. H02 is reviewed PASS; H03 requires a fresh approval after
 the failed first attempt and safety-path correction.
 
-H03: [KEL103 load and transition operator card](H03_PREFLIGHT.ru.md). CH1 CV/CC and
-CH2 CV/CC have reviewed physical measurements. The CH3 CV attempt stopped safely:
-Keithley returned operation status `8` (ON, without documented CV/CC bits) despite
-`3.99326 V / 0.0998173 A`; the KEL103 measurement was not reached. Every instrument
-error-queue reply remained `0, "No error"`. CH3 has a 5 V rating (CH1/CH2: 30 V); this
-run used a 4 V / 0.5 A cap, within its rating. The differing CH3 status needs diagnosis;
-do not infer CV from the measurement alone. KEL103 CR/INPUT control was physically
-exercised on CH2, with readback. See the latest
-[H03 report](hardware_reports/2026-10-25T231834.474816Z_H03_qualification.md).
+H03: [KEL103 load and transition operator card](H03_PREFLIGHT.ru.md). CH1, CH2 and CH3
+CV/CC points have physical measurements and live display confirmations. The last CH3 run
+compared both Keithley/KEL103 readings within tolerance and recorded 190 `SYST:ERR?`
+replies of `0, "No error"`. However, CH3 returned operation status `8` in both CV and CC,
+while questionable status returned `1` (CV) and `2` (CC). This contradicts the manual's
+mode-bit definition for both channel summaries; status interpretation remains unresolved
+and H03 is PARTIAL. All channels and KEL103 INPUT were read and confirmed OFF. See the
+[latest H03 report](hardware_reports/2026-10-26T002312.484924Z_H03_qualification.md).
 
 The next CH3 resume aborted before configuration: KEL103 UDP `*IDN?` timed out;
 cleanup then read `-200, "Execution error"` after `OUTP 0`. The error response cannot
 identify its originating command. Emergency shutdown now enters Remote first and passed
 the 56/56 offline suite; physical replay is pending fresh approval. See the
 [attempt report](hardware_reports/2026-10-25T233455.502881Z_H03_qualification.md).
+
+The H03 runner now supports an explicitly selected KEL103 USB CDC serial link at
+`/dev/ttyACM0`, 115200 8N1. Offline tests cover LF framing and command allowlisting.
+The baud/framing are community-derived. An authorized attempt physically read KEL103
+V3.30 and INPUT OFF over USB; CR setup and powered points remain unverified. H03 then
+stopped on error 170 because the queue was not sampled before `SYST:REM`; attribution is
+unknown. The runner now records that baseline before any mutation. Automatic LAN-to-USB
+failover is disabled because delivery can be uncertain.
 
 **WARNING:** writing `apply_profile`, `set_channel`, `OUTP` or `power_on()` can turn off a running DUT, change output voltage or energize terminals. No unattended execution; test only with qualified operators. This file provides procedure suggestions, not proof of completed tests or a safety guarantee.
 
