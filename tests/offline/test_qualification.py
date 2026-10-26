@@ -54,6 +54,7 @@ class TestQualification(unittest.TestCase):
                      ['preflight', 'H05'], ['run', 'H05'],
                      ['preflight', 'H06'], ['run', 'H06'],
                      ['preflight', 'H06', '--recall'], ['run', 'H06', '--recall'],
+                     ['preflight', 'H07'], ['run', 'H07'],
                      ['run', 'H09'], ['abort'], ['report']):
             with self.subTest(args=args), patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
                 with contextlib.redirect_stdout(io.StringIO()):
@@ -73,6 +74,96 @@ class TestQualification(unittest.TestCase):
             self.assertIn('пересечения 0.5 V', text)
             self.assertIn('НЕ ВКЛЮЧАТЬ ВЫХОДЫ', text)
 
+    def test_h07_csv_run_and_failure_use_common_driver_path(self):
+        import h07_stage
+        from test_driver import FakeTransport
+        from keithley2231a import SafetyError
+
+        q = self.module()
+        self.assertTrue(q.stage_passed(q.stages()['H06'][-1]))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            q.preflight('H07', '/dev/ttyUSB3', load_transport='serial')
+        for detail in ('CR 40 Ω', '180 s', '12 s', 'max_gap=10 s', 'CH2/CH3',
+                       'НЕ ВКЛЮЧАТЬ ВЫХОДЫ', h07_stage.approval_token()):
+            self.assertIn(detail, output.getvalue())
+
+        class ClockStop:
+            now = 10.0
+            def monotonic(self): return self.now
+            def sleep(self, seconds): self.now += seconds
+            def is_set(self): return False
+            def wait(self, seconds):
+                self.sleep(seconds)
+                return False
+
+        class Source(FakeTransport):
+            def write(self, command):
+                clock.sleep(.02)
+                return super().write(command)
+
+            def query(self, command):
+                # Include UART/command execution time: the requested interval is
+                # not a promise that a three-channel scan can complete that fast.
+                clock.sleep(.07)
+                if command in ('MEAS:VOLT?', 'MEAS:CURR?'):
+                    self.cmds.append(command)
+                    values = self.values[self.active_ch]
+                    volts = values['VOLT'] if values['CHAN:OUTP'] else 0.0
+                    return str(volts if command == 'MEAS:VOLT?' else volts / 40.0)
+                return super().query(command)
+
+        class Load:
+            live = True
+            input = 'OFF'
+            closed = False
+            def identify(self): return 'KORAD-KEL103 V3.30 SN:[REDACTED]'
+            def input_state(self): return self.input
+            def configure_cr(self, resistance):
+                if self.input != 'OFF' or resistance != 40.0:
+                    raise AssertionError('incorrect H07 CR setup')
+            def set_input(self, enabled): self.input = 'ON' if enabled else 'OFF'
+            def measurements(self):
+                volts = 4.0 if self.input == 'ON' and source.values[1]['CHAN:OUTP'] else 0.0
+                if failure and volts:
+                    volts = 0.0
+                return {'kel103_voltage_v': volts, 'kel103_current_a': volts / 40.0,
+                        'kel103_power_w': volts ** 2 / 40.0}
+            def close(self): self.closed = True
+
+        for failure in (False, True):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                clock, source, load = ClockStop(), Source(), Load()
+                evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H07')
+                answers = ['CONFIRM H07 CONNECT CH1 ALL_OFF LOAD=OFF',
+                           'CONFIRM H07 DISCONNECT CH1 ALL_OFF LOAD=OFF']
+                with patch('h07_stage.time.monotonic', clock.monotonic), \
+                        patch('h07_stage.time.sleep', clock.sleep), \
+                        patch('keithley2231a.monitor.threading.Event', return_value=clock), \
+                        patch('builtins.input', side_effect=answers), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    outcome = h07_stage.h07(source, evidence, load)
+                events = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+                self.assertEqual(outcome, 'FAIL' if failure else 'PASS',
+                                 [e for e in events if e['event'] == 'stage_error'])
+                self.assert_driver_path(evidence, source)
+                self.assertEqual(source.cmds.count('CHAN:OUTP 1'), 1)
+                self.assertFalse(any(source.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+                self.assertEqual(load.input, 'OFF')
+                self.assertTrue(load.closed)
+                if not failure:
+                    result = next(e for e in events if e['event'] == 'csv_verification')
+                    self.assertGreaterEqual(result['channels']['1']['voltage_v']['count'], 30)
+                    self.assertEqual(result['channels']['1']['skipped_gaps'], 1)
+                    self.assertGreater(result['channels']['1']['Ah'], 0.0)
+                    self.assertEqual(result['channels']['2']['Ah'], 0.0)
+                    self.assertTrue(any(e['event'] == 'statistics_reset' for e in events))
+                    # A broken CSV or summary must prevent a qualification PASS.
+                    path = evidence.path.parent / 'telemetry.csv'
+                    path.write_text(path.read_text().replace(',0.1,0.4,', ',0.2,0.8,', 1))
+                    with self.assertRaises(SafetyError):
+                        h07_stage.verify_csv(path, result['channels'], max_gap_s=10.0)
+
     def test_h06_preflight_is_explicit_and_offline(self):
         q = self.module()
         with patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
@@ -84,7 +175,7 @@ class TestQualification(unittest.TestCase):
             self.assertIn('KEL103 USB /dev/ttyACM0, 115200 8N1', text)
             self.assertIn('CR 22 Ω', text)
             self.assertIn('только к одному каналу за раз', text)
-            self.assertIn('AC power-cycle', text)
+            self.assertIn('Ручной сетевой цикл Output Recall в этом прогоне НЕ выполняется', text)
             self.assertIn('Разрешение на H06 timer pass', text)
             self.assertIn('LOAD=KEL103 DISCONNECTED USB=/dev/ttyACM0 BAUD=115200', text)
             output = io.StringIO()

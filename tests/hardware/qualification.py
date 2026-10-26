@@ -150,6 +150,38 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         return
     row = stages()[test_id]
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
+    if test_id == 'H07':
+        from h07_stage import approval_token
+        print(f'Keithley: {port}, USB–TTL 9600 8N1; KEL103 USB '
+              f'{load_serial_port}, 115200 8N1. Один владелец каждого порта.\n'
+              'На входе CH1/CH2/CH3 OFF, KEL103 INPUT OFF и физически отключена.\n'
+              'Независимые каналы; осциллограф отключён; перемычек, общей шины и DUT нет.\n'
+              'Output Recall=Off проверить на панели. Сетевой выключатель доступен.\n'
+              'После отдельного CONNECT gate: CH1+ → KEL103+, CH1− → KEL103−.\n'
+              'Короткие провода; клеммы CH2/CH3 свободны; CR 40 Ω задаст runner.\n'
+              'Уставки CH1/2/3: 4.00/1.50/2.00 V, 0.150/0.200/0.300 A;\n'
+              'V-cap 4.00/4.05/4.10 V, software I-cap 0.300/0.400/0.500 A.\n'
+              'Только CH1 ON: ожидается CV около 4.00 V / 0.100 A / 0.400 W.\n'
+              'При текущих уставках CH1 ≤4.00 V / 0.150 A / 0.600 W; '
+              'границы профиля CH1 ≤4.00 V / 0.300 A / 1.200 W.\n'
+              'Запись 180 s, интервал 2 s; CH2/CH3 контролируются и остаются OFF.\n'
+              'После 10 сканов пауза 12 s без разрыва связи; max_gap=10 s; '
+              'один пропуск на канал исключается из Ah/Wh.\n'
+              'CSV пересчитывается независимо: min/max/mean/population σ для U/I/P, '
+              'Δt, трапеции Ah/Wh по monotonic_s; reset статистики и reset_energy.\n'
+              'Допуски арифметики: статистика 1e-10, Ah 2e-9, Wh 1e-8, время 2e-6 s.\n'
+              'Сверка KEL103: ΔV≤0.06 V, ΔI≤0.03 A, P≈VI с Δ≤0.31 W, '
+              'как в H03; это контроль согласованности, не калибровка.\n'
+              'SCPI: REM/LOC, OUTP 0, независимый режим, OFF таймеров, '
+              'VOLT/CURR/VOLT:LIM профиля, CHAN:OUTP 1 только CH1, '
+              'поканальные readbacks и SYST:ERR?; без RWLOCK, *CLS и reset.\n'
+              'Бюджет 16000 команд / 300 s без времени ожидания оператора.\n'
+              'При ошибке STOP, попытка OFF по живой связи, без reconnect; '
+              'при неопределённости выключить Keithley сетевым выключателем и INPUT нагрузки.\n'
+              'После записи runner выключит CH1 и INPUT, проверит OFF и запросит DISCONNECT.\n'
+              'НЕ ВКЛЮЧАТЬ ВЫХОДЫ до разрешения H07. Токен:\n'
+              f'{approval_token(load_serial_port)}')
+        return
     if test_id == 'H02':
         from profile_stage import (H02_CHANNELS, H02_DEBUG_TOKEN, H02_PANEL_TOKEN,
                                    TOKEN as token, H02Scope)
@@ -613,23 +645,26 @@ def main(argv=None):
     if args.command == 'preflight' or not args.execute:
         print('DRY RUN: порт не открыт, SCPI не отправлены.')
         return 0
-    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06'):
+    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
-    if args.test_id in ('H02', 'H03', 'H04', 'H04P', 'H05', 'H06') and not stage_passed(stages()['H01'][-1]):
+    if args.test_id in ('H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07') and not stage_passed(stages()['H01'][-1]):
         print('BLOCKED: требуется рассмотренный PASS H01; порт не открыт.')
         return 2
-    if args.test_id in ('H03', 'H04', 'H04P', 'H05', 'H06') and not stage_passed(stages()['H02'][-1]):
+    if args.test_id in ('H03', 'H04', 'H04P', 'H05', 'H06', 'H07') and not stage_passed(stages()['H02'][-1]):
         print('BLOCKED: требуется рассмотренный PASS H02; порт не открыт.')
         return 2
-    if args.test_id in ('H04', 'H04P', 'H05', 'H06') and not stage_passed(stages()['H03'][-1]):
+    if args.test_id in ('H04', 'H04P', 'H05', 'H06', 'H07') and not stage_passed(stages()['H03'][-1]):
         print('BLOCKED: требуется рассмотренный PASS H03; порт не открыт.')
         return 2
-    if args.test_id in ('H05', 'H06') and not stage_passed(stages()['H04P'][-1]):
+    if args.test_id in ('H05', 'H06', 'H07') and not stage_passed(stages()['H04P'][-1]):
         print('BLOCKED: требуется рассмотренный PASS H04P; порт не открыт.')
         return 2
-    if args.test_id == 'H06' and not stage_passed(stages()['H05'][-1]):
+    if args.test_id in ('H06', 'H07') and not stage_passed(stages()['H05'][-1]):
         print('BLOCKED: требуется рассмотренный PASS H05; порт не открыт.')
+        return 2
+    if args.test_id == 'H07' and not stage_passed(stages()['H06'][-1]):
+        print('BLOCKED: требуется рассмотренный PASS H06; порт не открыт.')
         return 2
     token, final_token, runner = TOKEN, FINAL_TOKEN, h01
     if args.test_id == 'H02':
@@ -672,6 +707,12 @@ def main(argv=None):
                                args.load_host, args.load_port, args.load_serial_port,
                                args.diagnose_status, args.load_connected)
         runner = h03
+    if args.test_id == 'H07':
+        from h07_stage import FINAL_TOKEN as final_token, approval_token, h07
+        token, runner = approval_token(args.load_serial_port), h07
+        if args.load_transport != 'serial':
+            print('BLOCKED: H07 requires the reviewed KEL103 USB connection; ports not opened.')
+            return 2
     if not sys.stdin.isatty():
         print('BLOCKED: требуется интерактивный терминал; пакетный ввод запрещён.')
         return 2
@@ -703,7 +744,7 @@ def main(argv=None):
                        if args.test_id in ('H03', 'H04P') and args.load_transport == 'udp' else
                        f'KORAD KEL103; USB serial {args.load_serial_port}; '
                        '115200 8N1; USB link previously HW OBSERVED on H03; input OFF'
-                       if args.test_id in ('H03', 'H04P', 'H05', 'H06')
+                       if args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07')
                        else 'disconnected; input OFF'),
                  proposed_caps=('unchanged; initial unknown' if args.test_id == 'H01' else
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; '
@@ -725,6 +766,10 @@ def main(argv=None):
                                 'H06 timer test: CH1/2/3 1.00/1.50/2.00 V and 0.100/0.200/0.300 A; '
                                 '3.0 s timer, KEL103 CR22; Output Recall cycle separately gated'
                                 if args.test_id == 'H06' else
+                                'H07 CH1/2/3 4.00/1.50/2.00 V and 0.150/0.200/0.300 A; '
+                                'V-cap 4.00/4.05/4.10 V; I-cap 0.300/0.400/0.500 A; '
+                                'only CH1 ON, CR40; 180 s acquisition with one 12 s sampling pause'
+                                if args.test_id == 'H07' else
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
                  independent_meter=None)
     evidence.add('approval', token=token)
@@ -738,7 +783,7 @@ def main(argv=None):
                      prior_evidence=[path.name for path in args.prior_evidence])
     load = None
     try:
-        if args.test_id in ('H03', 'H04P', 'H05', 'H06') and not args.recall:
+        if args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07') and not args.recall:
             from channel_stage import KEL103Serial, KEL103UDP
             load = (KEL103UDP(args.load_host, args.load_port, evidence=evidence)
                     if args.load_transport == 'udp' else
@@ -761,7 +806,7 @@ def main(argv=None):
                       diagnose_status=args.diagnose_status,
                       load_connected=args.load_connected)
                if args.test_id == 'H03' else
-               runner(transport, evidence, load) if args.test_id in ('H04P', 'H05', 'H06') else
+               runner(transport, evidence, load) if args.test_id in ('H04P', 'H05', 'H06', 'H07') else
                runner(transport, evidence))
     physical_off = False
     try:

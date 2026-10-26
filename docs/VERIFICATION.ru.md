@@ -37,7 +37,7 @@
 | OUT-04 | Parallel CH1+CH2 | SIM TESTED (команды) | **HW UNVERIFIED** |
 | OUT-05 | Tracking CH1+CH2 | SIM TESTED (базовая логика) | **HW UNVERIFIED** |
 | MET-01 | Измерение U/I, определение CV/CC | SIM TESTED | **HW OBSERVED PASS (текущий H03; оговорка OPER CH3)** — 6 сравнений с KEL103; OPER CH3=`8`, QUES различает CV/CC; точность калиброванным DMM не проверена |
-| MET-02 | CSV, статистика, А·ч/Вт·ч | SIM TESTED | **HW UNVERIFIED** |
+| MET-02 | CSV, статистика, А·ч/Вт·ч | SIM TESTED (H07: пересчёт CSV, модель временного пропуска, сбросы, срок остановки и OFF при расхождении нагрузки) | **HW OBSERVED PASS (H07; 180 s, 44 отсчёта/канал; один пропуск/канал исключён из интегралов; независимый пересчёт CSV и обе операции сброса прошли; 2035 чистых ответов очереди ошибок; финальный OFF подтверждён)**; [протокол PASS](hardware_reports/2026-10-26T205248.277386Z_H07_qualification.md); [первая остановленная попытка](hardware_reports/2026-10-26T204422.181415Z_H07_qualification.md) |
 | IV-01 | ВАХ, пошаговая развертка, DMM callback | SIM TESTED | **HW UNVERIFIED** |
 | BEN-01 | Координатор нескольких PSU и DMM | SIM TESTED | **HW UNVERIFIED** |
 | SYN-01 | Аппаратная синхронизация по триггеру | PLANNED | PLANNED |
@@ -70,7 +70,7 @@ Python 3.13.5 / pyserial 3.5, `PYTHONPATH=src python3 -m unittest discover -s te
 H02 ещё требуют повторного аппаратного выполнения; offline-регрессии включают panel
 clamp, soft reject без SCPI и gated debug error 120. См. [карточку H02](H02_PREFLIGHT.ru.md).
 H03 — **PASS с оговоркой** по шести connected-load точкам CV/CC, сверке дисплеев и итоговому OFF. Текущий runner завершился PASS; OPER CH3 на прошивке 1.04-1.04 не возвращает биты CV/CC, но QUES, readback библиотеки, дисплей и KEL103 совпадают. Подробности прогона приведены ниже. KEL103 по USB serial физически проверен в H03, по UDP ранее проверен на CH2. H04 прошёл OFF-only повтор на текущем runner; первая попытка остановилась из-за оставленного `4,00 В` Max Volt Set на всех каналах, исправленная последовательность прошла проверку.
-H04-Powered рассмотрен как **PASS для ограниченного профиля (HW OBSERVED)**. H05 рассмотрен как **PASS для ограниченного профиля power sequencing (HW OBSERVED)**; точные показания и определение фронта приведены в протоколе. H06 рассмотрен как PASS для timer и Output Recall; H07–H12/O01/O02 ждут индивидуального разбора.
+H04-Powered рассмотрен как **PASS для ограниченного профиля (HW OBSERVED)**. H05 рассмотрен как **PASS для ограниченного профиля power sequencing (HW OBSERVED)**; точные показания и определение фронта приведены в протоколе. H06 рассмотрен как PASS для timer и Output Recall. H07 рассмотрен как PASS (HW OBSERVED) для ограниченного мониторинга и арифметики CSV; H08–H12/O01/O02 ждут индивидуального разбора.
 
 Подготовка runner H04 имеет статус **SIM TESTED**, не аппаратный. Подтверждённый
 офлайн-набор `PYTHONPATH=src python -m unittest discover -s tests -v` прошёл **68/68**:

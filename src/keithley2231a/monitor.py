@@ -151,7 +151,12 @@ class Acquisition:
             next_due = start
             while not stop.is_set() and (duration_s is None or time.monotonic() - start < duration_s):
                 wait = max(0, next_due - time.monotonic())
+                if duration_s is not None:
+                    wait = min(wait, max(0, start + duration_s - time.monotonic()))
                 if stop.wait(wait): break
+                # Waiting for the next interval may reach the acquisition deadline.
+                if duration_s is not None and time.monotonic() - start >= duration_s:
+                    break
                 readings = self.sample()
                 if writer:
                     for r in readings:

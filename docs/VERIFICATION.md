@@ -43,7 +43,7 @@ and [hardware evidence](hardware_reports/2026-10-26T201550.519080Z_H06_qualifica
 | OUT-04 | Parallel combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
 | OUT-05 | Tracking and ratio/timer behavior | SIM TESTED (basic) | **HW UNVERIFIED** | real tracking readback and timed output |
 | MET-01 | Read voltage/current/status and inferred CV/CC | SIM TESTED | **HW OBSERVED PASS (current H03; CH3 OPER caveat)** | Six KEL103 comparisons; CH3 OPER stays 8 while QUES distinguishes CV/CC; calibrated DMM accuracy unverified; [H03 report](hardware_reports/2026-10-26T174052.170220Z_H03_qualification.md) |
-| MET-02 | CSV, min/max/mean/stddev, Ah/Wh arithmetic | SIM TESTED | **HW UNVERIFIED** | duration run + independent reference |
+| MET-02 | CSV, min/max/mean/stddev, Ah/Wh arithmetic | SIM TESTED (H07 runner: CSV recomputation, real-clock gap model, resets, stop deadline and mismatch shutdown) | **HW OBSERVED PASS (H07; 180 s, 44 samples/channel; one gap/channel excluded from integration; independent CSV statistics/Ah/Wh recomputation and both resets passed; 2,035 clean error-queue replies; final OFF confirmed)** | [passing report](hardware_reports/2026-10-26T205248.277386Z_H07_qualification.md); [first stopped attempt](hardware_reports/2026-10-26T204422.181415Z_H07_qualification.md) |
 | IV-01 | Single-channel voltage sweep + external sample callback | SIM TESTED | **HW UNVERIFIED** | resistor/diode test with series protection |
 | BEN-01 | Multi-PSU host coordination / generic meter | SIM TESTED | **HW UNVERIFIED** | dual PSU + DMM comparison with clock uncertainty |
 | SYN-01 | Hardware-trigger synchronization | **PLANNED** | **PLANNED** | electrical trigger validation, timing metrology |
@@ -82,7 +82,7 @@ were ambiguous. H03 current-runner requalification passed six CV/CC points with 
 initial V/I values and per-channel caps; the runner sets the shared 4.00 V test point only
 with outputs OFF. CH3 retains an OPER status caveat; see the current report. KEL103 USB
 serial control was exercised on hardware in H03; UDP control was separately exercised on
-CH2. H04 is reviewed **PASS for OFF-only scope on the current runner**; the first attempt stopped because the manual panel protection values were still 4 V on all channels, then the corrected attempt passed. H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05 is reviewed **PASS for its bounded power-sequence scope (HW OBSERVED)**; see the report for exact readings and the measurement definition. H06 is reviewed **PASS for timer and Output Recall scopes (HW OBSERVED)**; later H07–H12/O01/O02 remain pending individual review.
+CH2. H04 is reviewed **PASS for OFF-only scope on the current runner**; the first attempt stopped because the manual panel protection values were still 4 V on all channels, then the corrected attempt passed. H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05 is reviewed **PASS for its bounded power-sequence scope (HW OBSERVED)**; see the report for exact readings and the measurement definition. H06 is reviewed **PASS for timer and Output Recall scopes (HW OBSERVED)**. H07 is reviewed **PASS (HW OBSERVED)** for bounded monitoring and CSV arithmetic; remaining H08–H12/O01/O02 await individual review.
 
 H04 runner preparation is **SIM TESTED**, not hardware verified. The approved offline
 suite `PYTHONPATH=src python -m unittest discover -s tests -v` passed **68/68** after
@@ -131,7 +131,7 @@ first attempt failed its manual panel clamp check: CH1 `VOLT?` returned `1.00 V`
 The corrected attempt explicitly set the panel limits per channel and passed all OFF-only
 checks; see the [current H04 report](hardware_reports/2026-10-26T182004.069364Z_H04_qualification.md)
 and [first failed attempt](hardware_reports/2026-10-26T180828.280308Z_H04_qualification.md).
-H04-Powered and H05 have completed separately; H06 is reviewed PASS for timer and Output Recall; H07–H12/O01/O02 remain pending review/approval.
+H04-Powered and H05 have completed separately; H06 is reviewed PASS for timer and Output Recall. H07 is reviewed PASS (HW OBSERVED) for bounded monitoring and CSV arithmetic; H08–H12/O01/O02 remain pending review/approval.
 
 ## H04-Powered reviewed disposition — current-runner replay, 2026-10-26
 

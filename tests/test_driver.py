@@ -593,6 +593,26 @@ class TestStats(unittest.TestCase):
         self.assertEqual(len(a.sample()),3)
         self.assertEqual(a.stats[1].voltage.count,1)
 
+    def test_acquisition_does_not_start_sample_after_duration(self):
+        from unittest.mock import patch
+
+        class ClockStop:
+            now = 0.0
+            def is_set(self): return False
+            def wait(self, seconds):
+                self.now += seconds
+                return False
+
+        fake = FakeTransport()
+        dev = Keithley2231A(fake)
+        dev.apply_profile(profile())
+        stop = ClockStop()
+        acquisition = Acquisition(dev, interval_s=2.0)
+        with patch('keithley2231a.monitor.time.monotonic', lambda: stop.now):
+            acquisition.run(duration_s=1.0, stop_event=stop)
+        self.assertEqual(acquisition.stats[1].voltage.count, 1)
+        self.assertEqual(stop.now, 1.0)
+
 
 class TestTransportNetwork(unittest.TestCase):
     def test_tcp_transparent_round_trip(self):
