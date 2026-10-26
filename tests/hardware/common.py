@@ -30,7 +30,9 @@ class StageAdapter:
     MAX_COMMANDS = 2000
     SHUTDOWN_RESERVE = 128
     MAX_SECONDS = 300
-    _CLEANUP_QUERY = re.compile(r'^(?:\*IDN\?|SYST:ERR\?|STAT:OPER:INST:ISUM[123]:COND\?)$')
+    _CLEANUP_QUERY = re.compile(
+        r'^(?:\*IDN\?|SYST:ERR\?|INST:NSEL\?|CHAN:OUTP\?|'
+        r'STAT:OPER:INST:ISUM[123]:COND\?)$')
     _CLEANUP_WRITE = re.compile(r'^(?:SYST:(?:REM|LOC)|OUTP 0|CHAN:OUTP 0|INST:NSEL [123])$')
 
     def __init__(self, transport, evidence):
@@ -87,12 +89,16 @@ class StageAdapter:
             response = self._transfer('SYST:ERR?', True)
             code, message = response.split(',', 1)
             expected = self.expected_error if not query and self.expected_error is not None else 0
-            if int(code.strip()) != expected or not message.strip():
+            expected_code = expected[0] if isinstance(expected, tuple) else expected
+            expected_message = expected[1] if isinstance(expected, tuple) else None
+            actual_message = message.strip().strip('"')
+            if (int(code.strip()) != expected_code or not actual_message or
+                    (expected_message is not None and actual_message != expected_message)):
                 if self.cleanup and command in ('SYST:REM', 'OUTP 0', 'CHAN:OUTP 0'):
                     self.evidence.add('shutdown_error_queue', source_command=command, response=response)
                 else:
                     raise SafetyError(f'Instrument error after {command}: {response}; expected {expected}')
-            if expected:
+            if expected_code:
                 self.evidence.add('expected_instrument_rejection', command=command,
                                   response=response, outcome='EXPECTED_REJECTION')
         return answer

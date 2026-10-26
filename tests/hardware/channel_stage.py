@@ -37,10 +37,13 @@ STATUS_DIAGNOSTIC_QUERIES = (
 
 
 def approval_token(start_channel, load_transport='udp', load_host='192.168.22.106',
-                   load_port=18190, load_serial_port='/dev/ttyACM0', diagnose_status=False):
+                   load_port=18190, load_serial_port='/dev/ttyACM0', diagnose_status=False,
+                   load_connected=False):
     """Return the exact H03 approval bound to the selected load connection."""
     if diagnose_status and start_channel != 3:
         raise ValueError('status diagnosis is restricted to CH3')
+    if load_connected and start_channel != 1:
+        raise ValueError('connected-load recovery is restricted to H03 start channel 1')
     if load_transport == 'udp':
         connection = f'LAN=UDP:{load_port}'
     elif load_transport == 'serial':
@@ -48,6 +51,9 @@ def approval_token(start_channel, load_transport='udp', load_host='192.168.22.10
     else:
         raise ValueError('load transport must be udp or serial')
     if start_channel == 1:
+        if load_connected:
+            return ('CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 CONNECTED '
+                    f'{connection} RECALL=OFF VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
         return ('CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED '
                 f'{connection} RECALL=OFF VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
     if start_channel not in (2, 3):
@@ -382,7 +388,8 @@ def _status_snapshot(dev, io, evidence, mode, phase, selected_channel, output_st
             raise SafetyError('status diagnosis expected only CH3 ON')
 
 
-def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
+def h03(transport, evidence, load, start_channel=1, diagnose_status=False,
+        load_connected=False):
     """Run H03 once; operator wires and confirms panels, UDP controls KEL103."""
     if start_channel not in (1, 2, 3):
         raise ValueError('start_channel must be 1, 2 or 3')
@@ -410,6 +417,10 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
                      clean=clean_queue)
         if not clean_queue:
             raise ValueError(f'pre-existing instrument error before H03: {baseline_error}')
+        if load_connected:
+            initial_outputs = require_outputs(dev)
+            evidence.add('connected_load_recovery_preflight', output_states=initial_outputs,
+                         load_input='OFF', requires_all_outputs_off=True)
         dev.apply_profile(profile())
         if not dev.armed or dev.faulted or dev.profile.wiring != 'independent':
             raise SafetyError('H03 profile not armed in independent mode')
@@ -435,10 +446,17 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
                     # Change only the target-channel current setpoint while OFF.
                     dev.set_channel(channel, current=0.250)
                 token = f'CONFIRM H03 CH{channel} {mode} CR={resistance} CONNECTED PSU=OFF'
-                operator_gate(token, f'CH{channel}: Keithley OFF; INPUT KEL103 OFF. Подключите '
-                      f'KEL103 только к CH{channel} (+ к +, − к −), остальные каналы '
-                      f'оставьте неподключёнными. Runner проверит и задаст CR {resistance} Ω, '
-                      'затем включит INPUT; источник останется OFF до отдельной команды.', io)
+                connection_prompt = (
+                    f'CH{channel}: Keithley OFF; INPUT KEL103 OFF. Проверьте подключение KEL103 '
+                    f'только к CH{channel} (+ к +, − к −), остальные каналы оставьте '
+                    f'неподключёнными. Runner проверит и задаст CR {resistance} Ω, затем '
+                    'включит INPUT; источник останется OFF до отдельной команды.'
+                    if load_connected and channel == start_channel else
+                    f'CH{channel}: Keithley OFF; INPUT KEL103 OFF. Подключите KEL103 только '
+                    f'к CH{channel} (+ к +, − к −), остальные каналы оставьте неподключёнными. '
+                    f'Runner проверит и задаст CR {resistance} Ω, затем включит INPUT; '
+                    'источник останется OFF до отдельной команды.')
+                operator_gate(token, connection_prompt, io)
                 evidence.add('operator_gate', token=token, channel=channel, mode=mode,
                              connection=f'KEL103 to CH{channel}; correct polarity',
                              other_channels='OFF', psu_output='OFF')
@@ -506,7 +524,7 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
                                   'CC' if raw_status & 2 and not raw_status & 1 else 'UNKNOWN')
                 questionable_mode = ('CV' if questionable_status & 1 and not questionable_status & 2 else
                                      'CC' if questionable_status & 2 and not questionable_status & 1 else 'UNKNOWN')
-                if questionable_mode != mode:
+                if questionable_mode in ('CV', 'CC') and questionable_mode != mode:
                     raise SafetyError(
                         f'CH{channel} {mode} questionable status mismatch: '
                         f'operation={raw_status}, questionable={questionable_status}')

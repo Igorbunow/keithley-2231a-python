@@ -210,8 +210,11 @@ class TestQualification(unittest.TestCase):
             def flush(self): pass
             def close(self): pass
             def readline(self, size):
-                return (b'Keithley instruments, 2231A-30-3, PRIVATE-SERIAL, 1.04-0.01\r\n'
-                        if self.command == '*IDN?' else b'8\r\n')
+                if self.command == '*IDN?':
+                    return b'Keithley instruments, 2231A-30-3, PRIVATE-SERIAL, 1.04-0.01\r\n'
+                if self.command == 'INST:NSEL?': return b'1\r\n'
+                if self.command == 'CHAN:OUTP?': return b'0\r\n'
+                return b'8\r\n'
 
         with tempfile.TemporaryDirectory() as tmp:
             evidence = self.module().Evidence(Path(tmp) / 'wire.jsonl', 'H03')
@@ -340,6 +343,15 @@ class TestQualification(unittest.TestCase):
             q.preflight('H03', '/dev/ttyUSB1', start_channel=3)
         self.assertIn('CONFIRM H03 RESUME_CH3 INDEPENDENT ALL_OFF', output.getvalue())
         self.assertIn('questionable', output.getvalue().lower())
+
+        with contextlib.redirect_stdout(output := io.StringIO()):
+            q.preflight('H03', '/dev/ttyUSB3', load_transport='serial',
+                        load_serial_port='/dev/ttyACM0', load_connected=True)
+        text = output.getvalue()
+        self.assertIn('CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 CONNECTED '
+                      'USB=/dev/ttyACM0 BAUD=115200 RECALL=OFF VCAP=4.00 '
+                      'ICAP=0.500 ERRBASE=CHECK', text)
+        self.assertIn('перед профилем проверит все выходы OFF', text)
 
     def test_reviewed_pass_and_requalification_are_distinct(self):
         q = self.module()
@@ -471,6 +483,8 @@ class TestQualification(unittest.TestCase):
                 self.cmds.append(command)
                 if not self.values[channel]['CHAN:OUTP']:
                     return '0'
+                if getattr(self, 'missing_mode_status', False) and self.values[channel]['CURR'] == .25:
+                    return '0'
                 if (command.upper().startswith(('STAT:OPER:', 'STATUS:OPERATION:')) and channel == 3
                         and getattr(self, 'channel3_status_override', None) is not None):
                     return str(self.channel3_status_override)
@@ -490,18 +504,35 @@ class TestQualification(unittest.TestCase):
             load = LoadFake()
             evidence = q.Evidence(Path(tmp) / 'success.jsonl', 'H03')
             with patch('builtins.input', side_effect=operator_answers()), contextlib.redirect_stdout(io.StringIO()):
-                outcome = h03(fake, evidence, load)
+                outcome = h03(fake, evidence, load, load_connected=True)
             self.assertEqual(outcome, 'PASS', [line for line in evidence.path.read_text().splitlines()
                                                if 'stage_error' in line])
             self.assert_driver_path(evidence, fake)
             self.assertTrue(fake.closed)
             self.assertTrue(load.closed)
             self.assertEqual(load.input, 'OFF')
+            records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            recovery = next(record for record in records
+                            if record['event'] == 'connected_load_recovery_preflight')
+            self.assertEqual(recovery['output_states'], {'1': False, '2': False, '3': False})
+            self.assertLess(fake.cmds.index('CHAN:OUTP?'), fake.cmds.index('VOLT:LIM 4.00'))
             self.assertEqual(sum(command == 'CHAN:OUTP 1' for command in fake.cmds), 6)
             self.assertEqual(sum(command == 'CHAN:OUTP 0' for command in fake.cmds), 6)
             self.assertFalse(any(fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
             self.assertEqual(evidence.path.read_text().count('"event": "measurement"'), 6)
             self.assertIn('"outcome": "PASS"', evidence.path.read_text())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = MeterFake()
+            fake.missing_mode_status = True
+            load = LoadFake()
+            evidence = q.Evidence(Path(tmp) / 'missing_mode_status.jsonl', 'H03')
+            with patch('builtins.input', side_effect=operator_answers()), contextlib.redirect_stdout(io.StringIO()):
+                outcome = h03(fake, evidence, load)
+            self.assertEqual(outcome, 'PARTIAL')
+            records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            self.assertFalse(any(record['event'] == 'stage_error' for record in records))
+            self.assertEqual(len([record for record in records if record['event'] == 'measurement']), 6)
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = MeterFake()
@@ -652,7 +683,7 @@ class TestQualification(unittest.TestCase):
     def test_h02_profile_trace_and_stop_on_first_error(self):
         """Exercise the exact profile trace using simulated I/O only."""
         q = self.module()
-        from profile_stage import H02Scope, h02
+        from profile_stage import H02Scope, H02_DEBUG_TOKEN, H02_PANEL_TOKEN, h02
         from test_driver import FakeTransport
         for bad in ('none', 'error170', 'timeout', 'cap_mismatch', 'initial_on', 'identity_change'):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as tmp:
@@ -660,7 +691,12 @@ class TestQualification(unittest.TestCase):
                     pending_error = False
                     reduced_cap_written = False
                     idn_count = 0
+                    pending_hard_rejection = False
                     def write(self, command):
+                        if command == 'VOLT 4.01':
+                            self.cmds.append(command)
+                            self.pending_hard_rejection = True
+                            return
                         super().write(command)
                         if bad == 'error170' and command == 'CURR 0': self.pending_error = True
                         if command == 'VOLT:LIM 4.00': self.reduced_cap_written = True
@@ -671,6 +707,9 @@ class TestQualification(unittest.TestCase):
                                 self.cmds.append(command)
                                 return 'Keithley instruments, 2231A-30-3, OTHER, 1.04-1.04'
                         answer = super().query(command)
+                        if command == 'SYST:ERR?' and self.pending_hard_rejection:
+                            self.pending_hard_rejection = False
+                            return '120,"Parameter overflowed"'
                         if command == 'SYST:ERR?' and self.pending_error:
                             self.pending_error = False
                             return '170,"Invalid command"'
@@ -681,9 +720,18 @@ class TestQualification(unittest.TestCase):
                 fake = ProfileFake()
                 if bad == 'initial_on': fake.values[2]['CHAN:OUTP'] = 1.
                 evidence = q.Evidence(Path(tmp) / 'events.jsonl', 'H02')
-                with contextlib.redirect_stdout(io.StringIO()):
+                def confirm(prompt):
+                    if H02_PANEL_TOKEN in prompt:
+                        for channel in (1, 2, 3): fake.values[channel]['VOLT'] = 4.
+                        return H02_PANEL_TOKEN
+                    if H02_DEBUG_TOKEN in prompt: return H02_DEBUG_TOKEN
+                    raise AssertionError(prompt)
+                with patch('builtins.input', side_effect=confirm), \
+                        contextlib.redirect_stdout(io.StringIO()):
                     outcome = h02(fake, evidence)
-                self.assertEqual(outcome, 'PASS' if bad == 'none' else 'ABORTED' if bad == 'timeout' else 'FAIL')
+                records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+                self.assertEqual(outcome, 'PASS' if bad == 'none' else 'ABORTED' if bad == 'timeout' else 'FAIL',
+                                 [r for r in records if r['event'] == 'stage_error'])
                 self.assertTrue(fake.closed)
                 self.assertFalse(any(cmd in ('OUTP 1', 'CHAN:OUTP 1', 'SYST:RWLOCK', '*CLS', '*RST') for cmd in fake.cmds))
                 if bad == 'none':
@@ -695,7 +743,7 @@ class TestQualification(unittest.TestCase):
                         self.assertEqual(fake.values[ch]['VOLT:LIM'], 4.)
                         self.assertEqual(fake.values[ch]['VOLT:LIM:STAT'], 1.)
                         self.assertEqual(fake.values[ch]['CHAN:OUTP'], 0.)
-                    self.assertEqual(evidence.path.read_text().count('"event": "case"'), 21)
+                    self.assertEqual(evidence.path.read_text().count('"event": "case"'), 28)
                 if bad == 'timeout': self.assertEqual(fake.cmds[-1], 'VOLT:LIM?')
                 if bad in ('error170', 'initial_on', 'identity_change'):
                     self.assertNotIn('VOLT:LIM 4.00', fake.cmds)
@@ -717,6 +765,77 @@ class TestQualification(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(h02(fake, evidence), 'FAIL')
             self.assertNotIn('OUTP 1', fake.cmds)
+
+    def test_h02_panel_soft_and_debug_hard_voltage_boundaries(self):
+        """Require panel, public API, and explicitly armed instrument-limit probes."""
+        q = self.module()
+        from profile_stage import H02Scope, H02_DEBUG_TOKEN, H02_PANEL_TOKEN, h02
+        from test_driver import FakeTransport
+
+        class LimitFake(FakeTransport):
+            pending_error = None
+            def write(self, command):
+                if command == 'VOLT 4.01':
+                    self.cmds.append(command)
+                    self.pending_error = '120,Parameter overflowed'
+                    return
+                return super().write(command)
+            def query(self, command):
+                if command == 'SYST:ERR?' and self.pending_error:
+                    self.cmds.append(command)
+                    response, self.pending_error = self.pending_error, None
+                    return response
+                return super().query(command)
+
+        fake = LimitFake()
+        answers = iter((H02_PANEL_TOKEN, H02_DEBUG_TOKEN))
+        def operator_gate(_prompt):
+            token = next(answers)
+            if token == H02_PANEL_TOKEN:
+                for channel in (1, 2, 3): fake.values[channel]['VOLT'] = 4.0
+            return token
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = q.Evidence(Path(tmp) / 'h02_boundaries.jsonl', 'H02')
+            with patch('builtins.input', side_effect=operator_gate), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                outcome = h02(fake, evidence)
+
+            records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            self.assertEqual(outcome, 'PASS', [r for r in records if r['event'] == 'stage_error'])
+            self.assert_driver_path(evidence, fake)
+            self.assertTrue(fake.closed)
+            self.assertEqual(fake.cmds.count('VOLT 4.01'), 3)
+            self.assertEqual([fake.values[ch]['VOLT'] for ch in (1, 2, 3)], [1.0] * 3)
+            self.assertTrue(all(fake.values[ch]['CHAN:OUTP'] == 0 for ch in (1, 2, 3)))
+            self.assertEqual(fake.cmds.count('CHAN:OUTP 1'), 0)
+            self.assertEqual(len([r for r in records if r['event'] == 'expected_instrument_rejection']), 3)
+            self.assertEqual(len([r for r in records if r['event'] == 'case' and
+                                  r.get('check') == 'voltage above profile cap rejected before SCPI']), 3)
+            self.assertEqual(len([r for r in records if r['event'] == 'case' and
+                                  r.get('check') == 'debug bypass rejected by instrument voltage limit']), 3)
+
+        from keithley2231a import SafetyError
+        with tempfile.TemporaryDirectory() as tmp:
+            class WrongErrorMessage(FakeTransport):
+                pending = False
+                def write(self, command):
+                    if command == 'VOLT 4.01':
+                        self.cmds.append(command)
+                        self.pending = True
+                        return
+                    super().write(command)
+                def query(self, command):
+                    if command == 'SYST:ERR?' and self.pending:
+                        self.cmds.append(command)
+                        self.pending = False
+                        return '120,"Different error"'
+                    return super().query(command)
+            fake = WrongErrorMessage()
+            scope = H02Scope(fake, q.Evidence(Path(tmp) / 'wrong_message.jsonl', 'H02'))
+            scope.arm_hard_probes()
+            scope.expected_error = (120, 'Parameter overflowed')
+            with self.assertRaises(SafetyError): scope.write('VOLT 4.01')
+            self.assertEqual(fake.cmds, ['VOLT 4.01', 'SYST:ERR?'])
 
     def test_h04_offline_runner_stays_off_and_detects_power_only_tampering(self):
         q = self.module()
@@ -811,6 +930,19 @@ class TestQualification(unittest.TestCase):
         self.assertIn('CH3=3.00/0.300/4.00/0.400', card)
         self.assertIn('выход', card.lower())
 
+    def test_h02_preflight_lists_all_three_voltage_protection_layers(self):
+        q = self.module()
+        output = io.StringIO()
+        with patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(q.main(['preflight', 'H02']), 0)
+        card = output.getvalue()
+        self.assertIn('CONFIRM H02 PANEL MAXV', card)
+        self.assertIn('CONFIRM H02 DEBUG_BYPASS', card)
+        self.assertIn('120,"Parameter overflowed"', card)
+        self.assertIn('VOLT 4.01', card)
+        self.assertIn('не является независимой', card)
+
     def test_h04p_preflight_is_dry_and_explains_load_moves(self):
         q = self.module()
         output = io.StringIO()
@@ -872,7 +1004,7 @@ class TestQualification(unittest.TestCase):
                 return target_v, demand_a, 'CV'
             def write(self, command):
                 if command == 'CHAN:OUTP 1':
-                    self.status_warmup[self.active_ch] = 2
+                    self.status_warmup[self.active_ch] = 0
                 if command == 'VOLT 4.51':
                     self.cmds.append(command)
                     if (self.values[self.active_ch]['VOLT:LIM:STAT'] != 1 or

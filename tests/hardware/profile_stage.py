@@ -20,6 +20,10 @@ from keithley2231a import ChannelProfile, Keithley2231A, LimitsError, Profile, S
 TOKEN = ('CONFIRM H02 INDEPENDENT ALL_OFF LOAD=DISCONNECTED '
          'V=1.00 I=0.100 VCAP=4.00 ICAP=0.500 RECALL=OFF')
 FINAL_TOKEN = 'CONFIRM H02 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
+H02_PANEL_TOKEN = ('CONFIRM H02 PANEL MAXV CH1=4.01 CLAMPED=4.00 '
+                   'CH2=4.01 CLAMPED=4.00 CH3=4.01 CLAMPED=4.00 ALL_OFF')
+H02_DEBUG_TOKEN = ('CONFIRM H02 DEBUG_BYPASS CH1=4.01 CH2=4.01 CH3=4.01 '
+                   'PROFILE_MAX=4.00 HW_LIMIT=4.00 EXPECT=120 ALL_OFF')
 OFF = tuple(f'STAT:OPER:INST:ISUM{ch}:COND?' for ch in (1, 2, 3))
 MODES = ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?')
 
@@ -41,9 +45,34 @@ class H02Scope(StageAdapter):
     WRITES = frozenset(
         ('CURR 0', 'CURR 0.100', 'INST:NSEL 1', 'INST:NSEL 2', 'INST:NSEL 3', 'OUTP 0',
          'OUTP:PARALLEL 0', 'OUTP:SER 0', 'OUTP:TIM:STAT 0', 'OUTP:TRAC 0', 'SYST:LOC',
-         'SYST:REM', 'VOLT 0', 'VOLT 1.00', 'VOLT:LIM 4.00', 'VOLT:LIM:STAT 1')
+         'SYST:REM', 'VOLT 0', 'VOLT 1.00', 'VOLT 4.01', 'VOLT:LIM 4.00', 'VOLT:LIM:STAT 1')
     )
     MAX_SECONDS = 180
+
+    def __init__(self, transport, evidence):
+        super().__init__(transport, evidence)
+        self.hard_probe_armed = False
+        self.hard_probes_remaining = 0
+
+    def _validate(self, command, query):
+        if not query and command == 'VOLT 4.01':
+            if not self.hard_probe_armed or self.hard_probes_remaining <= 0:
+                raise ValueError('H02 instrument-limit probe lacks its explicit stage gate')
+            return
+        super()._validate(command, query)
+
+    def arm_hard_probes(self):
+        if self.hard_probe_armed or self.hard_probes_remaining:
+            raise SafetyError('H02 instrument-limit probes already armed')
+        self.hard_probe_armed = True
+        self.hard_probes_remaining = 3
+
+    def _after_write(self, command):
+        super()._after_write(command)
+        if command == 'VOLT 4.01':
+            self.hard_probes_remaining -= 1
+            if self.hard_probes_remaining == 0:
+                self.hard_probe_armed = False
 
 
 def _snapshot(dev, io, evidence, *, final=False):
@@ -98,6 +127,87 @@ def h02(transport, evidence):
                 else: raise ValueError('invalid setpoint was accepted')
                 if io.commands != before: raise ValueError('invalid setpoint reached transport')
                 evidence.add('case', channel=ch, check=f'{field}={value} rejected before SCPI', outcome='PASS')
+
+        print('Проверка панели: установленный Max Volt Set и VOLT:LIM должен быть 4.00 V '
+              'на CH1–CH3; все выходы OFF, нагрузка физически отключена. На панели '
+              'для каждого канала запросите V-set=4.01 V. Прибор должен оставить '
+              'уставку не выше 4.00 V; runner проверит фактическое значение и очередь ошибок.')
+        dev.diagnostic_write('SYST:LOC')
+        from common import operator_gate
+        operator_gate(H02_PANEL_TOKEN, 'После панели введите точное подтверждение.', io)
+        evidence.add('approval', phase='front_panel_max_voltage', token=H02_PANEL_TOKEN)
+        dev.diagnostic_write('SYST:REM')
+        panel_error = dev.diagnostic_query('SYST:ERR?')
+        if not panel_error.startswith('0,'):
+            raise SafetyError(f'panel voltage-limit attempt left error: {panel_error}')
+        require_outputs(dev)
+        for ch in (1, 2, 3):
+            dev.diagnostic_write(f'INST:NSEL {ch}')
+            actual = float(dev.diagnostic_query('VOLT?'))
+            if abs(actual - 4.00) > .0049:
+                raise SafetyError(f'CH{ch}: front panel did not clamp V-set to 4.00 V: {actual}')
+            evidence.add('max_voltage_panel_readback', channel=ch, requested_voltage_v=4.01,
+                         max_voltage_v=4.00, actual_voltage_v=actual, output_off=True,
+                         error_queue=panel_error, outcome='PASS')
+
+        # A panel edit is external tampering by design. Disarm and reapply the
+        # profile through its normal sequence before testing software limits.
+        dev.emergency_off()
+        dev.apply_profile(guarded_profile())
+        dev.verify_profile()
+        _snapshot(dev, io, evidence, final=True)
+        evidence.add('case', check='panel test followed by profile reapplication',
+                     setpoints_restored_v=1.00, outputs_off=True, outcome='PASS')
+
+        for ch in (1, 2, 3):
+            before = io.commands
+            try:
+                dev.set_channel(ch, voltage=4.01)
+            except LimitsError:
+                pass
+            else:
+                raise SafetyError(f'CH{ch}: library accepted voltage above profile cap')
+            if io.commands != before or not dev.armed or dev.faulted:
+                raise SafetyError(f'CH{ch}: soft limit rejection changed I/O or driver state')
+            evidence.add('case', channel=ch,
+                         check='voltage above profile cap rejected before SCPI',
+                         requested_voltage_v=4.01, profile_max_v=4.00,
+                         scpi_sent=False, output_off=True, outcome='PASS')
+
+        print('Debug аппаратный предел: library soft cap временно обойдётся только после '
+              'отдельного допуска. Выполняются три VOLT 4.01 через общий драйвер; '
+              'каждый запрос должен получить 120,"Parameter overflowed", оставить '
+              'уставку 1.00 V и сохранить выходы OFF.')
+        operator_gate(H02_DEBUG_TOKEN,
+                      'Для разрешения трёх debug bypass probes введите точный токен.', io)
+        evidence.add('approval', phase='debug_bypass_instrument_limit', token=H02_DEBUG_TOKEN)
+        require_outputs(dev)
+        dev.verify_profile()
+        io.arm_hard_probes()
+        dev.debug_bypass_profile = True
+        try:
+            for ch in (1, 2, 3):
+                dev.diagnostic_write(f'INST:NSEL {ch}')
+                io.expected_error = (120, 'Parameter overflowed')
+                try:
+                    dev.diagnostic_write('VOLT 4.01')
+                finally:
+                    io.expected_error = None
+                actual = float(dev.diagnostic_query('VOLT?'))
+                if abs(actual - 1.00) > .0049:
+                    raise SafetyError(f'CH{ch}: instrument did not preserve 1.00 V after rejection')
+                evidence.add('case', channel=ch,
+                             check='debug bypass rejected by instrument voltage limit',
+                             requested_voltage_v=4.01, profile_max_v=4.00,
+                             hardware_limit_v=4.00, actual_voltage_v=actual,
+                             expected_error_code=120, output_off=True, outcome='PASS')
+        finally:
+            io.expected_error = None
+            dev.debug_bypass_profile = False
+        if io.hard_probes_remaining or io.hard_probe_armed:
+            raise SafetyError('H02 debug probe allowance was not fully consumed')
+        require_outputs(dev)
+        dev.check_errors()
         dev.emergency_off()
         dev.diagnostic_write('INST:NSEL 1')
         if float(dev.diagnostic_query('INST:NSEL?')) != 1: raise ValueError('CH1 selection restore failed')
@@ -108,7 +218,8 @@ def h02(transport, evidence):
     except BaseException as exc:
         outcome = 'FAIL' if io.live and isinstance(exc, Exception) and not isinstance(exc, TimeoutError) else 'ABORTED'
         reason = 'H02 stopped; inspect recorded responses; manual OFF check required'
-        evidence.add('stage_error', exception_type=type(exc).__name__, live_link=io.live)
+        evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc),
+                     live_link=io.live)
         # apply_profile may already attempt OFF. Only shutdown is permitted now.
         if io.live:
             io.cleanup = True
@@ -160,8 +271,8 @@ class H04Scope(StageAdapter):
         r'OUTP:(?:SER|PARALLEL|TRAC)\?|VOLT(?::LIM(?::STAT)?)?\?|CURR\?|'
         r'CHAN:OUTP\?|OUTP:TIM:(?:STAT|DEL)\?)$')
 
-    MAX_COMMANDS = 1000
-    SHUTDOWN_RESERVE = 100
+    MAX_COMMANDS = 1600
+    SHUTDOWN_RESERVE = 128
     MAX_SECONDS = 180
 
     def __init__(self, transport, evidence):

@@ -106,26 +106,36 @@ class TestDevice(unittest.TestCase):
     def test_output_states_handles_initial_local_without_changing_outputs(self):
         fake = FakeTransport()
         fake.values[2]['CHAN:OUTP'] = 1.0
+        # The physical output query is authoritative. The status-register ON
+        # bit can be absent while CC is active on this instrument firmware.
+        fake.operation_status_masks[2] = 0
         dev = Keithley2231A(fake)
         self.assertEqual(dev.output_states(), {1: False, 2: True, 3: False})
         self.assertEqual(fake.values[2]['CHAN:OUTP'], 1.0)
         self.assertFalse(dev.armed)
-        self.assertEqual(fake.cmds, ['*IDN?', 'SYST:REM',
-                                   'STAT:OPER:INST:ISUM1:COND?',
-                                   'STAT:OPER:INST:ISUM2:COND?',
-                                   'STAT:OPER:INST:ISUM3:COND?'])
+        self.assertEqual(fake.cmds, ['*IDN?', 'SYST:REM', 'INST:NSEL?',
+                                   'INST:NSEL 1', 'CHAN:OUTP?',
+                                   'INST:NSEL 2', 'CHAN:OUTP?',
+                                   'INST:NSEL 3', 'CHAN:OUTP?',
+                                   'INST:NSEL 1'])
 
     def test_output_states_preserves_profile_and_does_not_retry_faults(self):
         self.fake.cmds.clear()
         self.assertEqual(self.dev.output_states(), {1: False, 2: False, 3: False})
         self.assertNotIn('SYST:REM', self.fake.cmds)
         self.assertTrue(self.dev.armed)
-        self.fake.failed_query = 'STAT:OPER:INST:ISUM2:COND?'
+        self.fake.failed_query = 'CHAN:OUTP?'
         with self.assertRaises(RuntimeError): self.dev.output_states()
         self.assertTrue(self.dev.faulted)
         before = list(self.fake.cmds)
         with self.assertRaises(SafetyError): self.dev.output_states()
         self.assertEqual(self.fake.cmds, before)
+
+    def test_output_states_restores_the_live_channel_selection(self):
+        self.fake.active_ch = 2
+        self.assertEqual(self.dev.output_states(), {1: False, 2: False, 3: False})
+        self.assertEqual(self.fake.active_ch, 2)
+        self.assertEqual(self.fake.cmds[-1], 'INST:NSEL 2')
 
     def test_output_states_rejects_wrong_identity_before_remote_entry(self):
         fake = FakeTransport()
@@ -216,7 +226,7 @@ class TestDevice(unittest.TestCase):
 
         class InterruptedFake(FakeTransport):
             def query(self, command):
-                if command == 'STAT:OPER:INST:ISUM1:COND?':
+                if command == 'CHAN:OUTP?':
                     self.cmds.append(command)
                     raise KeyboardInterrupt()
                 return super().query(command)
@@ -272,6 +282,16 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(sample.voltage_set_v, 1.0)
         self.assertEqual(sample.current_limit_set_a, .1)
         self.assertEqual(sample.regulation, 'OFF')
+
+    def test_read_channel_preserves_unknown_when_both_mode_registers_are_empty(self):
+        self.fake.values[1]['CHAN:OUTP'] = 1.0
+        self.fake.operation_status_masks[1] = 0
+        self.fake.questionable_status_masks[1] = 0
+        reading = self.dev.read_channel(1)
+        self.assertTrue(reading.enabled)
+        self.assertEqual(reading.regulation, 'UNKNOWN')
+        self.assertEqual(reading.operation_status_mask, 0)
+        self.assertEqual(reading.questionable_status_mask, 0)
 
     def test_regulation_uses_documented_questionable_status_when_operation_mode_is_clear(self):
         self.dev.output(3, True)

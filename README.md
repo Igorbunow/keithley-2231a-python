@@ -111,9 +111,12 @@ print(reading.operation_status_mask, reading.questionable_status_mask)
 
 `Reading.regulation_source` is `'operation'`, `'questionable'`, or `'both'` for a
 resolved ON mode; it is `None` for OFF, UNKNOWN or skipped regulation checks.
-`enabled` is independently read with `CHAN:OUTP?`. ON/OFF integrity checks use the
-operation ON bit, which worked in the observed CH3 runs. Successful writes and a
-clear error queue alone are never treated as proof of output state or regulation.
+`enabled` and all profile ON/OFF integrity checks use the documented
+`CHAN:OUTP?` query for each selected channel; the driver restores the live channel
+selection afterward. An H03 shared-path replay showed `CHAN:OUTP?=1` while the
+operation condition returned `0` during a CC point, so the operation ON bit is not
+used as the sole output-state source. Successful writes and a clear error queue
+alone are never treated as proof of output state or regulation.
 Both condition queries must succeed; communication failures still trip. Conflicting
 or ambiguous modes remain UNKNOWN; a required `expected_regulation='cv'/'cc'`
 therefore still trips on mismatch or UNKNOWN. CV/CC is determined by load and V/I
@@ -124,9 +127,10 @@ Physical evidence covers independent CV at 4 V / 0.500 A with CR 40 ohms and CC 
 4 V / 0.250 A with CR 12 ohms, plus individual ON/OFF and setpoint readbacks.
 This does not qualify the full rated range, CH3 timers or all later stages.
 There is no redundant OPER confirmation of CH3's CV/CC on this firmware.
-The newly exposed source field and additional regressions are **SIM TESTED**
-(66/66 offline tests passed); the underlying QUES-based mode reading was already
-physically observed. The source field itself has not been replayed on hardware.
+The source field, direct output-state readback and H03 missing-status handling are
+**SIM TESTED** (88/88 offline tests passed); the current implementation still
+requires a full physical replay. If both status registers omit CV/CC, the reading
+remains `UNKNOWN`; the library does not synthesize a mode from measurements.
 
 The [reference manual](https://download.tek.com/manual/077100401_Referencemanual.pdf)
 sections 5-20/21 and the status model describe group event/summary registers, not a

@@ -123,7 +123,8 @@ def open_transport(port):
 
 
 def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_channel=1,
-              load_transport='udp', load_serial_port='/dev/ttyACM0', diagnose_status=False):
+              load_transport='udp', load_serial_port='/dev/ttyACM0', diagnose_status=False,
+              load_connected=False):
     """Print a human-readable card; never contact hardware."""
     row = stages()[test_id]
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
@@ -144,13 +145,25 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
               'После каждой записи и запроса, кроме LOC и самого ERR?, проверяется SYST:ERR?; без *CLS.\n'
               'Проверки: точные V/I (±0.0049 V / ±0.00049 A), V-cap ±0.0049 V, state=1,\n'
               'таймеры OFF, режим независимый, ON-биты всех CH=0, invalid V/I без SCPI.\n'
+              'Обязательные проверки защиты: оператор на панели запрашивает 4.01 V при\n'
+              'Max Volt Set=4.00 V на каждом CH; runner подтверждает clamp по readback.\n'
+              'После panel edit профиль разоружается и повторно применяется штатной\n'
+              'последовательностью. Нормальный API должен отклонить 4.01 V без SCPI.\n'
+              'Отдельный gate включает debug_bypass_profile только для трёх VOLT 4.01;\n'
+              'каждая команда должна получить 120,"Parameter overflowed", оставить\n'
+              'setpoint 1.00 V и outputs OFF. VOLT:LIM — потолок уставки, не независимая OVP.\n'
               'До профиля ON через API должен быть отвергнут без SCPI. ON после профиля не вызывается.\n'
               'Читаются внутренние U/I; точность и CV/CC здесь не квалифицируются.\n'
               'Один проход до 180 s. Первая ошибка останавливает настройки; на живой связи\n'
               'попытка OUTP 0 и проверка OFF. При отказе I/O — никаких следующих команд/повторов.\n'
               'Ручной останов: сетевой выключатель Keithley; проверить физический OFF.\n'
               'Итоговые настройки не откатываются, CH1 выбран, управление локальное.\n'
-              f'Подтверждение только H02: {token}\nSCPI command scope (sequences are owned by the driver):')
+              f'Первый допуск H02: {token}\n'
+              'После профиля runner запросит panel gate:\n'
+              '  CONFIRM H02 PANEL MAXV CH1=4.01 CLAMPED=4.00 CH2=4.01 CLAMPED=4.00 CH3=4.01 CLAMPED=4.00 ALL_OFF\n'
+              'Затем отдельный debug gate:\n'
+              '  CONFIRM H02 DEBUG_BYPASS CH1=4.01 CH2=4.01 CH3=4.01 PROFILE_MAX=4.00 HW_LIMIT=4.00 EXPECT=120 ALL_OFF\n'
+              'SCPI command scope (VOLT 4.01 разрешён только трижды после debug gate; sequences are owned by the driver):')
         for command in sorted(H02Scope.READS | H02Scope.WRITES): print('  ' + command)
         print('Failure path, known live link only: OUTP 0; SYST:ERR?; per-channel OFF; SYST:ERR?; SYST:LOC.\n'
               'Внутри apply_profile/verify_profile возможна более ранняя попытка OUTP 0; общий адаптер ограничивает команды и проверяет ошибки.')
@@ -264,7 +277,7 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
     if test_id == 'H03':
         from channel_stage import approval_token, H03Scope
         token = approval_token(start_channel, load_transport, load_host,
-                               load_port, load_serial_port, diagnose_status)
+                               load_port, load_serial_port, diagnose_status, load_connected)
         selected_scope = sorted(H03Scope.READS | H03Scope.WRITES)
         digest = hashlib.sha256('\n'.join(selected_scope).encode()).hexdigest()
         load_connection = (f'KEL103 UDP {load_host}:{load_port}' if load_transport == 'udp'
@@ -294,6 +307,10 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
               f'Первый допуск до открытия портов: {token}\n'
               'Дальнейшие подтверждения подключения, CR и перестановки запрашиваются отдельно внутри runner.\n'
               'Финальное физическое подтверждение: CONFIRM H03 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF')
+        if load_connected:
+            print('Recovery CH1 с уже подключённой нагрузкой: INPUT KEL103 должен быть OFF; '
+                  'перед профилем проверит все выходы OFF. Убедитесь, что KEL103 '
+                  'подключён только к CH1 с правильной полярностью; CH2/CH3 свободны.')
         if diagnose_status:
             print('ДИАГНОСТИКА CH3: реальные TX/RX-байты status-запросов; короткие и полные формы; '
                   'ранний снимок и снимок после подтверждения дисплея, не ранее 5 s после ON. '
@@ -486,6 +503,8 @@ def main(argv=None):
                         help='explicit KEL103 connection; never auto-switches on failure')
     parser.add_argument('--load-serial-port', default='/dev/ttyACM0')
     parser.add_argument('--start-channel', type=int, choices=(1, 2, 3), default=1)
+    parser.add_argument('--load-connected', action='store_true',
+                        help='H03 CH1 recovery only: load remains wired, INPUT OFF; verify all PSU outputs OFF first')
     parser.add_argument('--diagnose-status', action='store_true',
                         help='H03 CH3 only: wire trace, delayed and channel-selection status snapshots')
     parser.add_argument('--prior-evidence', type=Path, action='append',
@@ -495,6 +514,8 @@ def main(argv=None):
     mode.add_argument('--dry-run', action='store_true')
     parser.add_argument('--evidence', type=Path)
     args = parser.parse_args(argv)
+    if args.load_connected and (args.test_id != 'H03' or args.start_channel != 1):
+        parser.error('--load-connected requires H03 start channel 1')
     if args.diagnose_status and (args.test_id != 'H03' or args.start_channel != 3):
         parser.error('--diagnose-status requires H03 --start-channel 3')
     if args.command == 'list':
@@ -511,7 +532,8 @@ def main(argv=None):
         return 0
     if args.test_id is None: parser.error('preflight/run requires one test ID')
     preflight(args.test_id, args.port, args.load_host, args.load_port,
-              args.start_channel, args.load_transport, args.load_serial_port, args.diagnose_status)
+              args.start_channel, args.load_transport, args.load_serial_port,
+              args.diagnose_status, args.load_connected)
     if args.test_id == 'H03' and args.start_channel > 1:
         if args.prior_evidence is None:
             parser.error('--prior-evidence is required when resuming H03; repeat for each prior channel log')
@@ -563,7 +585,7 @@ def main(argv=None):
         from channel_stage import approval_token, FINAL_TOKEN as final_token, h03
         token = approval_token(args.start_channel, args.load_transport,
                                args.load_host, args.load_port, args.load_serial_port,
-                               args.diagnose_status)
+                               args.diagnose_status, args.load_connected)
         runner = h03
     if not sys.stdin.isatty():
         print('BLOCKED: требуется интерактивный терминал; пакетный ввод запрещён.')
@@ -630,7 +652,8 @@ def main(argv=None):
         print(f'ABORTED: порт не открыт; проверить OFF вручную. Evidence: {evidence.path}')
         return 2
     outcome = (runner(transport, evidence, load, args.start_channel,
-                      diagnose_status=args.diagnose_status)
+                      diagnose_status=args.diagnose_status,
+                      load_connected=args.load_connected)
                if args.test_id == 'H03' else
                runner(transport, evidence, load) if args.test_id in ('H04P', 'H05') else
                runner(transport, evidence))

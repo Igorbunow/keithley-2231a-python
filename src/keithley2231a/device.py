@@ -342,13 +342,24 @@ class Keithley2231A:
                 raise
 
     def _output_states(self) -> dict[int, bool]:
-        """Read per-channel ON bits; global status has ambiguous mixed-state semantics."""
+        """Read each selected-channel ON state and restore the prior selection.
+
+        The operation status register's ON bit is not reliable on observed
+        firmware while a channel regulates in CC. CHAN:OUTP? is the documented
+        output-state query for the currently selected channel.
+        """
+        selected_value = self._num('INST:NSEL?')
+        if selected_value != int(selected_value) or int(selected_value) not in (1, 2, 3):
+            raise InstrumentError('Invalid selected-channel response')
+        selected = int(selected_value)
         states = {}
-        for ch in (1, 2, 3):
-            mask = self._num(f'STAT:OPER:INST:ISUM{ch}:COND?')
-            if mask != int(mask) or not 0 <= mask <= 255:
-                raise InstrumentError('Invalid operation condition register')
-            states[ch] = bool(int(mask) & 8)
+        try:
+            for ch in (1, 2, 3):
+                self._select(ch)
+                states[ch] = self._bool(self._query('CHAN:OUTP?'))
+        finally:
+            if not self._link_uncertain:
+                self._select(selected)
         return states
 
     def _off_confirmed(self) -> bool:

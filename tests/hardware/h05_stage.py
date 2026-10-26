@@ -330,7 +330,7 @@ class H05Scope(StageAdapter):
                         'VOLT:LIM 1.00', 'VOLT:LIM:STAT 1', 'CURR 0.100',
                         'VOLT 1.00', 'CHAN:OUTP 0', 'CHAN:OUTP 1',
                         *[f'INST:NSEL {ch}' for ch in (1, 2, 3)]))
-    READS = frozenset(('*IDN?', 'SYST:ERR?', 'OUTP:SER?', 'OUTP:PARALLEL?',
+    READS = frozenset(('*IDN?', 'SYST:ERR?', 'INST:NSEL?', 'OUTP:SER?', 'OUTP:PARALLEL?',
                        'OUTP:TRAC?', 'VOLT:LIM?', 'VOLT:LIM:STAT?', 'VOLT?', 'CURR?',
                        'CHAN:OUTP?', 'MEAS:VOLT?', 'MEAS:CURR?', *OFF,
                        'OUTP:TIM:STAT?', 'OUTP:TIM:DEL?'))
