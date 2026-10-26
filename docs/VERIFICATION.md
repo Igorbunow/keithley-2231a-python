@@ -22,12 +22,12 @@
 | COM-04 | Raw TCP-to-UART bridge | SIM TESTED (local loopback) | **HW UNVERIFIED** | MCU firmware/version + loss/fragment tests |
 | COM-05 | Shared normal/diagnostic dispatcher, explicit profile bypass, driver-controlled tracing | SIM TESTED | **HW UNVERIFIED (replay required)** | [Requalification plan](REQUALIFICATION.ru.md) |
 | LOAD-01 | KEL103 control over UDP or USB CDC serial | SIM TESTED (UDP and USB CDC fixtures) | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (USB H04P)** | 21 KEL103 comparisons and full input sequencing; [H04P report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
-| PRF-01 | Applying independent guarded profile, output-OFF-first | SIM TESTED | **HW OBSERVED (current H02; no-load profile applied and verified on all 3 CH)**; previous source: **HW VERIFIED (H04; OFF-only)** | [H02 evidence](hardware_reports/2026-10-26T150528.467723Z_H02_qualification.md) |
-| PRF-02 | Hardware `VOLT:LIM` setpoint ceiling setting/readback | SIM TESTED | **HW OBSERVED (current H02 baseline; 4.00 V limit/state readback on all 3 CH, outputs OFF)**; H02 protection replay pending | [H02 baseline evidence](hardware_reports/2026-10-26T150528.467723Z_H02_qualification.md) |
+| PRF-01 | Applying independent guarded profile with distinct per-channel setpoints | SIM TESTED (1/1.5/2 V and 0.1/0.2/0.3 A) | **H02 varied-profile replay NOT_RUN**; previous shared-value profile was HW OBSERVED | [H02 baseline evidence](hardware_reports/2026-10-26T150528.467723Z_H02_qualification.md) |
+| PRF-02 | Hardware `VOLT:LIM` setpoint ceiling setting/readback, varied by channel | SIM TESTED (2/3/4 V) | **H02 varied-limit replay NOT_RUN**; prior 4.00 V common limit was HW OBSERVED | [H02 baseline evidence](hardware_reports/2026-10-26T150528.467723Z_H02_qualification.md) |
 | PRF-03 | Software cap/health integrity alarms | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only tamper)** | out-of-band limit and setpoint changes detected; profile disarmed |
 | PRF-04 | Full rated-range profile (`unrestricted()`) | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only)** | rated-bound profile readbacks, zero voltage setpoint, outputs OFF |
 | PRF-05 | `power_only` API denylist/fixed preset | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (H04 OFF-only; H04P fixed presets energized)** | profile guards and fixed preset exercised; timer behavior remains unverified |
-| PRF-06 | Per-channel `Max Volt Set` clamp, library soft cap, instrument rejection under explicitly gated profile bypass | SIM TESTED | **H02 extended replay NOT_RUN**; prior hardware evidence: **H04/H04P observed** | H04/H04P proved panel clamp/API reject and instrument error 120 at 4.50 V. H02 adds all-channel panel 4.01→4.00, normal API rejection before SCPI and debug `VOLT 4.01` expected error 120. `VOLT:LIM` is a setpoint ceiling, not independent analog OVP. |
+| PRF-06 | Per-channel `Max Volt Set` clamp, library soft cap, instrument rejection under explicitly gated profile bypass | SIM TESTED with distinct CH values | **H02 extended replay NOT_RUN**; prior hardware evidence: **H04/H04P observed** | H02 uses panel 2.01/3.01/4.01→2/3/4 V, API reject above each cap before SCPI and debug `VOLT 2.01/3.01/4.01` expected error 120; previous setpoints 1/1.5/2 V must persist. `VOLT:LIM` is a setpoint ceiling, not independent analog OVP. |
 | PRF-07 | Low-power profile CV/CC boundaries and independent KEL103 comparison | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (H04P; 21 points)** | 3 channels × CV/CC points and fixed preset; unrestricted rated limits not energized; [report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
 | SEQ-01 | Fixed `power_only` CH1→CH2→CH3 power-up and reverse power-down, profile guards and measured delays | **SIM TESTED** | **HW UNVERIFIED (H05 ABORTED before energizing; missing Remote entry fixed; powered retest pending)** | TDS 3064B x10 capture of all six edges, actual PSU status/readbacks, KEL103 CR22 on CH1; common-negative wiring means isolation is outside this test |
 | OUT-01 | Individual output enable/disable | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)** | per-channel `CHAN:OUTP?`, lamp/readback/independent dummy load |
@@ -223,13 +223,15 @@ broader electrical behavior remained **HW UNVERIFIED**. At that time no later st
 ### H02 voltage protection completion criteria — preparation
 
 Operator feedback identified three required H02 checks missing from the earlier baseline:
-attempt 4.01 V at the front panel with `Max Volt Set=4.00 V`; prove normal library API
-rejection before SCPI; then, after a separate gate, enable `debug_bypass_profile` for
-three `VOLT 4.01` probes that must return instrument error 120 and preserve 1.00 V. The
-updated runner keeps commands on the driver's shared dispatch, requires every output OFF
-and the load disconnected, and reapplies the profile after the panel edit. These checks
-and their offline regressions are **SIM TESTED** only; they have not been repeated on
-hardware. `VOLT:LIM`/`Max Volt Set` is a setpoint ceiling, not independent analog OVP.
+panel attempts above each channel's limit; normal library API rejection before SCPI; and,
+after a separate gate, three `debug_bypass_profile` probes that must return instrument
+error 120. H02 now uses distinct per-channel values: V-set 1/1.5/2 V, I-set 0.1/0.2/0.3 A,
+V-cap 2/3/4 V and software I-cap 0.3/0.4/0.5 A. The panel probes are 2.01/3.01/4.01 V;
+debug probes use the same attempts and must preserve initial setpoints. The runner keeps
+commands on the driver's shared dispatch, requires every output OFF and the load
+disconnected, and reapplies the profile after the panel edit. These checks and their
+offline regressions are **SIM TESTED** only; they have not been repeated on hardware.
+`VOLT:LIM`/`Max Volt Set` is a setpoint ceiling, not independent analog OVP.
 See the [updated H02 card](H02_PREFLIGHT.ru.md).
 
 ### H02 replay on the shared driver path — 2026-10-26

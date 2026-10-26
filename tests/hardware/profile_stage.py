@@ -18,20 +18,31 @@ from common import StageAdapter, channel_snapshot, require_outputs
 from keithley2231a import ChannelProfile, Keithley2231A, LimitsError, Profile, SafetyError
 
 TOKEN = ('CONFIRM H02 INDEPENDENT ALL_OFF LOAD=DISCONNECTED '
-         'V=1.00 I=0.100 VCAP=4.00 ICAP=0.500 RECALL=OFF')
+         'CH1=V1.00_I0.100_VCAP2.00_ICAP0.300 '
+         'CH2=V1.50_I0.200_VCAP3.00_ICAP0.400 '
+         'CH3=V2.00_I0.300_VCAP4.00_ICAP0.500 RECALL=OFF')
 FINAL_TOKEN = 'CONFIRM H02 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
-H02_PANEL_TOKEN = ('CONFIRM H02 PANEL MAXV CH1=4.01 CLAMPED=4.00 '
-                   'CH2=4.01 CLAMPED=4.00 CH3=4.01 CLAMPED=4.00 ALL_OFF')
-H02_DEBUG_TOKEN = ('CONFIRM H02 DEBUG_BYPASS CH1=4.01 CH2=4.01 CH3=4.01 '
-                   'PROFILE_MAX=4.00 HW_LIMIT=4.00 EXPECT=120 ALL_OFF')
+H02_PANEL_TOKEN = ('CONFIRM H02 PANEL MAXV CH1=2.01 CLAMPED=2.00 '
+                   'CH2=3.01 CLAMPED=3.00 CH3=4.01 CLAMPED=4.00 ALL_OFF')
+H02_DEBUG_TOKEN = ('CONFIRM H02 DEBUG_BYPASS CH1=2.01 CH2=3.01 CH3=4.01 '
+                   'PROFILE_MAX=2.00,3.00,4.00 HW_LIMIT=2.00,3.00,4.00 '
+                   'EXPECT=120 ALL_OFF')
+H02_CHANNELS = {
+    1: (2.00, .300, 1.00, .100),
+    2: (3.00, .400, 1.50, .200),
+    3: (4.00, .500, 2.00, .300),
+}
+H02_HARD_PROBES = {1: 'VOLT 2.01', 2: 'VOLT 3.01', 3: 'VOLT 4.01'}
 OFF = tuple(f'STAT:OPER:INST:ISUM{ch}:COND?' for ch in (1, 2, 3))
 MODES = ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?')
 
 
 def guarded_profile():
-    """Same reduced caps on all channels; the actual current setting is 0.100 A."""
-    return Profile('H02 guarded no-load', tuple(ChannelProfile(4., .5, 1., .1)
-                   for _ in (1, 2, 3)), lock_front_panel=False)
+    """Use distinct safe setpoints and profile ceilings on every channel."""
+    return Profile('H02 varied guarded no-load', tuple(
+        ChannelProfile(max_v, max_i, initial_v, initial_i)
+        for max_v, max_i, initial_v, initial_i in H02_CHANNELS.values()),
+        lock_front_panel=False)
 
 
 class H02Scope(StageAdapter):
@@ -43,35 +54,40 @@ class H02Scope(StageAdapter):
          'STAT:OPER:INST:ISUM3:COND?', 'SYST:ERR?', 'VOLT:LIM:STAT?', 'VOLT:LIM?', 'VOLT?')
     )
     WRITES = frozenset(
-        ('CURR 0', 'CURR 0.100', 'INST:NSEL 1', 'INST:NSEL 2', 'INST:NSEL 3', 'OUTP 0',
+        ('CURR 0', 'CURR 0.100', 'CURR 0.200', 'CURR 0.300',
+         'INST:NSEL 1', 'INST:NSEL 2', 'INST:NSEL 3', 'OUTP 0',
          'OUTP:PARALLEL 0', 'OUTP:SER 0', 'OUTP:TIM:STAT 0', 'OUTP:TRAC 0', 'SYST:LOC',
-         'SYST:REM', 'VOLT 0', 'VOLT 1.00', 'VOLT 4.01', 'VOLT:LIM 4.00', 'VOLT:LIM:STAT 1')
+         'SYST:REM', 'VOLT 0', 'VOLT 1.00', 'VOLT 1.50', 'VOLT 2.00',
+         *H02_HARD_PROBES.values(), 'VOLT:LIM 2.00', 'VOLT:LIM 3.00',
+         'VOLT:LIM 4.00', 'VOLT:LIM:STAT 1')
     )
     MAX_SECONDS = 180
 
     def __init__(self, transport, evidence):
         super().__init__(transport, evidence)
         self.hard_probe_armed = False
-        self.hard_probes_remaining = 0
+        self.hard_probe_channels = []
 
     def _validate(self, command, query):
-        if not query and command == 'VOLT 4.01':
-            if not self.hard_probe_armed or self.hard_probes_remaining <= 0:
+        if not query and command in H02_HARD_PROBES.values():
+            if (not self.hard_probe_armed or not self.hard_probe_channels or
+                    command != H02_HARD_PROBES[self.hard_probe_channels[0]] or
+                    self.selected != self.hard_probe_channels[0]):
                 raise ValueError('H02 instrument-limit probe lacks its explicit stage gate')
             return
         super()._validate(command, query)
 
     def arm_hard_probes(self):
-        if self.hard_probe_armed or self.hard_probes_remaining:
+        if self.hard_probe_armed or self.hard_probe_channels:
             raise SafetyError('H02 instrument-limit probes already armed')
         self.hard_probe_armed = True
-        self.hard_probes_remaining = 3
+        self.hard_probe_channels = [1, 2, 3]
 
     def _after_write(self, command):
         super()._after_write(command)
-        if command == 'VOLT 4.01':
-            self.hard_probes_remaining -= 1
-            if self.hard_probes_remaining == 0:
+        if self.hard_probe_channels and command == H02_HARD_PROBES[self.hard_probe_channels[0]]:
+            self.hard_probe_channels.pop(0)
+            if not self.hard_probe_channels:
                 self.hard_probe_armed = False
 
 
@@ -81,8 +97,10 @@ def _snapshot(dev, io, evidence, *, final=False):
         evidence.add('channel_snapshot', channel=ch, phase='final' if final else 'initial', values=values)
         if values['CHAN:OUTP?'] != 0:
             raise ValueError('channel selection/output mismatch')
-        if final and (abs(values['VOLT?'] - 1.) > .0049 or abs(values['CURR?'] - .1) > .00049
-                      or abs(values['VOLT:LIM?'] - 4.) > .0049
+        expected_limit, _current_cap, expected_voltage, expected_current = H02_CHANNELS[ch]
+        if final and (abs(values['VOLT?'] - expected_voltage) > .0049
+                      or abs(values['CURR?'] - expected_current) > .00049
+                      or abs(values['VOLT:LIM?'] - expected_limit) > .0049
                       or values['VOLT:LIM:STAT?'] != 1 or values['OUTP:TIM:STAT?'] != 0):
             raise ValueError('protected profile readback mismatch')
         dev.check_errors()
@@ -119,8 +137,10 @@ def h02(transport, evidence):
         dev.verify_profile()
         _snapshot(dev, io, evidence, final=True)
         for ch in (1, 2, 3):
-            for field, value in (('voltage', -.01), ('voltage', 4.01), ('voltage', float('nan')),
-                                 ('current', -.001), ('current', .501), ('current', float('inf'))):
+            max_voltage, max_current, _, _ = H02_CHANNELS[ch]
+            for field, value in (('voltage', -.01), ('voltage', max_voltage + .01),
+                                 ('voltage', float('nan')), ('current', -.001),
+                                 ('current', max_current + .001), ('current', float('inf'))):
                 before = io.commands
                 try: dev.set_channel(ch, **{field: value})
                 except LimitsError: pass
@@ -128,10 +148,10 @@ def h02(transport, evidence):
                 if io.commands != before: raise ValueError('invalid setpoint reached transport')
                 evidence.add('case', channel=ch, check=f'{field}={value} rejected before SCPI', outcome='PASS')
 
-        print('Проверка панели: установленный Max Volt Set и VOLT:LIM должен быть 4.00 V '
-              'на CH1–CH3; все выходы OFF, нагрузка физически отключена. На панели '
-              'для каждого канала запросите V-set=4.01 V. Прибор должен оставить '
-              'уставку не выше 4.00 V; runner проверит фактическое значение и очередь ошибок.')
+        print('Проверка панели: Max Volt Set должен быть CH1=2.00 V, CH2=3.00 V, '
+              'CH3=4.00 V; все выходы OFF, нагрузка физически отключена. Запросите '
+              'V-set выше каждого индивидуального предела: 2.01/3.01/4.01 V. '
+              'Прибор должен ограничить readback до 2.00/3.00/4.00 V.')
         dev.diagnostic_write('SYST:LOC')
         from common import operator_gate
         operator_gate(H02_PANEL_TOKEN, 'После панели введите точное подтверждение.', io)
@@ -142,12 +162,14 @@ def h02(transport, evidence):
             raise SafetyError(f'panel voltage-limit attempt left error: {panel_error}')
         require_outputs(dev)
         for ch in (1, 2, 3):
+            max_voltage = H02_CHANNELS[ch][0]
             dev.diagnostic_write(f'INST:NSEL {ch}')
             actual = float(dev.diagnostic_query('VOLT?'))
-            if abs(actual - 4.00) > .0049:
-                raise SafetyError(f'CH{ch}: front panel did not clamp V-set to 4.00 V: {actual}')
-            evidence.add('max_voltage_panel_readback', channel=ch, requested_voltage_v=4.01,
-                         max_voltage_v=4.00, actual_voltage_v=actual, output_off=True,
+            requested_voltage = max_voltage + .01
+            if abs(actual - max_voltage) > .0049:
+                raise SafetyError(f'CH{ch}: front panel did not clamp V-set to {max_voltage:.2f} V: {actual}')
+            evidence.add('max_voltage_panel_readback', channel=ch, requested_voltage_v=requested_voltage,
+                         max_voltage_v=max_voltage, actual_voltage_v=actual, output_off=True,
                          error_queue=panel_error, outcome='PASS')
 
         # A panel edit is external tampering by design. Disarm and reapply the
@@ -157,12 +179,14 @@ def h02(transport, evidence):
         dev.verify_profile()
         _snapshot(dev, io, evidence, final=True)
         evidence.add('case', check='panel test followed by profile reapplication',
-                     setpoints_restored_v=1.00, outputs_off=True, outcome='PASS')
+                     setpoints_restored_v={ch: H02_CHANNELS[ch][2] for ch in (1, 2, 3)},
+                     outputs_off=True, outcome='PASS')
 
         for ch in (1, 2, 3):
+            max_voltage = H02_CHANNELS[ch][0]
             before = io.commands
             try:
-                dev.set_channel(ch, voltage=4.01)
+                dev.set_channel(ch, voltage=max_voltage + .01)
             except LimitsError:
                 pass
             else:
@@ -171,13 +195,13 @@ def h02(transport, evidence):
                 raise SafetyError(f'CH{ch}: soft limit rejection changed I/O or driver state')
             evidence.add('case', channel=ch,
                          check='voltage above profile cap rejected before SCPI',
-                         requested_voltage_v=4.01, profile_max_v=4.00,
+                         requested_voltage_v=max_voltage + .01, profile_max_v=max_voltage,
                          scpi_sent=False, output_off=True, outcome='PASS')
 
-        print('Debug аппаратный предел: library soft cap временно обойдётся только после '
-              'отдельного допуска. Выполняются три VOLT 4.01 через общий драйвер; '
-              'каждый запрос должен получить 120,"Parameter overflowed", оставить '
-              'уставку 1.00 V и сохранить выходы OFF.')
+        print('Debug аппаратный предел: soft cap временно обойдётся только после отдельного '
+              'допуска. Через общий драйвер выполняются CH1 VOLT 2.01, CH2 VOLT 3.01, '
+              'CH3 VOLT 4.01. Ожидается 120,"Parameter overflowed", исходные уставки '
+              '1.00/1.50/2.00 V и все выходы OFF.')
         operator_gate(H02_DEBUG_TOKEN,
                       'Для разрешения трёх debug bypass probes введите точный токен.', io)
         evidence.add('approval', phase='debug_bypass_instrument_limit', token=H02_DEBUG_TOKEN)
@@ -187,24 +211,27 @@ def h02(transport, evidence):
         dev.debug_bypass_profile = True
         try:
             for ch in (1, 2, 3):
+                requested_voltage = H02_HARD_PROBES[ch].split()[1]
+                initial_voltage = H02_CHANNELS[ch][2]
+                max_voltage = H02_CHANNELS[ch][0]
                 dev.diagnostic_write(f'INST:NSEL {ch}')
                 io.expected_error = (120, 'Parameter overflowed')
                 try:
-                    dev.diagnostic_write('VOLT 4.01')
+                    dev.diagnostic_write(H02_HARD_PROBES[ch])
                 finally:
                     io.expected_error = None
                 actual = float(dev.diagnostic_query('VOLT?'))
-                if abs(actual - 1.00) > .0049:
-                    raise SafetyError(f'CH{ch}: instrument did not preserve 1.00 V after rejection')
+                if abs(actual - initial_voltage) > .0049:
+                    raise SafetyError(f'CH{ch}: instrument did not preserve {initial_voltage:.2f} V after rejection')
                 evidence.add('case', channel=ch,
                              check='debug bypass rejected by instrument voltage limit',
-                             requested_voltage_v=4.01, profile_max_v=4.00,
-                             hardware_limit_v=4.00, actual_voltage_v=actual,
+                             requested_voltage_v=float(requested_voltage), profile_max_v=max_voltage,
+                             hardware_limit_v=max_voltage, actual_voltage_v=actual,
                              expected_error_code=120, output_off=True, outcome='PASS')
         finally:
             io.expected_error = None
             dev.debug_bypass_profile = False
-        if io.hard_probes_remaining or io.hard_probe_armed:
+        if io.hard_probe_channels or io.hard_probe_armed:
             raise SafetyError('H02 debug probe allowance was not fully consumed')
         require_outputs(dev)
         dev.check_errors()

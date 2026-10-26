@@ -129,29 +129,36 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
     row = stages()[test_id]
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
     if test_id == 'H02':
-        from profile_stage import TOKEN as token, H02Scope
+        from profile_stage import (H02_CHANNELS, H02_DEBUG_TOKEN, H02_PANEL_TOKEN,
+                                   TOKEN as token, H02Scope)
+        profile_map = '; '.join(
+            f'CH{ch}: V={values[2]:.2f} V / I={values[3]:.3f} A, '
+            f'V-cap={values[0]:.2f} V / software I-cap={values[1]:.3f} A'
+            for ch, values in H02_CHANNELS.items())
         print(f'Порт: {port}; USB–TTL UART 9600 8N1, один владелец.\n'
               'CH1/CH2/CH3 OFF, клеммы свободны; без DUT и объединяющих перемычек.\n'
               'Нагрузка отсоединена от всех каналов, INPUT OFF; режим/значение не задавать.\n'
               'Output Recall=Off проверить на панели; доступен сетевой выключатель.\n'
               'Перед изменениями снимок V/I, лимита/state, выхода и таймера всех каналов.\n'
-              'Профиль: каждый CH 1.00 V / 0.100 A; V-cap 4.00 V, software I-cap 0.500 A.\n'
+              f'Разные значения по каналам (CH1→CH3): {profile_map}.\n'
               'VOLT:LIM не является независимой OVP; отдельного hardware I-cap нет.\n'
-              'Все выходы остаются OFF; при ошибочном ON после профиля ожидается до 1 V / 0.1 A.\n'
-              'В пределах профиля до 4 V / 0.5 A, 2 W на канал, 6 W суммарно.\n'
+              'Все выходы остаются OFF; если ошибочно включить после профиля, уставки '
+              'равны 1.00/1.50/2.00 V, токи 0.100/0.200/0.300 A.\n'
+              'Профильные верхние границы: 0.60/1.20/2.00 W на канал, 3.80 W суммарно.\n'
               'До применения/при отказе защиты возможны паспортные 30/30/5 V, 3 A, 195 W.\n'
               'Изменения: REM/LOC, OUTP 0, независимый режим, выбор CH, отключение таймеров,\n'
-              'VOLT/CURR 0, VOLT:LIM 4.00/state=1, CURR 0.100, VOLT 1.00. Без RWLOCK.\n'
+              'VOLT/CURR 0, затем по CH1/2/3 VOLT:LIM 2/3/4 V, CURR 0.100/0.200/0.300 A, '
+              'VOLT 1.00/1.50/2.00 V. Без RWLOCK.\n'
               'После каждой записи и запроса, кроме LOC и самого ERR?, проверяется SYST:ERR?; без *CLS.\n'
               'Проверки: точные V/I (±0.0049 V / ±0.00049 A), V-cap ±0.0049 V, state=1,\n'
               'таймеры OFF, режим независимый, ON-биты всех CH=0, invalid V/I без SCPI.\n'
-              'Обязательные проверки защиты: оператор на панели запрашивает 4.01 V при\n'
-              'Max Volt Set=4.00 V на каждом CH; runner подтверждает clamp по readback.\n'
+              'Обязательные проверки защиты: панельные Max Volt Set CH1/2/3=2/3/4 V, '
+              'попытки 2.01/3.01/4.01 V; runner проверяет поканальный clamp.\n'
               'После panel edit профиль разоружается и повторно применяется штатной\n'
-              'последовательностью. Нормальный API должен отклонить 4.01 V без SCPI.\n'
-              'Отдельный gate включает debug_bypass_profile только для трёх VOLT 4.01;\n'
-              'каждая команда должна получить 120,"Parameter overflowed", оставить\n'
-              'setpoint 1.00 V и outputs OFF. VOLT:LIM — потолок уставки, не независимая OVP.\n'
+              'последовательностью. Обычный API отклоняет превышение каждого V/I cap до SCPI.\n'
+              'Отдельный gate включает debug_bypass_profile только для CH1/2/3 VOLT 2.01/3.01/4.01;\n'
+              'ожидаются 120,"Parameter overflowed" и сохранение исходных V-set 1.00/1.50/2.00 V.\n'
+              'VOLT:LIM — потолок уставки, не независимая OVP.\n'
               'До профиля ON через API должен быть отвергнут без SCPI. ON после профиля не вызывается.\n'
               'Читаются внутренние U/I; точность и CV/CC здесь не квалифицируются.\n'
               'Один проход до 180 s. Первая ошибка останавливает настройки; на живой связи\n'
@@ -159,11 +166,9 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
               'Ручной останов: сетевой выключатель Keithley; проверить физический OFF.\n'
               'Итоговые настройки не откатываются, CH1 выбран, управление локальное.\n'
               f'Первый допуск H02: {token}\n'
-              'После профиля runner запросит panel gate:\n'
-              '  CONFIRM H02 PANEL MAXV CH1=4.01 CLAMPED=4.00 CH2=4.01 CLAMPED=4.00 CH3=4.01 CLAMPED=4.00 ALL_OFF\n'
-              'Затем отдельный debug gate:\n'
-              '  CONFIRM H02 DEBUG_BYPASS CH1=4.01 CH2=4.01 CH3=4.01 PROFILE_MAX=4.00 HW_LIMIT=4.00 EXPECT=120 ALL_OFF\n'
-              'SCPI command scope (VOLT 4.01 разрешён только трижды после debug gate; sequences are owned by the driver):')
+              f'Panel gate: {H02_PANEL_TOKEN}\nDebug gate: {H02_DEBUG_TOKEN}\n'
+              'SCPI command scope (VOLT 2.01/3.01/4.01 разрешены только по одному разу '
+              'на соответствующем канале после debug gate; sequences are owned by the driver):')
         for command in sorted(H02Scope.READS | H02Scope.WRITES): print('  ' + command)
         print('Failure path, known live link only: OUTP 0; SYST:ERR?; per-channel OFF; SYST:ERR?; SYST:LOC.\n'
               'Внутри apply_profile/verify_profile возможна более ранняя попытка OUTP 0; общий адаптер ограничивает команды и проверяет ошибки.')

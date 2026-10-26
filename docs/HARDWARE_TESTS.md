@@ -11,13 +11,22 @@
 > simulation; H07 is a 2–5 minute run. Diode DUTs and longer stress runs need
 > separate approval. The overview below does not authorize those actions.
 
-H02: [OFF-only profile operator card](H02_PREFLIGHT.ru.md). Offline regression: 48/48.
-The first physical run failed because `*IDN?` changed firmware field mid-session and
-the runner detected it only after profile writes. A library guard now aborts on an
-identity change before configuration. The corrected H02 rerun passed with identical
-`1.04-0.01` identity replies and a clear instrument error queue. See both evidence
-reports and verification log. H02 is reviewed PASS; H03 requires a fresh approval after
-the failed first attempt and safety-path correction.
+H02: [OFF-only profile operator card](H02_PREFLIGHT.ru.md). Its baseline profile
+application was physically observed. The pending protection replay uses distinct
+CH1/CH2/CH3 setpoints and caps: V=`1.00/1.50/2.00 V`, I=`0.100/0.200/0.300 A`,
+V-cap=`2.00/3.00/4.00 V`, software I-cap=`0.300/0.400/0.500 A`. It checks panel
+clamp, API soft rejection before SCPI and an explicitly gated instrument rejection.
+These new checks are offline tested only and await their own hardware gate.
+
+### Cross-channel value rule
+
+For a multi-channel qualification, assign distinct, safe initial voltage setpoints,
+current setpoints and protection/profile limits to each channel whenever the test
+allows it. Record the CH1→CH3 mapping in the operator token and evidence. This makes
+channel-selection, write-routing and readback mix-ups visible. If an electrical
+comparison requires equal values, retain that equal-value point and add a separate
+varied channel check; do not use identical values as the only cross-channel check.
+Never vary values beyond the limits of the hardware profile or the documented test.
 
 H03: [KEL103 load and transition operator card](H03_PREFLIGHT.ru.md). CH1, CH2 and CH3
 CV/CC points have physical measurements and live display confirmations. The last CH3 run

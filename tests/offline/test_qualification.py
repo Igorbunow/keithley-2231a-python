@@ -683,8 +683,20 @@ class TestQualification(unittest.TestCase):
     def test_h02_profile_trace_and_stop_on_first_error(self):
         """Exercise the exact profile trace using simulated I/O only."""
         q = self.module()
-        from profile_stage import H02Scope, H02_DEBUG_TOKEN, H02_PANEL_TOKEN, h02
+        from profile_stage import (H02Scope, H02_DEBUG_TOKEN, H02_HARD_PROBES,
+                                   H02_PANEL_TOKEN,
+                                   TOKEN as H02_TOKEN, guarded_profile, h02)
         from test_driver import FakeTransport
+        settings = guarded_profile().channels
+        self.assertEqual([(p.initial_voltage, p.initial_current, p.max_voltage, p.max_current)
+                          for p in settings],
+                         [(1.0, .1, 2.0, .3), (1.5, .2, 3.0, .4), (2.0, .3, 4.0, .5)])
+        self.assertIn('CH1=V1.00_I0.100_VCAP2.00_ICAP0.300', H02_TOKEN)
+        self.assertIn('CH2=V1.50_I0.200_VCAP3.00_ICAP0.400', H02_TOKEN)
+        self.assertIn('CH3=V2.00_I0.300_VCAP4.00_ICAP0.500', H02_TOKEN)
+        self.assertIn('CH1=2.01 CLAMPED=2.00', H02_PANEL_TOKEN)
+        self.assertIn('CH2=3.01 CLAMPED=3.00', H02_PANEL_TOKEN)
+        self.assertIn('CH3=4.01 CLAMPED=4.00', H02_PANEL_TOKEN)
         for bad in ('none', 'error170', 'timeout', 'cap_mismatch', 'initial_on', 'identity_change'):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as tmp:
                 class ProfileFake(FakeTransport):
@@ -693,13 +705,13 @@ class TestQualification(unittest.TestCase):
                     idn_count = 0
                     pending_hard_rejection = False
                     def write(self, command):
-                        if command == 'VOLT 4.01':
+                        if command in H02_HARD_PROBES.values():
                             self.cmds.append(command)
                             self.pending_hard_rejection = True
                             return
                         super().write(command)
                         if bad == 'error170' and command == 'CURR 0': self.pending_error = True
-                        if command == 'VOLT:LIM 4.00': self.reduced_cap_written = True
+                        if command.startswith('VOLT:LIM '): self.reduced_cap_written = True
                     def query(self, command):
                         if bad == 'identity_change' and command == '*IDN?':
                             self.idn_count += 1
@@ -722,7 +734,8 @@ class TestQualification(unittest.TestCase):
                 evidence = q.Evidence(Path(tmp) / 'events.jsonl', 'H02')
                 def confirm(prompt):
                     if H02_PANEL_TOKEN in prompt:
-                        for channel in (1, 2, 3): fake.values[channel]['VOLT'] = 4.
+                        for channel, limit in ((1, 2.), (2, 3.), (3, 4.)):
+                            fake.values[channel]['VOLT'] = limit
                         return H02_PANEL_TOKEN
                     if H02_DEBUG_TOKEN in prompt: return H02_DEBUG_TOKEN
                     raise AssertionError(prompt)
@@ -737,10 +750,11 @@ class TestQualification(unittest.TestCase):
                 if bad == 'none':
                     self.assert_driver_path(evidence, fake)
                     self.assertEqual(fake.active_ch, 1)
-                    for ch in (1, 2, 3):
-                        self.assertEqual(fake.values[ch]['VOLT'], 1.)
-                        self.assertEqual(fake.values[ch]['CURR'], .1)
-                        self.assertEqual(fake.values[ch]['VOLT:LIM'], 4.)
+                    for ch, (limit, current_cap, voltage, current) in enumerate(
+                            ((2., .3, 1., .1), (3., .4, 1.5, .2), (4., .5, 2., .3)), 1):
+                        self.assertEqual(fake.values[ch]['VOLT'], voltage)
+                        self.assertEqual(fake.values[ch]['CURR'], current)
+                        self.assertEqual(fake.values[ch]['VOLT:LIM'], limit)
                         self.assertEqual(fake.values[ch]['VOLT:LIM:STAT'], 1.)
                         self.assertEqual(fake.values[ch]['CHAN:OUTP'], 0.)
                     self.assertEqual(evidence.path.read_text().count('"event": "case"'), 28)
@@ -769,13 +783,13 @@ class TestQualification(unittest.TestCase):
     def test_h02_panel_soft_and_debug_hard_voltage_boundaries(self):
         """Require panel, public API, and explicitly armed instrument-limit probes."""
         q = self.module()
-        from profile_stage import H02Scope, H02_DEBUG_TOKEN, H02_PANEL_TOKEN, h02
+        from profile_stage import H02Scope, H02_DEBUG_TOKEN, H02_HARD_PROBES, H02_PANEL_TOKEN, h02
         from test_driver import FakeTransport
 
         class LimitFake(FakeTransport):
             pending_error = None
             def write(self, command):
-                if command == 'VOLT 4.01':
+                if command in H02_HARD_PROBES.values():
                     self.cmds.append(command)
                     self.pending_error = '120,Parameter overflowed'
                     return
@@ -792,7 +806,8 @@ class TestQualification(unittest.TestCase):
         def operator_gate(_prompt):
             token = next(answers)
             if token == H02_PANEL_TOKEN:
-                for channel in (1, 2, 3): fake.values[channel]['VOLT'] = 4.0
+                for channel, limit in ((1, 2.), (2, 3.), (3, 4.)):
+                    fake.values[channel]['VOLT'] = limit
             return token
         with tempfile.TemporaryDirectory() as tmp:
             evidence = q.Evidence(Path(tmp) / 'h02_boundaries.jsonl', 'H02')
@@ -804,8 +819,8 @@ class TestQualification(unittest.TestCase):
             self.assertEqual(outcome, 'PASS', [r for r in records if r['event'] == 'stage_error'])
             self.assert_driver_path(evidence, fake)
             self.assertTrue(fake.closed)
-            self.assertEqual(fake.cmds.count('VOLT 4.01'), 3)
-            self.assertEqual([fake.values[ch]['VOLT'] for ch in (1, 2, 3)], [1.0] * 3)
+            self.assertEqual([fake.cmds.count(H02_HARD_PROBES[ch]) for ch in (1, 2, 3)], [1, 1, 1])
+            self.assertEqual([fake.values[ch]['VOLT'] for ch in (1, 2, 3)], [1.0, 1.5, 2.0])
             self.assertTrue(all(fake.values[ch]['CHAN:OUTP'] == 0 for ch in (1, 2, 3)))
             self.assertEqual(fake.cmds.count('CHAN:OUTP 1'), 0)
             self.assertEqual(len([r for r in records if r['event'] == 'expected_instrument_rejection']), 3)
@@ -819,7 +834,7 @@ class TestQualification(unittest.TestCase):
             class WrongErrorMessage(FakeTransport):
                 pending = False
                 def write(self, command):
-                    if command == 'VOLT 4.01':
+                    if command == 'VOLT 2.01':
                         self.cmds.append(command)
                         self.pending = True
                         return
@@ -833,9 +848,11 @@ class TestQualification(unittest.TestCase):
             fake = WrongErrorMessage()
             scope = H02Scope(fake, q.Evidence(Path(tmp) / 'wrong_message.jsonl', 'H02'))
             scope.arm_hard_probes()
+            with self.assertRaises(ValueError): scope.write('VOLT 3.01')
+            self.assertEqual(fake.cmds, [])
             scope.expected_error = (120, 'Parameter overflowed')
-            with self.assertRaises(SafetyError): scope.write('VOLT 4.01')
-            self.assertEqual(fake.cmds, ['VOLT 4.01', 'SYST:ERR?'])
+            with self.assertRaises(SafetyError): scope.write('VOLT 2.01')
+            self.assertEqual(fake.cmds, ['VOLT 2.01', 'SYST:ERR?'])
 
     def test_h04_offline_runner_stays_off_and_detects_power_only_tampering(self):
         q = self.module()
@@ -940,7 +957,13 @@ class TestQualification(unittest.TestCase):
         self.assertIn('CONFIRM H02 PANEL MAXV', card)
         self.assertIn('CONFIRM H02 DEBUG_BYPASS', card)
         self.assertIn('120,"Parameter overflowed"', card)
-        self.assertIn('VOLT 4.01', card)
+        self.assertIn('CH1=V1.00_I0.100_VCAP2.00_ICAP0.300', card)
+        self.assertIn('CH2=V1.50_I0.200_VCAP3.00_ICAP0.400', card)
+        self.assertIn('CH3=V2.00_I0.300_VCAP4.00_ICAP0.500', card)
+        self.assertIn('CH1=2.01 CLAMPED=2.00', card)
+        self.assertIn('CH2=3.01 CLAMPED=3.00', card)
+        self.assertIn('CH3=4.01 CLAMPED=4.00', card)
+        self.assertIn('VOLT 2.01', card)
         self.assertIn('не является независимой', card)
 
     def test_h04p_preflight_is_dry_and_explains_load_moves(self):
