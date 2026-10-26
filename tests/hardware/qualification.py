@@ -115,7 +115,7 @@ def open_transport(port):
 
 
 def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_channel=1,
-              load_transport='udp', load_serial_port='/dev/ttyACM0'):
+              load_transport='udp', load_serial_port='/dev/ttyACM0', diagnose_status=False):
     """Print a human-readable card; never contact hardware."""
     row = stages()[test_id]
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
@@ -150,8 +150,8 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
     if test_id == 'H03':
         from channel_stage import approval_token, command_plan
         token = approval_token(start_channel, load_transport, load_host,
-                               load_port, load_serial_port)
-        selected_plan = command_plan(start_channel)
+                               load_port, load_serial_port, diagnose_status)
+        selected_plan = command_plan(start_channel, diagnose_status)
         digest = hashlib.sha256('\n'.join(selected_plan).encode()).hexdigest()
         load_connection = (f'KEL103 UDP {load_host}:{load_port}' if load_transport == 'udp'
                            else f'KEL103 USB {load_serial_port}, 115200 8N1')
@@ -180,6 +180,20 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
               f'Первый допуск до открытия портов: {token}\n'
               'Дальнейшие подтверждения подключения, CR и перестановки запрашиваются отдельно внутри runner.\n'
               'Финальное физическое подтверждение: CONFIRM H03 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF')
+        if diagnose_status:
+            print('ДИАГНОСТИКА CH3: реальные TX/RX-байты status-запросов; короткие и полные формы; '
+                  'ранний снимок и снимок после подтверждения дисплея, не ранее 5 s после ON. '
+                  'Затем повтор с выбранным CH1 (он остаётся OFF) и возврат выбора CH3. '
+                  'Считываются все три condition-регистра и ENAB CH3; маски не изменяются. '
+                  'Event-регистры, *CLS, *RST и калибровка не используются. '
+                  'CV/CC, CR и пределы прежние. Диагностические данные требуют review; '
+                  'несоответствие operation status не скрывается и не переводится в PASS.')
+            print('Подключение: KEL103 +/− только к CH3 +/−; CH1/CH2 свободны, без перемычек. '
+                  'До запуска все выходы и INPUT OFF, Output Recall=Off проверить на панели. '
+                  'Тестовый максимум CH3: 4.00 V / 0.500 A / 2 W; CC: лимит 0.250 A. '
+                  'При отказе ограничений паспортный максимум CH3 5 V / 3 A / 15 W. '
+                  'Ручной останов: сетевой выключатель Keithley, затем INPUT OFF и проверка всех выходов. '
+                  'Не переставлять провода во время диагностики.')
         return
     if test_id != 'H01':
         print('BLOCKED для выполнения: сначала разбор H01, паспорт нагрузки и отдельная полная карточка.\n'
@@ -344,6 +358,8 @@ def main(argv=None):
                         help='explicit KEL103 connection; never auto-switches on failure')
     parser.add_argument('--load-serial-port', default='/dev/ttyACM0')
     parser.add_argument('--start-channel', type=int, choices=(1, 2, 3), default=1)
+    parser.add_argument('--diagnose-status', action='store_true',
+                        help='H03 CH3 only: wire trace, delayed and channel-selection status snapshots')
     parser.add_argument('--prior-evidence', type=Path, action='append',
                         help='H03 evidence log; repeat once per completed-channel log when resuming')
     mode = parser.add_mutually_exclusive_group()
@@ -351,6 +367,8 @@ def main(argv=None):
     mode.add_argument('--dry-run', action='store_true')
     parser.add_argument('--evidence', type=Path)
     args = parser.parse_args(argv)
+    if args.diagnose_status and (args.test_id != 'H03' or args.start_channel != 3):
+        parser.error('--diagnose-status requires H03 --start-channel 3')
     if args.command == 'list':
         for key, row in stages().items(): print(f'{key} {row[-1]} | {row[0]}')
         return 0
@@ -365,7 +383,7 @@ def main(argv=None):
         return 0
     if args.test_id is None: parser.error('preflight/run requires one test ID')
     preflight(args.test_id, args.port, args.load_host, args.load_port,
-              args.start_channel, args.load_transport, args.load_serial_port)
+              args.start_channel, args.load_transport, args.load_serial_port, args.diagnose_status)
     if args.test_id == 'H03' and args.start_channel > 1:
         if args.prior_evidence is None:
             parser.error('--prior-evidence is required when resuming H03; repeat for each prior channel log')
@@ -392,7 +410,8 @@ def main(argv=None):
     if args.test_id == 'H03':
         from channel_stage import approval_token, FINAL_TOKEN as final_token, h03
         token = approval_token(args.start_channel, args.load_transport,
-                               args.load_host, args.load_port, args.load_serial_port)
+                               args.load_host, args.load_port, args.load_serial_port,
+                               args.diagnose_status)
         runner = h03
     if not sys.stdin.isatty():
         print('BLOCKED: требуется интерактивный терминал; пакетный ввод запрещён.')
@@ -402,9 +421,8 @@ def main(argv=None):
         if not adapter:
             print('BLOCKED: не указан проверенный адаптер.')
             return 2
-        if input('Подтверждение: ').strip() != token:
-            print(f'BLOCKED: нет точного разрешения {args.test_id}; порт не открыт.')
-            return 2
+        while input(f'Подтверждение: {token}\n> ').strip() != token:
+            print('Подтверждение не распознано; ожидаю повторный ввод. Для остановки — Ctrl-C.')
     except (EOFError, KeyboardInterrupt):
         print('ABORTED до открытия порта.')
         return 2
@@ -425,6 +443,11 @@ def main(argv=None):
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
                  independent_meter=None)
     evidence.add('approval', token=token)
+    if args.diagnose_status:
+        evidence.add('diagnostic_scope', channel=3, wire_trace='status commands only',
+                     late_sample_min_s=5.0, selections=(3, 1),
+                     condition_registers='all channels; short and full forms on CH3',
+                     enable_masks='read only; CH3')
     if args.test_id == 'H03' and args.start_channel > 1:
         evidence.add('resume_from', start_channel=args.start_channel,
                      prior_evidence=[path.name for path in args.prior_evidence])
@@ -436,6 +459,10 @@ def main(argv=None):
                     if args.load_transport == 'udp' else
                     KEL103Serial(args.load_serial_port, evidence=evidence))
         transport = open_transport(args.port)
+        if args.diagnose_status:
+            from channel_stage import StatusWireTrace
+            # Qualification-only byte observer; public transport API is unchanged.
+            transport._serial = StatusWireTrace(transport._serial, evidence)
     except Exception:
         if load is not None:
             try: load.close()
@@ -443,10 +470,14 @@ def main(argv=None):
         evidence.add('outcome', outcome='ABORTED', stop_reason='port open failed; verify OFF manually')
         print(f'ABORTED: порт не открыт; проверить OFF вручную. Evidence: {evidence.path}')
         return 2
-    outcome = (runner(transport, evidence, load, args.start_channel)
+    outcome = (runner(transport, evidence, load, args.start_channel,
+                      diagnose_status=args.diagnose_status)
                if args.test_id == 'H03' else runner(transport, evidence))
     physical_off = False
-    try: physical_off = input(f'После ручной проверки введите {final_token}: ').strip() == final_token
+    try:
+        while input(f'После ручной проверки введите {final_token}: ').strip() != final_token:
+            print('Подтверждение OFF не распознано; ожидаю повторный ввод. Для остановки — Ctrl-C.')
+        physical_off = True
     except (EOFError, KeyboardInterrupt): pass
     if not physical_off and outcome == 'PASS': outcome = 'PARTIAL'
     evidence.add('outcome', outcome=outcome, physical_off_confirmed=physical_off,

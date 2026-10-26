@@ -20,6 +20,16 @@ class SafetyError(InstrumentError):
 
 @dataclass(frozen=True)
 class Reading:
+    """Sequential channel readback, not an atomic instrument snapshot.
+
+    Firmware 1.04-1.04 has been observed to omit CH3 OPER CV/CC bits.
+    An unambiguous QUES condition mode remains usable when OPER has no mode.
+    ``regulation_source`` identifies the supporting register(s): operation,
+    questionable, both, or None for OFF, UNKNOWN or skipped regulation checks.
+    Raw masks are retained; missing bits are never synthesized. Conflicting or
+    ambiguous mode bits produce UNKNOWN. No-error replies cannot establish mode.
+    See README.md, "CH3 status workaround and limitations" for hardware scope.
+    """
     channel: int
     timestamp_utc: str
     monotonic_s: float
@@ -33,6 +43,7 @@ class Reading:
     current_limit_set_a: float | None = None
     operation_status_mask: int | None = None
     questionable_status_mask: int | None = None
+    regulation_source: str | None = None
 
 class Keithley2231A:
     def __init__(self, transport: Transport):
@@ -436,6 +447,12 @@ class Keithley2231A:
             except Exception as exc: self._trip(f'Timer configuration failed: {exc}')
 
     def read_channel(self, ch: int, *, with_regulation: bool = True) -> Reading:
+        """Read actual output, measurements, setpoints and regulation evidence.
+
+        ON/OFF comes from CHAN:OUTP?, not from the presence of CV/CC bits.
+        Missing OPER mode bits alone do not disable CH3 use: QUES may supply
+        its mode. Both status queries must succeed; I/O failures still trip.
+        """
         with self._lock:
             self._require_ready(); self._check_channel(ch)
             if self._profile.wiring in ('series', 'parallel') and ch == 2:
@@ -456,6 +473,7 @@ class Keithley2231A:
                 mode = 'UNKNOWN'
                 operation_mask = None
                 questionable_mask = None
+                regulation_source = None
                 if with_regulation:
                     operation_mask = int(self._num(f'STAT:OPER:INST:ISUM{ch}:COND?'))
                     questionable_mask = int(self._num(f'STAT:QUES:INST:ISUM{ch}:COND?'))
@@ -476,7 +494,13 @@ class Keithley2231A:
                         mode = 'UNKNOWN'
                     else:
                         mode = operation_mode or questionable_mode or 'UNKNOWN'
-                if not enabled: mode = 'OFF'
+                        if mode != 'UNKNOWN':
+                            regulation_source = ('both' if operation_mode and questionable_mode
+                                                 else 'operation' if operation_mode
+                                                 else 'questionable')
+                if not enabled:
+                    mode = 'OFF'
+                    regulation_source = None
                 spec = self._profile.channels[ch - 1]
                 combined = self._profile.wiring in ('series', 'parallel') and ch == 1
                 if self._profile.wiring in ('series', 'parallel') and ch == 2:
@@ -506,7 +530,8 @@ class Keithley2231A:
                                voltage_set_v=None if combined else voltage_set,
                                current_limit_set_a=None if combined else current_set,
                                operation_status_mask=operation_mask,
-                               questionable_status_mask=questionable_mask)
+                               questionable_status_mask=questionable_mask,
+                               regulation_source=regulation_source)
             except Exception as exc:
                 self._trip(f'Measurement failed: {exc}')
 

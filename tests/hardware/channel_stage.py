@@ -26,11 +26,19 @@ RESUME_CH3_TOKEN = ('CONFIRM H03 RESUME_CH3 INDEPENDENT ALL_OFF '
 FINAL_TOKEN = 'CONFIRM H03 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
 MODES = ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?')
 OFF = tuple(f'STAT:OPER:INST:ISUM{ch}:COND?' for ch in (1, 2, 3))
+STATUS_DIAGNOSTIC_QUERIES = (
+    'INST:NSEL?', 'CHAN:OUTP?', *OFF,
+    *(f'STAT:QUES:INST:ISUM{ch}:COND?' for ch in (1, 2, 3)),
+    'STATus:OPERation:INSTrument:ISUMmary3:CONDition?',
+    'STATus:QUEStionable:INSTrument:ISUMmary3:CONDition?',
+    'STAT:OPER:INST:ISUM3:ENAB?', 'STAT:QUES:INST:ISUM3:ENAB?')
 
 
 def approval_token(start_channel, load_transport='udp', load_host='192.168.22.106',
-                   load_port=18190, load_serial_port='/dev/ttyACM0'):
+                   load_port=18190, load_serial_port='/dev/ttyACM0', diagnose_status=False):
     """Return the exact H03 approval bound to the selected load connection."""
+    if diagnose_status and start_channel != 3:
+        raise ValueError('status diagnosis is restricted to CH3')
     if load_transport == 'udp':
         connection = f'LAN=UDP:{load_port}'
     elif load_transport == 'serial':
@@ -42,8 +50,32 @@ def approval_token(start_channel, load_transport='udp', load_host='192.168.22.10
                 f'{connection} RECALL=OFF VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
     if start_channel not in (2, 3):
         raise ValueError('start channel must be 1, 2 or 3')
-    return (f'CONFIRM H03 RESUME_CH{start_channel} INDEPENDENT ALL_OFF '
+    action = 'DIAGNOSTIC_CH3' if diagnose_status else f'RESUME_CH{start_channel}'
+    return (f'CONFIRM H03 {action} INDEPENDENT ALL_OFF '
             f'LOAD=KEL103 INPUT=OFF {connection} VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
+
+
+class StatusWireTrace:
+    """Observe serial status bytes without changing framing or logging identity bytes."""
+    def __init__(self, serial_port, evidence):
+        self.serial_port, self.evidence = serial_port, evidence
+        self.status_command = None
+
+    def __getattr__(self, name):
+        return getattr(self.serial_port, name)
+
+    def write(self, data):
+        command = data.decode('ascii').strip()
+        self.status_command = command if command.upper().startswith(('STAT:', 'STATUS:')) else None
+        if self.status_command:
+            self.evidence.add('status_wire_write', command=command, tx_hex=data.hex(' '))
+        return self.serial_port.write(data)
+
+    def readline(self, size):
+        data = self.serial_port.readline(size)
+        if self.status_command:
+            self.evidence.add('status_wire_read', command=self.status_command, rx_hex=data.hex(' '))
+        return data
 
 
 class KEL103UDP:
@@ -285,7 +317,7 @@ def profile():
         verify_every_s=3600.0)
 
 
-def command_plan(start_channel=1):
+def command_plan(start_channel=1, diagnose_status=False):
     """Return the exact successful SCPI trace for this library version.
 
     Every write except LOC is followed by an error queue read by StageIO. The
@@ -294,6 +326,8 @@ def command_plan(start_channel=1):
     """
     if start_channel not in (1, 2, 3):
         raise ValueError('start_channel must be 1, 2 or 3')
+    if diagnose_status and start_channel != 3:
+        raise ValueError('status diagnosis is restricted to CH3')
     plan = []
     def add(*commands):
         for command in commands:
@@ -338,6 +372,13 @@ def command_plan(start_channel=1):
                             f'STAT:QUES:INST:ISUM{ch}:COND?', 'MEAS:POW?',
                             f'STAT:OPER:INST:ISUM{ch}:COND?',
                             f'STAT:QUES:INST:ISUM{ch}:COND?')
+            if diagnose_status:
+                # Early sample, followed by independent display confirmation.
+                add('INST:NSEL 3', *STATUS_DIAGNOSTIC_QUERIES)
+                # A late sample at >=5 s, then repeat with CH1 selected.
+                add('INST:NSEL 3', *STATUS_DIAGNOSTIC_QUERIES)
+                add('INST:NSEL 1', *STATUS_DIAGNOSTIC_QUERIES)
+                add('INST:NSEL 3', 'INST:NSEL?')
             select(ch); add('CHAN:OUTP 0', 'CHAN:OUTP?')
             status()
     # emergency_off() verifies all channels, then h03() performs its final
@@ -348,9 +389,9 @@ def command_plan(start_channel=1):
 
 class StageIO:
     """Exact success-path guard and error-queue check for H03."""
-    def __init__(self, transport, evidence, start_channel=1):
+    def __init__(self, transport, evidence, start_channel=1, diagnose_status=False):
         self.transport, self.evidence = transport, evidence
-        self.plan, self.index = command_plan(start_channel), 0
+        self.plan, self.index = command_plan(start_channel, diagnose_status), 0
         self.live, self.cleanup = True, False
         self.selected = 1
         self.authorized_channel = None
@@ -359,6 +400,11 @@ class StageIO:
     def _transfer(self, command, is_query):
         if not self.live:
             raise OSError('uncertain link; no further SCPI')
+        if not is_query:
+            if command == 'OUTP 1':
+                raise ValueError('global output ON is forbidden in H03')
+            if command == 'CHAN:OUTP 1' and self.authorized_channel != self.selected:
+                raise ValueError('individual ON requires a matching confirmed operator gate')
         if self.cleanup:
             allowed = ('SYST:REM', 'OUTP 0', 'SYST:ERR?', *OFF, 'SYST:LOC',
                        'INST:NSEL 1', 'INST:NSEL 2', 'INST:NSEL 3', 'CHAN:OUTP 0')
@@ -388,10 +434,6 @@ class StageIO:
             if command != 'SYST:ERR?':
                 self._check_error_queue()
             return response
-        if command == 'OUTP 1':
-            raise ValueError('global output ON is forbidden in H03')
-        if command == 'CHAN:OUTP 1' and self.authorized_channel != self.selected:
-            raise ValueError('individual ON requires a matching confirmed operator gate')
         if command.startswith('INST:NSEL '):
             self.selected = int(command.rsplit(' ', 1)[1])
         if command != 'SYST:LOC':
@@ -413,9 +455,12 @@ def guarded_profile(): return profile()
 
 def _gate(token, prompt):
     print(prompt)
-    try: answer = input(f'Подтверждение: {token}\n> ').strip()
-    except (EOFError, KeyboardInterrupt): raise InterruptedError('operator gate interrupted')
-    if answer != token: raise PermissionError('operator confirmation did not match')
+    while True:
+        try: answer = input(f'Подтверждение: {token}\n> ').strip()
+        except (EOFError, KeyboardInterrupt): raise InterruptedError('operator gate interrupted')
+        if answer == token:
+            return
+        print('Подтверждение не распознано; ожидаю повторный ввод. Для остановки — Ctrl-C.')
 
 
 def _all_off(io):
@@ -449,11 +494,32 @@ def _display_gate(evidence, channel, mode, readings):
                  kel103_display_matches_remote=True)
 
 
-def h03(transport, evidence, load, start_channel=1):
+def _status_snapshot(io, evidence, mode, phase, selected_channel, output_started):
+    """Record direct status replies; the library regulation decoder is bypassed."""
+    io.write(f'INST:NSEL {selected_channel}')
+    responses = {command: io.query(command) for command in STATUS_DIAGNOSTIC_QUERIES}
+    values = {command: float(answer) for command, answer in responses.items()}
+    evidence.add('status_diagnostic', channel=3, mode=mode, phase=phase,
+                 selected_channel=selected_channel,
+                 elapsed_since_output_on_s=time.monotonic() - output_started,
+                 responses=responses)
+    if values['INST:NSEL?'] != selected_channel:
+        raise SafetyError('status diagnosis channel selection did not verify')
+    if values['CHAN:OUTP?'] != int(selected_channel == 3):
+        raise SafetyError('selected-channel output disagrees with status diagnosis')
+    if any(not math.isfinite(value) or value != int(value) or not 0 <= value <= 255
+           for value in values.values()):
+        raise SafetyError('invalid status diagnosis register response')
+    for channel, command in enumerate(OFF, 1):
+        if bool(int(values[command]) & 8) != (channel == 3):
+            raise SafetyError('status diagnosis expected only CH3 ON')
+
+
+def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
     """Run H03 once; operator wires and confirms panels, UDP controls KEL103."""
     if start_channel not in (1, 2, 3):
         raise ValueError('start_channel must be 1, 2 or 3')
-    io = StageIO(transport, evidence, start_channel)
+    io = StageIO(transport, evidence, start_channel, diagnose_status)
     dev = Keithley2231A(io)
     outcome, reason = 'ABORTED', 'incomplete H03'
     status_unqualified = False
@@ -512,6 +578,7 @@ def h03(transport, evidence, load, start_channel=1):
                              resistance_ohm=float(resistance), input_state='ON')
                 io.authorized_channel = channel
                 dev.output(channel, True)
+                output_started = time.monotonic()
                 _only_target_on(io, channel)
                 sample = dev.read_channel(channel)
                 if not sample.enabled:
@@ -525,6 +592,8 @@ def h03(transport, evidence, load, start_channel=1):
                 raw_status = int(float(io.query(f'STAT:OPER:INST:ISUM{channel}:COND?')))
                 questionable_status = int(float(io.query(
                     f'STAT:QUES:INST:ISUM{channel}:COND?')))
+                if diagnose_status:
+                    _status_snapshot(io, evidence, mode, 'early', 3, output_started)
                 observed = load.measurements()
                 # Worst published KEL103 measurement range is used because the
                 # selected range is not remotely observable in this runner.
@@ -553,6 +622,16 @@ def h03(transport, evidence, load, start_channel=1):
                 # In a diagnostic status mismatch, preserve independent panel
                 # evidence before failing the point and shutting down.
                 _display_gate(evidence, channel, mode, observed)
+                if diagnose_status:
+                    # Directed second sample, not a retry of a failed command.
+                    remaining = 5.0 - (time.monotonic() - output_started)
+                    if remaining > 0:
+                        time.sleep(remaining)
+                    _status_snapshot(io, evidence, mode, 'after_display', 3, output_started)
+                    _status_snapshot(io, evidence, mode, 'selected_other_channel', 1, output_started)
+                    io.write('INST:NSEL 3')
+                    if int(io.query('INST:NSEL?')) != 3:
+                        raise SafetyError('CH3 selection restore did not verify')
                 operation_mode = ('CV' if raw_status & 1 and not raw_status & 2 else
                                   'CC' if raw_status & 2 and not raw_status & 1 else 'UNKNOWN')
                 questionable_mode = ('CV' if questionable_status & 1 and not questionable_status & 2 else

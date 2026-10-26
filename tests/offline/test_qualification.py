@@ -52,6 +52,54 @@ class TestQualification(unittest.TestCase):
             with self.assertRaises(ValueError): guarded.write('OUTP 1')
             self.assertEqual(fake.cmds, [])
 
+    def test_h03_individual_on_requires_authorization_before_transmission(self):
+        from channel_stage import StageIO
+        from test_driver import FakeTransport
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for authorized in (None, 1, 3):
+                with self.subTest(authorized=authorized):
+                    fake = FakeTransport()
+                    fake.active_ch = 3
+                    evidence = self.module().Evidence(
+                        Path(tmp) / f'gate_{authorized}.jsonl', 'H03')
+                    guarded = StageIO(fake, evidence, start_channel=3)
+                    # Isolate the ON step of an otherwise approved plan.
+                    guarded.plan = ('CHAN:OUTP 1', 'SYST:ERR?')
+                    guarded.selected = 3
+                    guarded.authorized_channel = authorized
+                    if authorized == 3:
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            guarded.write('CHAN:OUTP 1')
+                        self.assertEqual(fake.values[3]['CHAN:OUTP'], 1)
+                    else:
+                        with self.assertRaises(ValueError):
+                            guarded.write('CHAN:OUTP 1')
+                        self.assertEqual(fake.cmds, [])
+                        self.assertEqual(fake.values[3]['CHAN:OUTP'], 0)
+                        self.assertEqual(guarded.index, 0)
+
+    def test_h03_mistyped_gate_waits_for_valid_confirmation(self):
+        from channel_stage import _gate
+
+        with patch('builtins.input', side_effect=('mistyped confirmation', 'CONFIRM TEST')), \
+                contextlib.redirect_stdout(io.StringIO()):
+            _gate('CONFIRM TEST', 'Verify OFF')
+
+    def test_h03_diagnostic_preflight_is_offline_and_restricts_scope(self):
+        q = self.module()
+        with patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                q.preflight('H03', '/dev/ttyUSB1', start_channel=3,
+                            load_transport='serial', diagnose_status=True)
+            self.assertIn('DIAGNOSTIC_CH3', output.getvalue())
+            for args in (['run', 'H01', '--diagnose-status', '--execute'],
+                         ['run', 'H03', '--diagnose-status', '--execute']):
+                with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        q.main(args)
+
     def test_kel103_udp_is_lf_terminated_and_rejects_unknown_commands(self):
         from channel_stage import KEL103UDP
 
@@ -70,6 +118,32 @@ class TestQualification(unittest.TestCase):
         self.assertEqual(len(fake.sent), 1)
         load.close()
         self.assertTrue(fake.closed)
+
+    def test_h03_status_wire_trace_preserves_bytes_and_excludes_identity(self):
+        from channel_stage import StatusWireTrace
+
+        class SerialFake:
+            def write(self, data): return len(data)
+            def readline(self, size): return self.reply
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.module().Evidence(Path(tmp) / 'wire.jsonl', 'H03')
+            port = SerialFake()
+            wire = StatusWireTrace(port, evidence)
+            command = b'STAT:OPER:INST:ISUM3:COND?\r\n'
+            self.assertEqual(wire.write(command), len(command))
+            port.reply = b'8\r\n'
+            self.assertEqual(wire.readline(4097), b'8\r\n')
+            wire.write(b'*IDN?\r\n')
+            port.reply = b'Keithley instruments, 2231A-30-3, PRIVATE-SERIAL, 1.04-1.04\r\n'
+            self.assertEqual(wire.readline(4097), port.reply)
+            text = evidence.path.read_text()
+            self.assertNotIn('PRIVATE-SERIAL', text)
+            records = [json.loads(line) for line in text.splitlines()]
+            self.assertEqual([record['event'] for record in records],
+                             ['status_wire_write', 'status_wire_read'])
+            self.assertEqual(records[0]['tx_hex'], command.hex(' '))
+            self.assertEqual(records[1]['rx_hex'], '38 0d 0a')
 
     def test_kel103_cr_setup_is_input_off_only_and_verified(self):
         from channel_stage import KEL103UDP
@@ -245,6 +319,13 @@ class TestQualification(unittest.TestCase):
         class MeterFake(FakeTransport):
             def query(self, command):
                 key = command.upper().removesuffix('?')
+                for long, short in (('STATUS', 'STAT'), ('OPERATION', 'OPER'),
+                                    ('QUESTIONABLE', 'QUES'), ('INSTRUMENT', 'INST'),
+                                    ('ISUMMARY', 'ISUM'), ('CONDITION', 'COND')):
+                    key = key.replace(long, short)
+                if key in ('STAT:OPER:INST:ISUM3:ENAB', 'STAT:QUES:INST:ISUM3:ENAB'):
+                    self.cmds.append(command)
+                    return '0'
                 if key == 'SYST:ERR':
                     self.cmds.append(command)
                     if getattr(self, 'initial_170', False) and not self.initial_170_consumed:
@@ -279,7 +360,7 @@ class TestQualification(unittest.TestCase):
                 self.cmds.append(command)
                 if not self.values[channel]['CHAN:OUTP']:
                     return '0'
-                if (command.upper().startswith('STAT:OPER:') and channel == 3
+                if (command.upper().startswith(('STAT:OPER:', 'STATUS:OPERATION:')) and channel == 3
                         and getattr(self, 'channel3_status_override', None) is not None):
                     return str(self.channel3_status_override)
                 return '10' if self.values[channel]['CURR'] == .25 else '9'
@@ -402,6 +483,33 @@ class TestQualification(unittest.TestCase):
                               if event.get('event') == 'measurement'], ['CV', 'CC'])
 
         with tempfile.TemporaryDirectory() as tmp:
+            fake = MeterFake()
+            fake.channel3_status_override = 8
+            load = LoadFake()
+            evidence = q.Evidence(Path(tmp) / 'status_diagnosis.jsonl', 'H03')
+            answers = operator_answers()[-6:]
+            with patch('builtins.input', side_effect=answers), \
+                    patch('channel_stage.time.sleep'), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                outcome = h03(fake, evidence, load, start_channel=3, diagnose_status=True)
+            self.assertEqual(outcome, 'PARTIAL')
+            records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            snapshots = [record for record in records if record['event'] == 'status_diagnostic']
+            self.assertEqual([(record['mode'], record['phase'], record['selected_channel'])
+                              for record in snapshots],
+                             [('CV', 'early', 3), ('CV', 'after_display', 3),
+                              ('CV', 'selected_other_channel', 1),
+                              ('CC', 'early', 3), ('CC', 'after_display', 3),
+                              ('CC', 'selected_other_channel', 1)])
+            for record in snapshots:
+                self.assertEqual(record['responses']['STAT:OPER:INST:ISUM3:COND?'], '8')
+                self.assertEqual(record['responses'][
+                    'STATus:OPERation:INSTrument:ISUMmary3:CONDition?'], '8')
+            self.assertEqual(fake.cmds.count('CHAN:OUTP 1'), 2)
+            self.assertFalse(any(fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+            self.assertEqual(load.input, 'OFF')
+
+        with tempfile.TemporaryDirectory() as tmp:
             class TimedOutLoad(LoadFake):
                 def identify(self): raise TimeoutError('simulated UDP timeout')
 
@@ -422,10 +530,10 @@ class TestQualification(unittest.TestCase):
                 self.assertNotEqual(q.main(['run', 'H01', '--execute']), 0)
                 self.assertNotEqual(q.main(['run', 'H02', '--execute']), 0)
                 self.assertNotEqual(q.main(['run', 'H03', '--execute']), 0)
-            with patch('sys.stdin.isatty', return_value=True), patch('builtins.input', side_effect=['TTL 1234:5678', 'yes']):
+            with patch('sys.stdin.isatty', return_value=True), patch('builtins.input', side_effect=['TTL 1234:5678', 'yes', EOFError()]):
                 with contextlib.redirect_stdout(io.StringIO()):
                     self.assertNotEqual(q.main(['run', 'H01', '--execute']), 0)
-            with patch('sys.stdin.isatty', return_value=True), patch('builtins.input', side_effect=['TTL 1234:5678', q.TOKEN]):
+            with patch('sys.stdin.isatty', return_value=True), patch('builtins.input', side_effect=['TTL 1234:5678', q.TOKEN, EOFError()]):
                 with contextlib.redirect_stdout(io.StringIO()):
                     self.assertNotEqual(q.main(['run', 'H02', '--execute']), 0)
 

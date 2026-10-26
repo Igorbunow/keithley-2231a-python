@@ -1,5 +1,6 @@
 import math
 import unittest
+from dataclasses import replace
 from keithley2231a import (Profile, ChannelProfile, LimitsError, SafetyError,
                           Keithley2231A, Acquisition, ChannelStats, Reading)
 
@@ -141,6 +142,13 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(sample.regulation, 'CV')
         self.assertEqual(sample.operation_status_mask, 8)
         self.assertEqual(sample.questionable_status_mask, 1)
+        self.assertEqual(sample.regulation_source, 'questionable')
+
+        self.fake.questionable_status_masks[3] = 2
+        cc_sample = self.dev.read_channel(3)
+        self.assertEqual(cc_sample.regulation, 'CC')
+        self.assertEqual(cc_sample.regulation_source, 'questionable')
+        self.assertEqual(cc_sample.operation_status_mask, 8)
 
         self.fake.operation_status_masks[3] = 9
         self.fake.questionable_status_masks[3] = 2
@@ -148,11 +156,69 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(conflicting.regulation, 'UNKNOWN')
         self.assertEqual(conflicting.operation_status_mask, 9)
         self.assertEqual(conflicting.questionable_status_mask, 2)
+        self.assertIsNone(conflicting.regulation_source)
 
         self.fake.operation_status_masks[3] = 9
         self.fake.questionable_status_masks[3] = 3
         ambiguous = self.dev.read_channel(3)
         self.assertEqual(ambiguous.regulation, 'UNKNOWN')
+        self.assertIsNone(ambiguous.regulation_source)
+
+    def test_regulation_source_reports_evidence_without_extra_queries(self):
+        self.dev.output(3, True)
+        for operation, questionable, mode, source in (
+                (9, 1, 'CV', 'both'), (10, 2, 'CC', 'both'),
+                (9, 0, 'CV', 'operation'), (10, 0, 'CC', 'operation'),
+                (8, 1, 'CV', 'questionable'), (8, 2, 'CC', 'questionable'),
+                (8, 0, 'UNKNOWN', None), (8, 3, 'UNKNOWN', None),
+                (11, 1, 'UNKNOWN', None), (9, 2, 'UNKNOWN', None)):
+            with self.subTest(operation=operation, questionable=questionable):
+                self.fake.operation_status_masks[3] = operation
+                self.fake.questionable_status_masks[3] = questionable
+                before = len(self.fake.cmds)
+                sample = self.dev.read_channel(3)
+                self.assertEqual(sample.regulation, mode)
+                self.assertEqual(sample.regulation_source, source)
+                status_queries = [cmd for cmd in self.fake.cmds[before:]
+                                  if cmd.startswith('STAT:')]
+                self.assertEqual(status_queries, [
+                    'STAT:OPER:INST:ISUM3:COND?', 'STAT:QUES:INST:ISUM3:COND?'])
+        self.dev.output(3, False)
+        off = self.dev.read_channel(3)
+        self.assertEqual(off.regulation, 'OFF')
+        self.assertIsNone(off.regulation_source)
+        unchecked = self.dev.read_channel(3, with_regulation=False)
+        self.assertIsNone(unchecked.regulation_source)
+        self.assertIsNone(unchecked.operation_status_mask)
+        self.assertIsNone(unchecked.questionable_status_mask)
+
+    def test_ch3_questionable_workaround_preserves_expected_regulation_trip(self):
+        for expected, mask in (('cv', 1), ('cc', 2)):
+            with self.subTest(expected=expected):
+                settings = profile()
+                settings = replace(settings, channels=(
+                    settings.channels[0], settings.channels[1],
+                    replace(settings.channels[2], expected_regulation=expected)))
+                fake = FakeTransport()
+                dev = Keithley2231A(fake)
+                dev.apply_profile(settings)
+                dev.set_channel(3, voltage=2.0, current=.08)
+                dev.output(3, True)
+                fake.operation_status_masks[3] = 8
+                fake.questionable_status_masks[3] = mask
+                sample = dev.read_channel(3)
+                self.assertTrue(sample.enabled)
+                self.assertEqual(sample.voltage_set_v, 2.0)
+                self.assertEqual(sample.current_limit_set_a, .08)
+                self.assertEqual(sample.regulation, expected.upper())
+                self.assertEqual(sample.regulation_source, 'questionable')
+                # A clear error queue must not turn absent mode evidence into success.
+                fake.questionable_status_masks[3] = 0
+                with self.assertRaises(SafetyError):
+                    dev.read_channel(3)
+                self.assertTrue(dev.faulted)
+                self.assertFalse(dev.armed)
+                self.assertTrue(all(not value['CHAN:OUTP'] for value in fake.values.values()))
 
     def test_sequence_and_timer(self):
         self.dev.sequence([(0,1,True),(0,2,True),(0,1,False)])

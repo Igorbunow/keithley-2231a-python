@@ -32,6 +32,53 @@ Provides SCPI over USB–TTL UART, optional transparent TCP–UART bridges, immu
 
 [Keithley/Tektronix official reference manual (PDF)](https://download.tek.com/manual/077100401_Referencemanual.pdf) · [Upstream product documentation](https://www.tek.com/en/tektronix-and-keithley-dc-power-supplies/keithley-2220-2230-2231-series-manual-0)
 
+## CH3 status workaround and limitations
+
+CH3 remains available through the normal profile, `set_channel(3, ...)`,
+`output(3, ...)` and `read_channel(3)` APIs. On the tested instrument, firmware
+**1.04-1.04**, its operation condition reports **8** in both CV and CC: the ON bit
+is present but the documented mode bits are absent. Its questionable condition
+correctly reports **1 (CV)** or **2 (CC)**. The library accepts an unambiguous mode
+from either condition register when the other has no mode bits. No opt-in or
+channel-specific fabricated status is needed.
+
+```python
+# Existing armed profile; this call does not enable the output.
+reading = psu.read_channel(3)
+print(reading.enabled, reading.regulation, reading.regulation_source)
+print(reading.operation_status_mask, reading.questionable_status_mask)
+# Observed ON/CV case: True, 'CV', 'questionable'; raw masks 8, 1.
+```
+
+`Reading.regulation_source` is `'operation'`, `'questionable'`, or `'both'` for a
+resolved ON mode; it is `None` for OFF, UNKNOWN or skipped regulation checks.
+`enabled` is independently read with `CHAN:OUTP?`. ON/OFF integrity checks use the
+operation ON bit, which worked in the observed CH3 runs. Successful writes and a
+clear error queue alone are never treated as proof of output state or regulation.
+Both condition queries must succeed; communication failures still trip. Conflicting
+or ambiguous modes remain UNKNOWN; a required `expected_regulation='cv'/'cc'`
+therefore still trips on mismatch or UNKNOWN. CV/CC is determined by load and V/I
+setpoints, not forced by that profile setting. Raw masks remain unchanged.
+
+Limits: CH3 is rated **0–5 V, 0–3 A**, constrained further by the active profile.
+Physical evidence covers independent CV at 4 V / 0.500 A with CR 40 ohms and CC at
+4 V / 0.250 A with CR 12 ohms, plus individual ON/OFF and setpoint readbacks.
+This does not qualify the full rated range, CH3 timers or all later stages.
+There is no redundant OPER confirmation of CH3's CV/CC on this firmware.
+The newly exposed source field and additional regressions are **SIM TESTED**
+(66/66 offline tests passed); the underlying QUES-based mode reading was already
+physically observed. The source field itself has not been replayed on hardware.
+
+The [reference manual](https://download.tek.com/manual/077100401_Referencemanual.pdf)
+sections 5-20/21 and the status model describe group event/summary registers, not a
+single response containing all three channels' complete live CV/CC states. Use
+per-channel `...ISUM1/2/3:COND?` queries; group event reads are not a substitute.
+`Acquisition.sample()` already polls all three independent channels sequentially,
+with separate timestamps; it is not an atomic snapshot. No new group command is
+assumed. See the [physical diagnosis](docs/hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md)
+and [verification matrix](docs/VERIFICATION.md). H03's manual-conformance result
+remains PARTIAL while manufacturer clarification is pending.
+
 ## Installation and offline tests
 
 ```bash

@@ -14,7 +14,7 @@ Outcome and feature verification level are independent. Existing UART/SYST:REM/*
 | --- | --- | --- | --- | --- |
 | **H01** | Пассивный SCPI-preflight, идентификация, чтение статусных и mode-регистров, парсер ошибок | Все три OUT OFF, вход нагрузки OFF; без физических перемычек | Ответы воспроизводимы; нет таймаутов/сдвигов ответов; `*IDN?` корректен | PASS |
 | **H02** | Безнагрузочная установка защищённого профиля: все 3 канала, `VOLT:LIM`/state, readback, отказ на недопустимых V/I, неактивированный ON | Независимые каналы, нагрузка отсоединена | После применения все OFF, уставки/лимиты соответствуют профилю, отказы не отправлены в SCPI | PASS (second attempt; first FAIL) |
-| **H03** | **Все 3 канала × CV и CC**, индивидуальный ON/OFF, измерение U/I/P и статус CV/CC | Нагрузка последовательно CH1→CH2→CH3, CR 40 Ω / CR 12 Ω; KEL103 по явно выбранному UDP/18190 или USB serial; паузы на проводку и дисплеи | CV и CC соответствуют индикации и независимому измерению; другие каналы остаются OFF | PARTIAL (CH1/CH2 CV/CC reviewed PASS; CH3 CV/CC function, display and electrical comparison observed PASS; status interpretation unresolved; USB control HW OBSERVED) |
+| **H03** | **Все 3 канала × CV и CC**, индивидуальный ON/OFF, измерение U/I/P и статус CV/CC | Нагрузка последовательно CH1→CH2→CH3, CR 40 Ω / CR 12 Ω; KEL103 по явно выбранному UDP/18190 или USB serial; паузы на проводку и дисплеи | CV и CC соответствуют индикации и независимому измерению; другие каналы остаются OFF | PARTIAL (CH1/CH2 CV/CC reviewed PASS; CH3 CV/CC function, display and electrical comparison observed PASS; OPER3 device response discrepancy confirmed; library CV/CC physically replayed; USB control HW OBSERVED) |
 | **H04** | Профильные ограничения: защищённый, `unrestricted()` в маломощном сценарии; внешняя подмена уставки/лимита при OFF; аварийная реакция/запрет смены профиля | Независимая схема, все OFF для tamper | Нет программного выхода за cap; активный профиль неизменяем; обнаруживается смена **точных** уставок `power_only` | NOT_RUN |
 | **H05** | `power_only`: предварительная фиксация уставок, запрет `set_channel`/`timer`/произвольной последовательности, CH1→CH2→CH3 и обратное выключение с паузами | Независимая схема, нагрузка на одном CH, остальные без нагрузки; независимый DMM/осциллограф желателен | Реальные статусы и порядок правильны; тайминги проверены с указанной погрешностью; если нет физического измерения всех фронтов — лишь PARTIAL | NOT_RUN |
 | **H06** | Таймеры CH1/CH2/CH3, отключение по таймеру, повторное включение, влияние `Output Recall` | Независимые каналы; нагрузка поочерёдно или холостой ход с измерением | Выход отключается в установленном окне; не происходит непрошеного автозапуска. Проверка recall после AC power-cycle — отдельное ручное разрешение | NOT_RUN |
@@ -113,3 +113,24 @@ regulation CV/CC from questionable masks 1/2 while operation masks remained 8. K
 KEL103 readings were 4.0003 V / 0.0999 A / 0.3996 W and 2.9840 V / 0.2487 A / 0.7421 W.
 All 192 error-queue replies were `0, "No error"`; physical final OFF was confirmed. Outcome
 remains PARTIAL solely because operation-status mode qualification did not match.
+
+
+CH3 diagnosis addendum: direct OFF-only UART observation agrees for short/full forms; operation masks 0/0/0, questionable masks 16/0/0. All six per-channel OP/QUES enable masks read 0. Two OFF probes returned 33+12 clear error-queue responses. The ON authorization guard was fixed before transmission; new diagnostic flow is SIM TESTED (64/64 offline), powered diagnosis NOT_RUN. H03 remains PARTIAL; no firmware root cause is asserted. See [OFF evidence](2026-10-26T004315.108014Z_H03_status_off.md).
+
+
+Powered CH3 status diagnosis completed: [review and wire evidence](2026-10-26T005733.649705Z_H03_qualification.md).
+CV (3.99826 V / 0.0998173 A) and CC (2.98198 V / 0.249532 A) agreed with KEL103 and
+operator panels. All 274 error-queue responses were clear. Actual UART OPER3 response
+was `38 0a` in both modes with short/full forms, including 83 s CV / 48 s CC observations
+and CH1 selected. QUES3=1/2 and library CV/CC were correct. ENAB masks were not modified.
+The anomaly is at the device response boundary; firmware versus manual cause remains
+unproven. H03 remains PARTIAL and H04 NOT_RUN. All outputs/load were read OFF and final
+physical OFF was confirmed. No further library workaround was introduced.
+
+CH3 workaround API addendum: the existing QUES-based decoder is retained, with a
+new `Reading.regulation_source` identifying the supporting register(s). Additional
+regressions passed in the operator-approved full offline run: **66/66**, exit 0,
+0.289 s (SIM TESTED). No additional SCPI or hardware run, no change to historical
+evidence, H03 PARTIAL and H04 NOT_RUN. Usage and limits:
+[EN](../../README.md#ch3-status-workaround-and-limitations) /
+[RU](../README.ru.md#workaround-статусов-ch3-и-ограничения).

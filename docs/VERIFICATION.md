@@ -29,7 +29,7 @@
 | OUT-03 | Series combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
 | OUT-04 | Parallel combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
 | OUT-05 | Tracking and ratio/timer behavior | SIM TESTED (basic) | **HW UNVERIFIED** | real tracking readback and timed output |
-| MET-01 | Read voltage/current/status and inferred CV/CC | SIM TESTED | **HW UNVERIFIED** | verify bit mapping using real load and DMM |
+| MET-01 | Read voltage/current/status and inferred CV/CC | SIM TESTED | **HW OBSERVED (H03; OPER3 manual discrepancy)** | CV/CC confirmed by KEL103 and panels; calibrated DMM accuracy unverified; [diagnosis](hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md) |
 | MET-02 | CSV, min/max/mean/stddev, Ah/Wh arithmetic | SIM TESTED | **HW UNVERIFIED** | duration run + independent reference |
 | IV-01 | Single-channel voltage sweep + external sample callback | SIM TESTED | **HW UNVERIFIED** | resistor/diode test with series protection |
 | BEN-01 | Multi-PSU host coordination / generic meter | SIM TESTED | **HW UNVERIFIED** | dual PSU + DMM comparison with clock uncertainty |
@@ -65,7 +65,7 @@ H02 has a manually gated OFF-only profile scenario. Its initial hardware attempt
 failed on an in-session `*IDN?` firmware mismatch, then the corrected scenario passed;
 the offline suite is 48/48. See the [H02 operator card](H02_PREFLIGHT.ru.md) and both
 physical reports below. H03 is PARTIAL: reviewed CH1 and CH2 CV/CC points pass; CH3 CV
-stopped on a documented status-bit mismatch and CH3 CC remains pending. KEL103 UDP
+and CC were both observed; the device operation-mode response still deviates from the manual (diagnosis below). KEL103 UDP
 control was exercised on hardware for CH2. H04–H12/O01/O02 remain pending individual
 review.
 
@@ -241,3 +241,64 @@ attempt after `SYST:REM`, but no queue baseline
 was taken before that command, so attribution is unknown. The runner now checks and
 records the queue before any mutation. The current offline suite passes 59/59. See the
 [H03 procedure](H03_PREFLIGHT.ru.md), [earlier attempt report](hardware_reports/2026-10-25T235449.217553Z_H03_qualification.md), and [powered CH3 report](hardware_reports/2026-10-25T235757.702842Z_H03_qualification.md).
+
+
+### H03 status diagnosis — OFF baseline and prepared powered probe
+
+The direct-pyserial OFF probe independently of the library transport/device wrappers
+returned operation masks 0/0/0. Short/full query forms agreed; questionable masks were
+16/0/0 (CH1 bit 4 is recorded without assigning an undocumented meaning). All 33 error
+reads were clear and both identity replies reported firmware 1.04-1.04. A second OFF
+probe read all six operation/questionable ISUM enable masks as 0, with 12 clear error
+reads. No output/setpoint/topology/enable writes occurred. See the
+[OFF baseline and mask evidence](hardware_reports/2026-10-26T004315.108014Z_H03_status_off.md).
+
+A safety defect in the H03 harness was independently reproduced offline: individual-ON
+authorization was checked after transport transmission. The check now precedes transmission.
+Mistyped operator confirmations wait for another answer without logging the rejected text.
+The diagnostic `--diagnose-status` mode is restricted to H03/CH3 and records exact status
+TX/RX bytes, short/full forms, early and post-display samples (>=5 s), and selected-channel
+dependence. It reads enable masks without modifying them. Offline regression: **64/64
+SIM TESTED**. The subsequently executed powered diagnostic is reviewed below; H03 remains **PARTIAL**.
+
+
+### H03 powered status diagnosis — 2026-10-26, completed
+
+[Diagnostic report and manufacturer clarification draft](hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md).
+Both CV/CC comparisons and display gates passed. All **274** error replies were clear.
+Direct wire capture established `OPER3=8` (`38 0a`) in both modes, while `QUES3=1/2`
+and library regulation agreed with CV/CC. Short/full commands agreed. CV snapshots at
+2.521/82.668/83.514 s and CC snapshots at 2.541/47.937/48.778 s were unchanged, including
+with CH1 selected. Both enable masks were 0; output states and final physical OFF verified.
+
+The original library mode-reading defect is corrected and physically replayed; the new
+harness authorization fix and diagnostic flow remain **64/64 SIM TESTED** for their offline
+cases. The strict operation-mode discrepancy is confirmed at the device response boundary.
+Its internal cause (firmware versus manual) is unproven; no further Python change can make
+the instrument register return different bits without masking evidence. H03 remains
+**PARTIAL**, MET-01 is **HW OBSERVED** within the reported load comparisons, and H04 is
+not started. The manufacturer question is prepared in the report and has not been sent.
+
+### H03 external implementation review — 2026-10-26
+
+[Source review](hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md#external-implementation-and-issue-review--2026-10-26):
+two official Python examples and four independent Python drivers implement no CV/CC
+status decoder. A C driver uses a questionable group event query; it does not document
+a fix for our CH3 operation-condition discrepancy. No exact matching public report or
+verified firmware correction was located in the sources inspected. No hardware access
+or additional library patch resulted; H03 remains **PARTIAL**.
+
+### CH3 workaround API — offline validated, 66/66
+
+The existing dual-condition decoder remains in use. `Reading.regulation_source`
+now identifies operation/questionable/both evidence, or None for OFF/UNKNOWN/skipped
+checks. No SCPI commands or mode conflict rules changed. Additional regressions
+cover source attribution and CH3 required-mode trip behavior. After operator approval
+`CONFIRM CH3 WORKAROUND OFFLINE`, the full offline command
+`PYTHONPATH=src python -m unittest discover -s tests -v` passed **66/66** tests
+(exit 0, unittest duration 0.289 s), without instrument access. This is **SIM TESTED**. The underlying
+QUES-based CV/CC behavior is HW OBSERVED in the existing report; the new metadata
+is not hardware verified. See [workaround and scope](../README.md#ch3-status-workaround-and-limitations).
+H03 remains PARTIAL; H04 NOT_RUN.
+
+Offline result summary: `reports/hardware/2026-10-26T014250.764487Z_CH3_workaround_offline/result.json`.
