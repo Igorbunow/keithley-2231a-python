@@ -145,7 +145,7 @@ def operator_gate(token, prompt, adapter=None):
     while True:
         try:
             read = adapter.operator_input if adapter is not None else input
-            answer = read(f'Подтверждение: {token}\n> ').strip()
+            answer = read(f'Подтверждение:\n{token}\n> ').strip()
         except (EOFError, KeyboardInterrupt):
             raise InterruptedError('operator gate interrupted')
         if answer == token: return

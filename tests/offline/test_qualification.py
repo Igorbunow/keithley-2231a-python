@@ -25,6 +25,131 @@ class TestQualification(unittest.TestCase):
         import qualification
         return qualification
 
+    def test_dmm7510_scpi_voltage_and_identity_evidence_are_isolated(self):
+        from dmm7510 import DMM7510
+
+        class MeterIO:
+            language = 'SCPI'
+            error = '0,"No error"'
+            terminal = 'FRON'
+            voltage = '1.23456789'
+            def __init__(self): self.cmds, self.closed = [], False
+            def write(self, command): self.cmds.append(command)
+            def query(self, command):
+                self.cmds.append(command)
+                return {'*IDN?': 'KEITHLEY INSTRUMENTS,MODEL DMM7510,SECRET,1.7.5',
+                        '*LANG?': self.language,
+                        ':SYST:ERR?': self.error, ':ROUT:TERM?': self.terminal,
+                        ':SENS:FUNC?': '"VOLT:DC"', ':SENS:VOLT:RANG?': '10',
+                        ':SENS:VOLT:NPLC?': '1', ':READ?': self.voltage}[command]
+            def close(self): self.closed = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H08')
+            evidence.add('read', command='*IDN?', response='Keithley,2231A-30-3,PSU,1.04-0.01')
+            io = MeterIO()
+            meter = DMM7510(io, evidence)
+            meter.configure_voltage()
+            self.assertEqual(meter.measure(), {'voltage_v': 1.23456789})
+            self.assertEqual(evidence.firmware, '1.04-0.01')
+            self.assertNotIn('SECRET', evidence.path.read_text())
+            self.assertLess(io.cmds.index('*IDN?'), io.cmds.index('*RST'))
+            self.assertEqual(io.cmds[:3], ['*IDN?', '*LANG?', ':SYST:ERR?'])
+            io.voltage = '9.9e37'
+            with self.assertRaises(ValueError): meter.measure()
+            before = list(io.cmds)
+            with self.assertRaises(RuntimeError): meter.measure()
+            self.assertEqual(io.cmds, before)
+            meter.close()
+            self.assertTrue(io.closed)
+            for fault in ('wrong_identity', 'rear', 'error', 'tsp'):
+                io = MeterIO()
+                if fault == 'tsp': io.language = 'TSP'
+                if fault == 'rear': io.terminal = 'REAR'
+                if fault == 'error': io.error = '-113,"Undefined header"'
+                if fault == 'wrong_identity':
+                    original = io.query
+                    io.query = lambda cmd: 'KEITHLEY,OTHER,SECRET,1.0' if cmd == '*IDN?' else original(cmd)
+                with self.subTest(fault=fault), self.assertRaises((ValueError, RuntimeError)):
+                    DMM7510(io, evidence).configure_voltage()
+                if fault != 'rear': self.assertNotIn('*RST', io.cmds)
+                if fault == 'tsp': self.assertEqual(io.cmds, ['*IDN?', '*LANG?'])
+
+    def test_h08_tracking_dmm_gates_timer_and_failures(self):
+        import h08_stage
+        from test_driver import FakeTransport
+
+        class Clock:
+            now = 10.0
+            def monotonic(self): return self.now
+            def sleep(self, seconds): self.now += seconds
+
+        for fault in (None, 'tracking', 'meter', 'timer', 'io', 'gate'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                clock = Clock()
+                class Source(FakeTransport):
+                    timer_start = None
+                    def write(self, command):
+                        super().write(command)
+                        if command == 'OUTP 1': self.timer_start = clock.now
+                    def query(self, command):
+                        clock.now += .002
+                        timers = [self.values[ch]['OUTP:TIM:DEL'] for ch in (1, 2)
+                                  if self.values[ch]['OUTP:TIM:STAT']]
+                        if timers and self.timer_start is not None:
+                            expiry = max(timers) if fault == 'timer' else min(timers)
+                            if clock.now - self.timer_start >= expiry:
+                                for ch in (1, 2): self.values[ch]['CHAN:OUTP'] = 0.
+                        if command == 'MEAS:CURR?':
+                            self.cmds.append(command)
+                            return '0'
+                        if command == 'MEAS:VOLT?' and not self.values[self.active_ch]['CHAN:OUTP']:
+                            self.cmds.append(command)
+                            return '0'
+                        return super().query(command)
+
+                source = Source()
+                source.tracking_fault = fault == 'tracking'
+                class Meter:
+                    channel = 1
+                    configured = False
+                    closed = False
+                    def configure_voltage(self): self.configured = True
+                    def measure(self):
+                        if fault == 'io': raise OSError('meter link lost')
+                        settings = source.values[self.channel]
+                        voltage = settings['VOLT'] if settings['CHAN:OUTP'] else 0
+                        return {'voltage_v': voltage + (.2 if fault == 'meter' else 0)}
+                    def close(self): self.closed = True
+
+                meter = Meter()
+                answers = []
+                def operator(prompt):
+                    if fault == 'gate': raise KeyboardInterrupt()
+                    token = next(line for line in prompt.splitlines() if line.startswith('CONFIRM '))
+                    answers.append(token)
+                    if 'MOVE CH1->CH2' in token: meter.channel = 2
+                    return token
+                evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H08')
+                with patch('builtins.input', side_effect=operator), \
+                        patch('time.monotonic', clock.monotonic), patch('time.sleep', clock.sleep), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    result = h08_stage.h08(source, evidence, meter)
+                self.assertEqual(result, 'PASS' if fault is None else
+                                 'ABORTED' if fault in ('io', 'gate') else 'FAIL',
+                                 evidence.path.read_text()[-1500:])
+                self.assertTrue(all(not values['CHAN:OUTP'] for values in source.values.values()))
+                self.assertTrue(source.closed and meter.closed)
+                self.assert_driver_path(evidence, source)
+                records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+                if fault is None:
+                    self.assertEqual(len([r for r in records if r['event'] == 'tracking_measurement']), 12)
+                    self.assertEqual(len([r for r in records if r['event'] == 'tracking_timer_expiry']), 4)
+                    self.assertEqual(len([r for r in records if r['event'] == 'tracking_zero_observation']), 4)
+                    self.assertEqual(len([r for r in records if r['event'] == 'tracking_independent_ratio']), 6)
+                    self.assertTrue(any('MOVE CH1->CH2' in a for a in answers))
+                    self.assertTrue(any('DISCONNECT CH2' in a for a in answers))
+
     def test_adapter_confirmation_must_match_selected_serial_port(self):
         q = self.module()
 
@@ -55,8 +180,10 @@ class TestQualification(unittest.TestCase):
                      ['preflight', 'H06'], ['run', 'H06'],
                      ['preflight', 'H06', '--recall'], ['run', 'H06', '--recall'],
                      ['preflight', 'H07'], ['run', 'H07'],
+                     ['preflight', 'H08'], ['run', 'H08'],
                      ['run', 'H09'], ['abort'], ['report']):
-            with self.subTest(args=args), patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
+            with self.subTest(args=args), patch.object(q, 'open_transport', side_effect=AssertionError('port opened')), \
+                    patch.object(q, 'open_meter', side_effect=AssertionError('meter opened')):
                 with contextlib.redirect_stdout(io.StringIO()):
                     q.main(args)
 

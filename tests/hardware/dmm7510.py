@@ -1,0 +1,99 @@
+"""External voltage-meter adapter for manual qualification, not the PSU protocol.
+
+@file dmm7510.py
+@author Project contributors
+@date 2026-10-27
+@version 0.2.0
+@brief Implement Meter.measure() with documented DMM7510 SCPI transactions.
+@details Caller owns the explicit TCP connection and operator wiring gates.
+"""
+from __future__ import annotations
+
+import math
+
+
+class DMM7510:
+    """Single-owner DC voltage adapter; no reconnect or command-language fallback.
+
+    Reference: DMM7510-900-01D, section 5; DMM7510-901-01B, LAN interfaces.
+    SCPI command set and front terminals must be selected by the operator.
+    Transport uses raw TCP port 5025, LF termination and an explicit timeout.
+    """
+    def __init__(self, transport, evidence):
+        self.transport, self.evidence = transport, evidence
+        self.live, self.configured = True, False
+        self._scpi_ready = False
+
+    def _check_error(self, context):
+        error = self._transfer(':SYST:ERR?', query=True)
+        code, message = error.split(',', 1)
+        if int(code) != 0 or not message.strip():
+            raise RuntimeError(f'DMM7510 error after {context}: {error}')
+
+    def _transfer(self, command, *, query):
+        if not self.live: raise RuntimeError('DMM7510 session failed; no retry')
+        if not self._scpi_ready and command not in ('*IDN?', '*LANG?'):
+            raise RuntimeError('Verify DMM7510 SCPI command set before sending SCPI')
+        self.evidence.add('dmm7510_query' if query else 'dmm7510_write', command=command)
+        try:
+            answer = self.transport.query(command) if query else self.transport.write(command)
+            if query:
+                self.evidence.add('dmm7510_read', command=command, response=answer,
+                                  units='V' if command == ':READ?' else None)
+            if self._scpi_ready and command != ':SYST:ERR?':
+                self._check_error(command)
+            return answer
+        except BaseException:
+            self.live, self.configured = False, False
+            raise
+
+    def configure_voltage(self):
+        """Identify before resetting; set and verify a deterministic 10 V DC range."""
+        try:
+            identity = self._transfer('*IDN?', query=True)
+            parts = [part.strip() for part in identity.split(',')]
+            if (len(parts) != 4 or 'KEITHLEY' not in parts[0].upper()
+                    or parts[1].upper() not in ('MODEL DMM7510', 'DMM7510')):
+                raise ValueError('Unexpected DMM7510 identity')
+            # Both common queries work in TSP. No language-specific error query
+            # is safe until the documented command-set query confirms SCPI.
+            language = self._transfer('*LANG?', query=True).strip().strip('"').upper()
+            self.evidence.add('dmm7510_command_set', language=language)
+            if language != 'SCPI':
+                raise ValueError(f'DMM7510 command set is {language}; select SCPI and reboot')
+            self._scpi_ready = True
+            self._check_error('SCPI command-set verification')
+            if self._transfer(':ROUT:TERM?', query=True).strip().upper() not in ('FRON', 'FRONT'):
+                raise ValueError('Select DMM7510 front terminals before H08')
+            for command in ('*RST', ':SENS:FUNC "VOLT:DC"', ':SENS:VOLT:RANG 10',
+                            ':SENS:VOLT:INP AUTO', ':SENS:VOLT:NPLC 1',
+                            ':SENS:VOLT:AZER ON', ':SENS:VOLT:AVER OFF'):
+                self._transfer(command, query=False)
+            if (self._transfer(':SENS:FUNC?', query=True).strip().strip('"') != 'VOLT:DC'
+                    or float(self._transfer(':SENS:VOLT:RANG?', query=True)) != 10
+                    or float(self._transfer(':SENS:VOLT:NPLC?', query=True)) != 1):
+                raise ValueError('DMM7510 DC voltage configuration readback mismatch')
+            self.evidence.add('dmm7510_configuration', firmware=parts[3],
+                              function='DC voltage', range_v=10, nplc=1,
+                              terminals='front', outcome='PASS')
+            self.configured = True
+        except BaseException:
+            self.live, self.configured = False, False
+            raise
+
+    def measure(self):
+        """Trigger a fresh reading, rejecting nonfinite/overrange/multivalue replies."""
+        if not self.live or not self.configured:
+            raise RuntimeError('DMM7510 voltage session is not ready')
+        try:
+            value = float(self._transfer(':READ?', query=True))
+            if not math.isfinite(value) or abs(value) > 10:
+                raise ValueError('Invalid/overrange DMM7510 voltage')
+            return {'voltage_v': value}
+        except BaseException:
+            self.live, self.configured = False, False
+            raise
+
+    def close(self):
+        self.live, self.configured = False, False
+        self.transport.close()

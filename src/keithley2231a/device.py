@@ -500,7 +500,8 @@ class Keithley2231A:
             if self._profile.access == 'power_only':
                 raise SafetyError('power_only: voltage/current setpoints are frozen')
             if self._profile.wiring != 'independent':
-                raise SafetyError('CH1/CH2 combined or tracked: setpoints frozen; reapply profile with outputs OFF')
+                raise SafetyError('Use set_tracking_voltage() for tracking voltage; '
+                                  'other combined setpoint changes require a fresh profile at OFF')
             spec = self._profile.channels[ch - 1]
             for val, cap, label, step in ((voltage, spec.max_voltage, 'voltage', .01),
                                           (current, spec.max_current, 'current', .001)):
@@ -528,6 +529,43 @@ class Keithley2231A:
                 self._expected_setpoints[ch] = expected
             except Exception as exc:
                 self._trip(f'Setting CH{ch} failed: {exc}')
+
+    def set_tracking_voltage(self, ch: int, voltage: float) -> None:
+        """Adjust CH1 or CH2, preserving the profile's initial voltage ratio.
+
+        Both resulting setpoints must fit their caps and 10 mV resolution.
+        Zero is rejected because it suppresses tracking (manual section 3-7).
+        Current limits remain fixed. Reapply a profile with outputs OFF to change
+        the ratio. Physical tracking behavior requires H08 hardware qualification.
+        """
+        with self._lock:
+            self._require_ready()
+            if self._profile.wiring != 'tracking' or type(ch) is not int or ch not in (1, 2):
+                raise SafetyError('Tracking voltage requires CH1/CH2 in tracking mode')
+            if (not isinstance(voltage, (int, float)) or isinstance(voltage, bool)
+                    or not math.isfinite(voltage) or voltage <= 0):
+                raise LimitsError('Tracking voltage must be finite and greater than zero')
+            scale = voltage / self._profile.channels[ch - 1].initial_voltage
+            expected = {}
+            for channel in (1, 2):
+                spec = self._profile.channels[channel - 1]
+                value = spec.initial_voltage * scale
+                if (not math.isfinite(value) or value > spec.max_voltage + 1e-9
+                        or value < .01 or abs(value * 100 - round(value * 100)) > 1e-6):
+                    raise LimitsError(f'CH{channel}: linked voltage exceeds cap or 0.01 V resolution')
+                expected[channel] = (round(value, 2), self._expected_setpoints[channel][1])
+            self.verify_profile()
+            try:
+                self._select(ch)
+                self._write(f'VOLT {voltage:.2f}')
+                for channel in (1, 2):
+                    self._check_setpoints(channel, self._profile.channels[channel - 1],
+                                          expected[channel])
+                self._check_setpoints(3, self._profile.channels[2])
+                self._check_wiring_mode()
+                self._expected_setpoints.update(expected)
+            except Exception as exc:
+                self._trip(f'Tracking voltage operation failed: {exc}')
 
     def output(self, ch: int, enabled: bool) -> None:
         if type(enabled) is not bool: raise ValueError('enabled must be bool')
@@ -638,28 +676,59 @@ class Keithley2231A:
             finally:
                 self._sequencing = False
 
+    @staticmethod
+    def _validate_timer(seconds):
+        if seconds is not None and (
+                not isinstance(seconds, (int, float)) or isinstance(seconds, bool)
+                or not math.isfinite(seconds) or not 0.1 <= seconds <= 99999.9
+                or abs(seconds * 10 - round(seconds * 10)) > 1e-6):
+            raise ValueError('timer range 0.1..99999.9 seconds, resolution 0.1 s')
+
+    def _configure_timer(self, channel, seconds):
+        """Shared timer transaction; caller holds the lock and validates policy."""
+        self._select(channel)
+        if seconds is None:
+            self._write('OUTP:TIM:STAT 0')
+        else:
+            self._write(f'OUTP:TIM:DEL {seconds:.1f}')
+            if abs(self._num('OUTP:TIM:DEL?') - seconds) > .049:
+                raise SafetyError('timer delay readback mismatch')
+            self._write('OUTP:TIM:STAT 1')
+        if self._bool(self._query('OUTP:TIM:STAT?')) != (seconds is not None):
+            raise SafetyError('timer state readback mismatch')
+
+    def tracking_timers(self, ch1_seconds: float | None, ch2_seconds: float | None):
+        """Configure both tracking timers at OFF; None disables that timer.
+
+        With both enabled the instrument uses the shorter duration (manual 3-7).
+        Configuring the pair is sequential, not atomic; failure trips all OFF.
+        Actual expiry behavior remains subject to hardware qualification.
+        """
+        with self._lock:
+            self._require_ready()
+            if self._profile.wiring != 'tracking':
+                raise SafetyError('tracking_timers requires a tracking profile')
+            for seconds in (ch1_seconds, ch2_seconds): self._validate_timer(seconds)
+            self.verify_profile()
+            if any(self._output_states().values()):
+                raise SafetyError('Configure tracking timers only with all outputs OFF')
+            try:
+                for channel, seconds in ((1, ch1_seconds), (2, ch2_seconds)):
+                    self._configure_timer(channel, seconds)
+            except Exception as exc: self._trip(f'Tracking timer configuration failed: {exc}')
+
     def timer(self, channel: int, seconds: float | None):
         """Configure channel's PSU OFF timer; triggering depends on PSU output activation."""
         with self._lock:
             self._require_ready(); self._check_channel(channel)
             if self._profile.access == 'power_only':
                 raise SafetyError('power_only: timer settings are frozen')
-            if seconds is not None and (not math.isfinite(seconds) or not 0.1 <= seconds <= 99999.9):
-                raise ValueError('timer range 0.1..99999.9 seconds')
+            self._validate_timer(seconds)
             if self._profile.wiring == 'tracking' and channel in (1,2):
-                raise SafetyError('Tracking channel timer is coupled; do not configure separately')
+                raise SafetyError('Use tracking_timers() at OFF to configure the coupled timer pair')
             try:
                 self.verify_profile()
-                self._select(channel)
-                if seconds is None:
-                    self._write('OUTP:TIM:STAT 0')
-                else:
-                    self._write(f'OUTP:TIM:DEL {seconds:.1f}')
-                    if abs(self._num('OUTP:TIM:DEL?') - seconds) > .11:
-                        raise SafetyError('timer delay readback mismatch')
-                    self._write('OUTP:TIM:STAT 1')
-                if self._bool(self._query('OUTP:TIM:STAT?')) != (seconds is not None):
-                    raise SafetyError('timer state readback mismatch')
+                self._configure_timer(channel, seconds)
             except Exception as exc: self._trip(f'Timer configuration failed: {exc}')
 
     def read_channel(self, ch: int, *, with_regulation: bool = True) -> Reading:

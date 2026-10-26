@@ -94,9 +94,10 @@ class Evidence:
                 and not event.startswith('kel103_')):
             parts = fields['response'].split(',')
             if len(parts) == 4:
-                self.firmware = parts[3].strip()
-                if self.firmware not in self.firmware_observations:
-                    self.firmware_observations.append(self.firmware)
+                if not event.startswith('dmm7510_'):
+                    self.firmware = parts[3].strip()
+                    if self.firmware not in self.firmware_observations:
+                        self.firmware_observations.append(self.firmware)
                 parts[2] = ' [REDACTED]'
                 fields['response'] = ','.join(parts)
             else:
@@ -115,6 +116,13 @@ def open_transport(port):
     """Only call after the specific interactive operator gate."""
     from keithley2231a import SerialTransport
     return SerialTransport(port, baudrate=9600, timeout=2.0)
+
+
+def open_meter(host, evidence):
+    """Construct the explicit raw-socket DMM adapter only after the H08 gate."""
+    from dmm7510 import DMM7510
+    from keithley2231a import TcpTransport
+    return DMM7510(TcpTransport(host, 5025, timeout=5.0, terminator=b'\n'), evidence)
 
 
 def verify_serial_adapter(port, adapter, available_ports=None):
@@ -141,7 +149,7 @@ def verify_serial_adapter(port, adapter, available_ports=None):
 
 def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_channel=1,
               load_transport='udp', load_serial_port='/dev/ttyACM0', diagnose_status=False,
-              load_connected=False, recall=False):
+              load_connected=False, recall=False, meter_host='192.168.22.112'):
     """Print a human-readable card; never contact hardware."""
     if test_id == 'H06' and recall:
         from h06_recall import preflight as recall_preflight
@@ -150,6 +158,10 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         return
     row = stages()[test_id]
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
+    if test_id == 'H08':
+        from h08_stage import preflight as h08_preflight
+        h08_preflight(port, meter_host)
+        return
     if test_id == 'H07':
         from h07_stage import approval_token
         print(f'Keithley: {port}, USB–TTL 9600 8N1; KEL103 USB '
@@ -594,6 +606,7 @@ def main(argv=None):
     parser.add_argument('command', choices=('list', 'preflight', 'run', 'report', 'abort'))
     parser.add_argument('test_id', nargs='?', choices=tuple(stages()))
     parser.add_argument('--port', default='/dev/ttyUSB1')
+    parser.add_argument('--meter-host', default='192.168.22.112', help='H08 DMM7510 raw TCP port 5025')
     parser.add_argument('--load-host', default='192.168.22.106')
     parser.add_argument('--load-port', type=int, default=18190)
     parser.add_argument('--load-transport', choices=('udp', 'serial'), default='udp',
@@ -634,7 +647,7 @@ def main(argv=None):
     if args.test_id is None: parser.error('preflight/run requires one test ID')
     preflight(args.test_id, args.port, args.load_host, args.load_port,
               args.start_channel, args.load_transport, args.load_serial_port,
-              args.diagnose_status, args.load_connected, args.recall)
+              args.diagnose_status, args.load_connected, args.recall, args.meter_host)
     if args.test_id == 'H03' and args.start_channel > 1:
         if args.prior_evidence is None:
             parser.error('--prior-evidence is required when resuming H03; repeat for each prior channel log')
@@ -645,7 +658,7 @@ def main(argv=None):
     if args.command == 'preflight' or not args.execute:
         print('DRY RUN: порт не открыт, SCPI не отправлены.')
         return 0
-    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07'):
+    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
     if args.test_id in ('H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07') and not stage_passed(stages()['H01'][-1]):
@@ -667,6 +680,13 @@ def main(argv=None):
         print('BLOCKED: требуется рассмотренный PASS H06; порт не открыт.')
         return 2
     token, final_token, runner = TOKEN, FINAL_TOKEN, h01
+    if args.test_id == 'H08':
+        required = ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07')
+        if any(not stage_passed(stages()[stage][-1]) for stage in required):
+            print('BLOCKED: H08 requires reviewed PASS H01–H07 including H04P; ports not opened.')
+            return 2
+        from h08_stage import approval_token, FINAL_TOKEN as final_token, h08
+        token, runner = approval_token(args.meter_host), h08
     if args.test_id == 'H02':
         from profile_stage import TOKEN as token, FINAL_TOKEN as final_token, h02
         runner = h02
@@ -726,7 +746,7 @@ def main(argv=None):
         except (ImportError, OSError, ValueError) as exc:
             print(f'BLOCKED: {exc}; последовательный порт не открыт.')
             return 2
-        while input(f'Подтверждение: {token}\n> ').strip() != token:
+        while input(f'Подтверждение:\n{token}\n> ').strip() != token:
             print('Подтверждение не распознано; ожидаю повторный ввод. Для остановки — Ctrl-C.')
     except (EOFError, KeyboardInterrupt):
         print('ABORTED до открытия порта.')
@@ -735,7 +755,9 @@ def main(argv=None):
     evidence = Evidence(ROOT / f'reports/hardware/{now}_{args.test_id}/events.jsonl', args.test_id)
     evidence.add('metadata', **software_metadata(), port=args.port, baud=9600, framing='8N1',
                  adapter=adapter,
-                 topology=('independent; CH1/CH2/CH3 negative terminals tied to scope common'
+                 topology=('tracking CH1/CH2; DMM on one channel at a time; no jumpers; CH3 disconnected'
+                           if args.test_id == 'H08' else
+                           'independent; CH1/CH2/CH3 negative terminals tied to scope common'
                            if args.test_id == 'H05' else 'independent; no jumpers; no DUT'),
                  subgroup='output_recall' if args.recall else None,
                  load=('disconnected; KEL103 INPUT OFF; scope disconnected; no jumpers'
@@ -746,7 +768,10 @@ def main(argv=None):
                        '115200 8N1; USB link previously HW OBSERVED on H03; input OFF'
                        if args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07')
                        else 'disconnected; input OFF'),
-                 proposed_caps=('unchanged; initial unknown' if args.test_id == 'H01' else
+                 proposed_caps=('H08 V-cap 2/3/4 V, I-cap 0.300/0.400/0.500 A; '
+                                'I-set 0.100/0.200/0.300 A; CH1 1..1.4 V, CH2 1..2.8 V, CH3 0.5 V'
+                                if args.test_id == 'H08' else
+                                'unchanged; initial unknown' if args.test_id == 'H01' else
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; '
                                 'initial 4.00 V / 0.500 A' if args.test_id == 'H03' else
                                 'H04: unrestricted caps 30/30/5 V, 3 A; setpoints 0 V / 0.100 A; '
@@ -771,7 +796,9 @@ def main(argv=None):
                                 'only CH1 ON, CR40; 180 s acquisition with one 12 s sampling pause'
                                 if args.test_id == 'H07' else
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
-                 independent_meter=None)
+                 independent_meter=({'model': 'DMM7510', 'host': args.meter_host, 'port': 5025,
+                                     'function': 'DCV 10 V, NPLC 1, front terminals'}
+                                    if args.test_id == 'H08' else None))
     evidence.add('approval', token=token)
     if args.diagnose_status:
         evidence.add('diagnostic_scope', channel=3, wire_trace='status commands only',
@@ -781,8 +808,9 @@ def main(argv=None):
     if args.test_id == 'H03' and args.start_channel > 1:
         evidence.add('resume_from', start_channel=args.start_channel,
                      prior_evidence=[path.name for path in args.prior_evidence])
-    load = None
+    load, meter, transport = None, None, None
     try:
+        if args.test_id == 'H08': meter = open_meter(args.meter_host, evidence)
         if args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07') and not args.recall:
             from channel_stage import KEL103Serial, KEL103UDP
             load = (KEL103UDP(args.load_host, args.load_port, evidence=evidence)
@@ -790,9 +818,10 @@ def main(argv=None):
                     KEL103Serial(args.load_serial_port, evidence=evidence))
         transport = open_transport(args.port)
     except Exception:
-        if load is not None:
-            try: load.close()
-            except Exception: pass
+        for instrument in (load, meter, transport):
+            if instrument is not None:
+                try: instrument.close()
+                except Exception: pass
         evidence.add('outcome', outcome='ABORTED', stop_reason='port open failed; verify OFF manually')
         print(f'ABORTED: порт не открыт; проверить OFF вручную. Evidence: {evidence.path}')
         return 2
@@ -801,7 +830,8 @@ def main(argv=None):
         verify_serial_adapter(args.port, adapter)
         return open_transport(args.port)
 
-    outcome = (runner(transport, evidence, reopen_recall_transport) if args.recall else
+    outcome = (runner(transport, evidence, meter) if args.test_id == 'H08' else
+               runner(transport, evidence, reopen_recall_transport) if args.recall else
                runner(transport, evidence, load, args.start_channel,
                       diagnose_status=args.diagnose_status,
                       load_connected=args.load_connected)
@@ -810,7 +840,7 @@ def main(argv=None):
                runner(transport, evidence))
     physical_off = False
     try:
-        while input(f'После ручной проверки введите {final_token}: ').strip() != final_token:
+        while input(f'После ручной проверки введите:\n{final_token}\n> ').strip() != final_token:
             print('Подтверждение OFF не распознано; ожидаю повторный ввод. Для остановки — Ctrl-C.')
         physical_off = True
     except (EOFError, KeyboardInterrupt): pass

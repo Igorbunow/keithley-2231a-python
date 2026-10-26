@@ -41,7 +41,7 @@ and [hardware evidence](hardware_reports/2026-10-26T201550.519080Z_H06_qualifica
 | OUT-02 | Per-channel timers, remote-on expiry, re-enable and Output Recall | **SIM TESTED (H06 runner; shared driver path)** | **PASS (HW OBSERVED)** — timer expiry/re-enable on CH1–CH3 and four Recall power cycles | 3.0 s timer expiry: CH1 3.051 s, CH2 3.063 s, CH3 3.056 s; each timer-disabled re-enable held 0.5 s. Recall OFF `111→000`; Recall ON `101→101`, `010→010`, `000→000`. 970 clean error-queue replies; final all-off confirmed and Recall OFF restored. [Recall evidence](hardware_reports/2026-10-26T201550.519080Z_H06_qualification.md) · [timer results](hardware_reports/2026-10-26T195235.744227Z_H06_qualification.md) · [first aborted attempt](hardware_reports/2026-10-26T193545.109045Z_H06_qualification.md) |
 | OUT-03 | Series combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
 | OUT-04 | Parallel combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
-| OUT-05 | Tracking and ratio/timer behavior | SIM TESTED (basic) | **HW UNVERIFIED** | real tracking readback and timed output |
+| OUT-05 | Tracking and ratio/timer behavior | SIM TESTED (guarded linked voltages, paired timers, DMM7510 runner, failure shutdown) | **PASS (HW OBSERVED; bounded H08 scope)** | 1:1 and 1:2 on CH1/CH2; 12 DMM points and six computed ratios passed; four paired-timer expiries followed the shorter 3 s setting; 3,404 clean PSU error replies; zero diagnostics were OFF-only; [H08 report](hardware_reports/2026-10-26T213656.668407Z_H08_qualification.md) |
 | MET-01 | Read voltage/current/status and inferred CV/CC | SIM TESTED | **HW OBSERVED PASS (current H03; CH3 OPER caveat)** | Six KEL103 comparisons; CH3 OPER stays 8 while QUES distinguishes CV/CC; calibrated DMM accuracy unverified; [H03 report](hardware_reports/2026-10-26T174052.170220Z_H03_qualification.md) |
 | MET-02 | CSV, min/max/mean/stddev, Ah/Wh arithmetic | SIM TESTED (H07 runner: CSV recomputation, real-clock gap model, resets, stop deadline and mismatch shutdown) | **HW OBSERVED PASS (H07; 180 s, 44 samples/channel; one gap/channel excluded from integration; independent CSV statistics/Ah/Wh recomputation and both resets passed; 2,035 clean error-queue replies; final OFF confirmed)** | [passing report](hardware_reports/2026-10-26T205248.277386Z_H07_qualification.md); [first stopped attempt](hardware_reports/2026-10-26T204422.181415Z_H07_qualification.md) |
 | IV-01 | Single-channel voltage sweep + external sample callback | SIM TESTED | **HW UNVERIFIED** | resistor/diode test with series protection |
@@ -82,7 +82,7 @@ were ambiguous. H03 current-runner requalification passed six CV/CC points with 
 initial V/I values and per-channel caps; the runner sets the shared 4.00 V test point only
 with outputs OFF. CH3 retains an OPER status caveat; see the current report. KEL103 USB
 serial control was exercised on hardware in H03; UDP control was separately exercised on
-CH2. H04 is reviewed **PASS for OFF-only scope on the current runner**; the first attempt stopped because the manual panel protection values were still 4 V on all channels, then the corrected attempt passed. H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05 is reviewed **PASS for its bounded power-sequence scope (HW OBSERVED)**; see the report for exact readings and the measurement definition. H06 is reviewed **PASS for timer and Output Recall scopes (HW OBSERVED)**. H07 is reviewed **PASS (HW OBSERVED)** for bounded monitoring and CSV arithmetic; remaining H08–H12/O01/O02 await individual review.
+CH2. H04 is reviewed **PASS for OFF-only scope on the current runner**; the first attempt stopped because the manual panel protection values were still 4 V on all channels, then the corrected attempt passed. H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05 is reviewed **PASS for its bounded power-sequence scope (HW OBSERVED)**; see the report for exact readings and the measurement definition. H06 is reviewed **PASS for timer and Output Recall scopes (HW OBSERVED)**. H07 is reviewed **PASS (HW OBSERVED)** for bounded monitoring and CSV arithmetic. H08 is reviewed **PASS (HW OBSERVED)** for 1:1/1:2 tracking, linked setpoint changes, paired timers and OFF-only zero diagnostics. H09–H12/O01/O02 await individual review.
 
 H04 runner preparation is **SIM TESTED**, not hardware verified. The approved offline
 suite `PYTHONPATH=src python -m unittest discover -s tests -v` passed **68/68** after
@@ -98,7 +98,10 @@ readbacks, unexpected ON detection, per-channel OFF checks, inherited timer
 disable, strict identity/boolean inputs, and transport failure latching.
 Series/parallel enabling is temporarily refused pending combined-setpoint
 qualification; combined readings expose unknown setpoints as `None`. Tracking
-setpoint changes remain unavailable. No lock readback command is documented;
+voltage changes use `set_tracking_voltage(ch, voltage)` with checks on both linked
+channels; zero, unrepresentable ratios and individual tracked-channel timers are
+refused. Paired `tracking_timers()` uses the same timer transaction as `timer()`
+and requires all outputs OFF. These APIs are SIM TESTED and HW OBSERVED within H08’s tested scope. No lock readback command is documented;
 external panel unlock cannot be claimed detectable. `VOLT:LIM` is a maximum
 settable voltage, not independent measured-voltage OVP. Timer start on remote ON,
 combined readbacks and all electrical behavior remain HW UNVERIFIED.
@@ -131,7 +134,7 @@ first attempt failed its manual panel clamp check: CH1 `VOLT?` returned `1.00 V`
 The corrected attempt explicitly set the panel limits per channel and passed all OFF-only
 checks; see the [current H04 report](hardware_reports/2026-10-26T182004.069364Z_H04_qualification.md)
 and [first failed attempt](hardware_reports/2026-10-26T180828.280308Z_H04_qualification.md).
-H04-Powered and H05 have completed separately; H06 is reviewed PASS for timer and Output Recall. H07 is reviewed PASS (HW OBSERVED) for bounded monitoring and CSV arithmetic; H08–H12/O01/O02 remain pending review/approval.
+H04-Powered and H05 have completed separately; H06 is reviewed PASS for timer and Output Recall. H07 is reviewed PASS (HW OBSERVED) for bounded monitoring and CSV arithmetic. H08 is reviewed PASS (HW OBSERVED) within its tested tracking scope; H09–H12/O01/O02 remain pending review/approval.
 
 ## H04-Powered reviewed disposition — current-runner replay, 2026-10-26
 
@@ -458,3 +461,27 @@ is reviewed PASS with that telemetry caveat. A preceding 15:40 run initially rec
 voltage mismatch, then the operator clarified the load was physically disconnected; it
 is an unloaded scenario and excluded from connected-load qualification. See the
 [correction addendum](hardware_reports/2026-10-26T154020.641252Z_H03_qualification.md).
+
+
+## H08 result — 2026-10-27
+
+The guarded tracking APIs and [H08 runner](H08_PREFLIGHT.ru.md) are **SIM TESTED**;
+H08 is **PASS (HW OBSERVED for the bounded qualification scope)**. The external
+DMM7510 adapter implements `Meter.measure()` outside the PSU driver over SCPI/raw
+TCP 5025, using front voltage terminals, DCV 10 V, NPLC=1 and fresh readings.
+
+The first attempt stopped before output ON because the DMM was in TSP mode. The
+adapter had queried SCPI `:SYST:ERR?` without checking command language, resulting
+in the reported −285 TSP syntax error. It now checks documented `*LANG?` before
+SCPI-only queries and stops on TSP without fallback or automatic mode changes.
+The first attempt is retained as an [aborted report](hardware_reports/2026-10-26T213208.734572Z_H08_qualification.md).
+
+The corrected run recorded six DMM points at each physical position (12 total); all
+six computed 1:1/1:2 ratios passed. Four paired timer trials observed both outputs
+OFF 3.345–3.854 s after the host completed the output-on write, consistent with the
+shorter configured 3 s timer. DMM readings after expiry were 0.069–0.095 V. Four
+zero-setpoint diagnostics ran only with outputs OFF. All 3,404 PSU error-queue
+replies were `0, "No error"`; final physical OFF was confirmed. PSU `*IDN?` firmware
+fields varied between `1.04-0.01` and `1.04-1.04`; no firmware pin was added. DMM7510
+reported firmware 1.7.18a. Host polling is not physical edge timing, and this test
+does not certify DMM calibration. See the [successful report](hardware_reports/2026-10-26T213656.668407Z_H08_qualification.md).

@@ -18,6 +18,8 @@ class FakeTransport:
         self.questionable_status_masks = {ch: 0 for ch in (1, 2, 3)}
         self.failed_query = None
         self.closed = False
+        self.tracking_ratio = None
+        self.tracking_fault = False
 
     def write(self, cmd):
         self.cmds.append(cmd)
@@ -33,9 +35,19 @@ class FakeTransport:
         key = arg[0].upper()
         if key == 'INST:NSEL': self.active_ch = int(arg[1]); return
         if key in self.values[self.active_ch]:
-            self.values[self.active_ch][key] = float(arg[1]); return
+            value = float(arg[1])
+            self.values[self.active_ch][key] = value
+            if (key == 'VOLT' and value and self.active_ch in (1, 2)
+                    and self.flags['OUTP:TRAC'] and self.tracking_ratio is not None
+                    and not self.tracking_fault):
+                self.values[3 - self.active_ch]['VOLT'] = (
+                    value * self.tracking_ratio if self.active_ch == 1 else value / self.tracking_ratio)
+            return
         if key in self.flags:
             self.flags[key] = float(arg[1])
+            if key == 'OUTP:TRAC' and float(arg[1]):
+                v1, v2 = (self.values[ch]['VOLT'] for ch in (1, 2))
+                self.tracking_ratio = v2 / v1 if v1 and v2 else None
             if key == 'OUTP:STAT:ALL':
                 for ch in self.values: self.values[ch]['CHAN:OUTP'] = float(arg[1])
             return
@@ -389,6 +401,44 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(self.fake.values[2]['OUTP:TIM:DEL'],2.2)
         self.dev.timer(2, None)
 
+    def test_tracking_timers_require_off_validate_both_and_read_back(self):
+        before = list(self.fake.cmds)
+        with self.assertRaises(SafetyError): self.dev.tracking_timers(3, 5)
+        self.assertEqual(self.fake.cmds, before)
+        self.dev.emergency_off()
+        self.dev.apply_profile(profile('tracking'))
+        for pair in ((3, float('nan')), (3, .01), (True, 5), (3, 5.01)):
+            before = list(self.fake.cmds)
+            with self.assertRaises(ValueError): self.dev.tracking_timers(*pair)
+            self.assertEqual(self.fake.cmds, before)
+        self.dev.tracking_timers(3, 5)
+        for ch, delay in ((1, 3), (2, 5)):
+            self.assertEqual(self.fake.values[ch]['OUTP:TIM:DEL'], delay)
+            self.assertEqual(self.fake.values[ch]['OUTP:TIM:STAT'], 1)
+        self.dev.combined_outputs(True, confirm_all_channels_safe=True)
+        before = list(self.fake.cmds)
+        with self.assertRaises(SafetyError): self.dev.tracking_timers(None, None)
+        self.assertFalse(any(cmd.startswith('OUTP:TIM:') and not cmd.endswith('?')
+                             for cmd in self.fake.cmds[len(before):]))
+        self.dev.combined_outputs(False)
+        self.dev.tracking_timers(None, None)
+        self.assertEqual(self.fake.values[1]['OUTP:TIM:STAT'], 0)
+        self.assertEqual(self.fake.values[2]['OUTP:TIM:STAT'], 0)
+        self.fake.failed_query = 'OUTP:TIM:DEL?'
+        with self.assertRaises(SafetyError): self.dev.tracking_timers(3, 5)
+        self.assertFalse(self.dev.armed)
+        self.assertTrue(self.dev.faulted)
+        class WrongTimerReadback(FakeTransport):
+            def query(self, command):
+                result = super().query(command)
+                return str(float(result) + .1) if command == 'OUTP:TIM:DEL?' else result
+        source = WrongTimerReadback()
+        dev = Keithley2231A(source)
+        dev.apply_profile(profile('tracking'))
+        with self.assertRaises(SafetyError): dev.tracking_timers(3, 5)
+        self.assertFalse(dev.armed)
+        self.assertTrue(all(not values['CHAN:OUTP'] for values in source.values.values()))
+
     def test_emergency_off_enters_remote_before_output_command(self):
         before = len(self.fake.cmds)
         self.dev.emergency_off()
@@ -409,13 +459,40 @@ class TestDevice(unittest.TestCase):
         self.assertFalse(self.dev.armed)
         self.assertIn('OUTP 0', self.fake.cmds)
 
-    def test_tracking_requires_fresh_profile(self):
+    def test_tracking_requires_explicit_voltage_and_output_apis(self):
         self.dev.emergency_off()
         self.dev.apply_profile(profile('tracking'))
         self.assertTrue(self.fake.flags['OUTP:TRAC'])
         with self.assertRaises(SafetyError): self.dev.set_channel(1, voltage=2)
         self.dev.combined_outputs(True, confirm_all_channels_safe=True)
         self.assertTrue(self.fake.flags['OUTP:STAT:ALL'])
+
+    def test_tracking_voltage_checks_both_channels_and_preserves_ratio(self):
+        for ratio in (1, 2):
+            with self.subTest(ratio=ratio):
+                fake = FakeTransport()
+                dev = Keithley2231A(fake)
+                dev.apply_profile(Profile('tracking', (
+                    ChannelProfile(2, .3, 1, .1),
+                    ChannelProfile(3, .4, ratio, .2),
+                    ChannelProfile(4, .5, .5, .3)), wiring='tracking'))
+                dev.set_tracking_voltage(1, 1.2)
+                self.assertAlmostEqual(fake.values[2]['VOLT'], 1.2 * ratio)
+                dev.set_tracking_voltage(2, ratio)
+                dev.verify_profile()
+                self.assertAlmostEqual(fake.values[1]['VOLT'], 1)
+                # CH1 is within its own cap; the linked CH2 is outside its cap.
+                for ch, value in ((1, 1.6 if ratio == 2 else 2.01),
+                                  (1, 0), (1, float('nan')), (1, .001), (3, 1),
+                                  (2, .01 if ratio == 2 else 3.01)):
+                    before = list(fake.cmds)
+                    with self.assertRaises((LimitsError, SafetyError)):
+                        dev.set_tracking_voltage(ch, value)
+                    self.assertEqual(fake.cmds, before)
+                fake.tracking_fault = True
+                with self.assertRaises(SafetyError): dev.set_tracking_voltage(1, 1.2)
+                self.assertFalse(dev.armed)
+                self.assertIn('OUTP 0', fake.cmds)
 
     def test_combined_physical_wiring_confirmation(self):
         self.dev.emergency_off()

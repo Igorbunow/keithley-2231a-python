@@ -1,4 +1,4 @@
-"""One SCPI command per newline. TCP is a raw transparent UART tunnel, NOT VISA."""
+"""One SCPI command per newline over serial or raw TCP, without VISA negotiation."""
 from __future__ import annotations
 import socket
 import os
@@ -74,10 +74,11 @@ class SerialTransport:
         self._serial.close()
 
 class TcpTransport:
-    """Raw TCP-to-UART bridge; no commands/authentication/control negotiation.
+    """Line-oriented raw TCP endpoint or transparent UART bridge; no negotiation.
 
-    MCU must forward bytes transparently, enforce ONE client, and ideally watchdog
+    A UART bridge must forward bytes transparently, enforce ONE client, and ideally watchdog
     connection health; beware that lost TCP does not necessarily disable PSU outputs.
+    Native raw-SCPI instruments can use their documented port and terminator.
     """
     def __init__(self, host: str, port: int, *, timeout: float = 2.0,
                  terminator: bytes = b"\r\n"):

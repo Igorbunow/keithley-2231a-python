@@ -149,6 +149,21 @@ assumed. See the [physical diagnosis](docs/hardware_reports/2026-10-26T005733.64
 and [verification matrix](docs/VERIFICATION.md). H03's manual-conformance result
 remains PARTIAL while manufacturer clarification is pending.
 
+### Guarded tracking voltage changes
+
+After applying a `Profile(wiring='tracking', ...)`, use
+`dev.set_tracking_voltage(1, 1.20)` or select channel 2 with the same method.
+The ratio comes from the profile's initial CH1/CH2 voltages. Both resulting
+setpoints must fit their voltage caps and 0.01 V resolution; current limits stay
+fixed. Both channels and unchanged CH3 are read back after each change. A mismatch
+trips the driver and attempts all-OFF. Zero is refused because the manual specifies
+that it suppresses tracking. Change the ratio by applying a new profile with
+outputs OFF. Use `dev.tracking_timers(3.0, 5.0)` to configure both tracking timers
+while all outputs are OFF; `None` disables a timer. The manual specifies that the
+shorter active duration controls the pair. Individual timer/sequence APIs remain
+unavailable for tracked CH1/CH2. `combined_outputs()` uses global ON, including
+CH3: its wiring must also be safe. These tracking APIs are **SIM TESTED and HW OBSERVED within H08’s bounded scope**; the external DMM calibration and physical edge timing were not qualified.
+
 ## Installation and offline tests
 
 ```bash
