@@ -100,3 +100,6 @@ Record `*IDN?`, SCPI version, selected channel readbacks, basic output states, s
 ## Reports and acceptance
 
 Fill [`hardware_reports/TEMPLATE.md`](hardware_reports/TEMPLATE.md) for each ID, include equipment/firmware/source commit/environment, expected-vs-actual values, screenshots/logs, and explicit pass/fail. Update the exact feature row in [`VERIFICATION.md`](VERIFICATION.md). Keep raw reports private until serial numbers, device identities and network configuration are redacted. No automatic promotion from simulator tests.
+
+
+H03 reviewed disposition: **PASS for the tested functional scope** (all three channels in CV and CC, panel/load comparison and final OFF). Caveat: CH3 OPER returns ON only (`8`) for CV and CC on firmware 1.04-1.04; QUES and library mode readback agree with the panel. The runner's raw PARTIAL is retained as a status-model discrepancy, not a functional failure. H04 remains NOT_RUN.

@@ -64,8 +64,7 @@ selected-channel queries, all-channel ON status bits and two error queue reads.
 H02 has a manually gated OFF-only profile scenario. Its initial hardware attempt
 failed on an in-session `*IDN?` firmware mismatch, then the corrected scenario passed;
 the offline suite is 48/48. See the [H02 operator card](H02_PREFLIGHT.ru.md) and both
-physical reports below. H03 is PARTIAL: reviewed CH1 and CH2 CV/CC points pass; CH3 CV
-and CC were both observed; the device operation-mode response still deviates from the manual (diagnosis below). KEL103 UDP
+physical reports below. H03 is reviewed **PASS** for its six functional CV/CC points and final OFF checks; CH3 OPER omits redundant mode bits on firmware 1.04-1.04 while QUES, API, displays and load comparisons agree (caveat below). KEL103 UDP
 control was exercised on hardware for CH2. H04–H12/O01/O02 remain pending individual
 review.
 
@@ -159,7 +158,7 @@ and [corrected H02 PASS](hardware_reports/2026-10-25T214134.648837Z_H02_qualific
 H02 is **HW OBSERVED PASS** for the no-load profile application/readback; PRF-01/PRF-02
 broader electrical behavior remains **HW UNVERIFIED**. No later stage is authorized.
 
-### H03 — CH1/CH2 CV/CC reviewed PASS; CH3 status requires diagnosis
+### H03 — all six CV/CC functional points reviewed PASS; CH3 OPER caveat recorded
 
 The first run used long, thin leads and stopped after the CH1 CC voltage difference
 exceeded its criterion. It measured CV as Keithley 3.99906 V / 0.0978727 A /
@@ -259,7 +258,7 @@ Mistyped operator confirmations wait for another answer without logging the reje
 The diagnostic `--diagnose-status` mode is restricted to H03/CH3 and records exact status
 TX/RX bytes, short/full forms, early and post-display samples (>=5 s), and selected-channel
 dependence. It reads enable masks without modifying them. Offline regression: **64/64
-SIM TESTED**. The subsequently executed powered diagnostic is reviewed below; H03 remains **PARTIAL**.
+SIM TESTED**. The subsequently executed powered diagnostic is reviewed below; its raw runner outcome was PARTIAL on the redundant OPER mode check.
 
 
 ### H03 powered status diagnosis — 2026-10-26, completed
@@ -275,9 +274,9 @@ The original library mode-reading defect is corrected and physically replayed; t
 harness authorization fix and diagnostic flow remain **64/64 SIM TESTED** for their offline
 cases. The strict operation-mode discrepancy is confirmed at the device response boundary.
 Its internal cause (firmware versus manual) is unproven; no further Python change can make
-the instrument register return different bits without masking evidence. H03 remains
-**PARTIAL**, MET-01 is **HW OBSERVED** within the reported load comparisons, and H04 is
-not started. The manufacturer question is prepared in the report and has not been sent.
+the instrument register return different bits without masking evidence. Reviewed H03 is
+**PASS for functional operation with an OPER status caveat**. MET-01 is **HW OBSERVED**
+within the reported load comparisons; calibrated DMM accuracy is unverified. H04 is NOT_RUN. The manufacturer question is prepared in the report and has not been sent.
 
 ### H03 external implementation review — 2026-10-26
 
@@ -286,7 +285,7 @@ two official Python examples and four independent Python drivers implement no CV
 status decoder. A C driver uses a questionable group event query; it does not document
 a fix for our CH3 operation-condition discrepancy. No exact matching public report or
 verified firmware correction was located in the sources inspected. No hardware access
-or additional library patch resulted; H03 remains **PARTIAL**.
+or additional library patch resulted. This review does not change functional measurements: H03 is **PASS with the OPER caveat**.
 
 ### CH3 workaround API — offline validated, 66/66
 
@@ -299,6 +298,17 @@ cover source attribution and CH3 required-mode trip behavior. After operator app
 (exit 0, unittest duration 0.289 s), without instrument access. This is **SIM TESTED**. The underlying
 QUES-based CV/CC behavior is HW OBSERVED in the existing report; the new metadata
 is not hardware verified. See [workaround and scope](../README.md#ch3-status-workaround-and-limitations).
-H03 remains PARTIAL; H04 NOT_RUN.
+H03 is reviewed PASS with the OPER caveat; H04 NOT_RUN.
 
 Offline result summary: `reports/hardware/2026-10-26T014250.764487Z_CH3_workaround_offline/result.json`.
+
+
+### H03 reviewed stage disposition
+
+**PASS for the tested functional scope**, with a recorded CH3 status-register caveat.
+All six independent channel/mode points, live displays, KEL103 comparisons and final
+OFF checks passed review. CH3 regulation readback uses QUES when OPER lacks its redundant
+CV/CC bits; ON/OFF, U/I and setpoints remain readable. The diagnostic runner's raw
+PARTIAL outcome records its strict manual bit comparison and remains in the raw report.
+This does not block use of CH3. No calibrated DMM was used. H04 remains NOT_RUN.
+See [H03 evidence](hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md).
