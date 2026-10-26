@@ -339,7 +339,7 @@ class TestDevice(unittest.TestCase):
         original = fake.query
         self.assertEqual(dev.identity(), 'Keithley instruments, 2231A-30-3, TEST, 1.04-1.04')
         fake.cmds.clear()
-        fake.query = lambda cmd: 'Keithley instruments, 2231A-30-3, TEST, 1.04-0.01' if cmd == '*IDN?' else original(cmd)
+        fake.query = lambda cmd: 'Keithley instruments, 2231A-30-3, OTHER, 1.04-1.04' if cmd == '*IDN?' else original(cmd)
         with self.assertRaisesRegex(InstrumentError, 'identity changed'):
             dev.apply_profile(profile())
         self.assertTrue(dev.faulted)
@@ -349,6 +349,34 @@ class TestDevice(unittest.TestCase):
         self.assertFalse(any(cmd.startswith(('VOLT:LIM ', 'VOLT:LIM:STAT ', 'CURR ', 'VOLT '))
                              for cmd in fake.cmds))
         self.assertIn('OUTP 0', fake.cmds)
+
+    def test_firmware_revision_is_reported_but_not_used_as_identity(self):
+        fake = FakeTransport()
+        dev = Keithley2231A(fake)
+        first = dev.identity()
+        original = fake.query
+        fake.query = lambda cmd: ('Keithley instruments, 2231A-30-3, TEST, 1.04-0.01'
+                                  if cmd == '*IDN?' else original(cmd))
+        self.assertEqual(dev.identity(), 'Keithley instruments, 2231A-30-3, TEST, 1.04-0.01')
+        self.assertNotEqual(first, dev.instrument_id)
+        self.assertEqual(dev.instrument_key,
+                         ('keithley instruments', '2231A-30-3', 'TEST'))
+        dev.apply_profile(profile())
+        self.assertTrue(dev.armed)
+
+    def test_optional_serial_binding_rejects_another_supply_before_profile_writes(self):
+        from keithley2231a import InstrumentError
+        fake = FakeTransport()
+        dev = Keithley2231A(fake, expected_serial='OTHER-PSU')
+        with self.assertRaisesRegex(InstrumentError, 'serial number mismatch'):
+            dev.apply_profile(profile())
+        self.assertFalse(dev.armed)
+        self.assertNotIn('VOLT 0', fake.cmds)
+        self.assertFalse(any(cmd.startswith(('VOLT:LIM ', 'VOLT:LIM:STAT ', 'CURR ', 'VOLT '))
+                             for cmd in fake.cmds))
+
+        with self.assertRaises((TypeError, ValueError)):
+            Keithley2231A(FakeTransport(), expected_serial='')
 
     def test_apply_disables_inherited_timers(self):
         self.dev.emergency_off()

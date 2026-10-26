@@ -46,20 +46,30 @@ class Reading:
     regulation_source: str | None = None
 
 class Keithley2231A:
-    def __init__(self, transport: Transport):
+    def __init__(self, transport: Transport, *, expected_serial: str | None = None):
+        if expected_serial is not None:
+            if not isinstance(expected_serial, str):
+                raise TypeError('expected_serial must be a string or None')
+            expected_serial = expected_serial.strip()
+            if not expected_serial:
+                raise ValueError('expected_serial must not be empty')
         self._io = transport
+        self._expected_serial = expected_serial
         self._lock = threading.RLock()
         self._profile: Profile | None = None
         self._armed = False
         self._faulted = False
         self._last_verify = 0.0
         self._idn = None
+        self._instrument_key = None
         self._sequencing = False
         self._expected_setpoints = {}
         self._expected_outputs = {ch: False for ch in (1, 2, 3)}
 
     @property
     def instrument_id(self) -> str | None: return self._idn
+    @property
+    def instrument_key(self) -> tuple[str, str, str] | None: return self._instrument_key
     @property
     def profile(self) -> Profile | None: return self._profile
     @property
@@ -95,15 +105,21 @@ class Keithley2231A:
         raise InstrumentError(f"Invalid boolean response: {value!r}")
 
     def identity(self) -> str:
+        """Return the latest raw *IDN? reply; firmware revision is not device identity."""
         with self._lock:
             ans = self._query('*IDN?')
             parts = [part.strip() for part in ans.split(',')]
             if len(parts) != 4 or parts[0].lower() != 'keithley instruments' or parts[1].upper() != '2231A-30-3' or not parts[3]:
                 self._faulted, self._armed = True, False
                 raise InstrumentError('Not a valid Keithley 2231A-30-3 identity')
-            if self._idn is not None and ans != self._idn:
+            key = (parts[0].lower(), parts[1].upper(), parts[2])
+            if self._expected_serial is not None and parts[2] != self._expected_serial:
+                self._faulted, self._armed = True, False
+                raise InstrumentError('Instrument serial number mismatch')
+            if self._instrument_key is not None and key != self._instrument_key:
                 self._faulted, self._armed = True, False
                 raise InstrumentError('Instrument identity changed during connection')
+            self._instrument_key = key
             self._idn = ans
             return ans
 

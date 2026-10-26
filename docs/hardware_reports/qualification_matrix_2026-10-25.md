@@ -1,6 +1,6 @@
 # Hardware qualification matrix / Матрица аппаратной квалификации
 
-Исходная матрица из CODEX_HARDWARE_ROADMAP.ru.md, 2026-10-25. Current reviewed result: H01 PASS after an aborted first attempt; H02 PASS after a failed first attempt; H03 PASS for all six independent CV/CC functional points, with a non-blocking CH3 OPER mode-bit discrepancy recorded as a caveat; H04–H12/O01/O02 NOT_RUN.
+Исходная матрица из CODEX_HARDWARE_ROADMAP.ru.md, 2026-10-25. Current result: H01 PASS after an aborted first attempt; H02 PASS after a failed first attempt; H03 PASS for all six independent CV/CC functional points, with a non-blocking CH3 OPER mode-bit discrepancy recorded as a caveat; H04 PASS for its OFF-only scope after the varied 2/3/4 V panel clamp and API-boundary retest; H04P–H12/O01/O02 NOT_RUN.
 
 An earlier H03 CH3 resume aborted before a measurement: KEL103 `*IDN?` timed out, and the
 cleanup sequence read `-200, "Execution error"` after its first `OUTP 0`. The response
@@ -15,7 +15,8 @@ Outcome and feature verification level are independent. Existing UART/SYST:REM/*
 | **H01** | Пассивный SCPI-preflight, идентификация, чтение статусных и mode-регистров, парсер ошибок | Все три OUT OFF, вход нагрузки OFF; без физических перемычек | Ответы воспроизводимы; нет таймаутов/сдвигов ответов; `*IDN?` корректен | PASS |
 | **H02** | Безнагрузочная установка защищённого профиля: все 3 канала, `VOLT:LIM`/state, readback, отказ на недопустимых V/I, неактивированный ON | Независимые каналы, нагрузка отсоединена | После применения все OFF, уставки/лимиты соответствуют профилю, отказы не отправлены в SCPI | PASS (second attempt; first FAIL) |
 | **H03** | **Все 3 канала × CV и CC**, индивидуальный ON/OFF, измерение U/I/P и статус CV/CC | Нагрузка последовательно CH1→CH2→CH3, CR 40 Ω / CR 12 Ω; KEL103 по явно выбранному UDP/18190 или USB serial; паузы на проводку и дисплеи | CV и CC соответствуют индикации и независимому измерению; другие каналы остаются OFF | **PASS** (all six functional points and OFF checks reviewed; CH3 OPER omits redundant mode bits while QUES, API and displays agree; caveat recorded; no calibrated DMM) |
-| **H04** | Профильные ограничения: защищённый, `unrestricted()` в маломощном сценарии; внешняя подмена уставки/лимита при OFF; аварийная реакция/запрет смены профиля | Независимая схема, все OFF для tamper | Нет программного выхода за cap; активный профиль неизменяем; обнаруживается смена **точных** уставок `power_only` | NOT_RUN |
+| **H04** | OFF-only профильные ограничения: `unrestricted()`, tamper, per-channel Max Volt Set 2/3/4 V, varied setpoints 1/2/3 V and current 0.1/0.2/0.3 A; software current caps 0.2/0.3/0.4 A; API boundary rejection | Независимая схема, нагрузка отключена, все OFF | Панель clamps requests 2.01/3.01/4.01 V to per-channel maxima; API rejects above each V/I cap before SCPI; tamper detected | **PASS (OFF-only; 2/3/4 V clamp, API bounds, tamper and OFF verified; see 2026-10-26T095243.287282Z report)** |
+| **H04P** | **Powered H04 substage**: перед нагрузкой Max Volt Set 4.50 V на панели, попытка 4.51 V clamps to 4.50 V; API over-cap rejection; далее низкомощные CV/CC границы; 3.30 V на каждом CH, CH1=2.20 V, CH2=3.30 V, CH3=4.40 V; current limits 0.100/0.250/0.500 A; `control` и `power_only` | Сначала OFF и нагрузка отключена для проверки Max Volt; затем KEL103 CR 47/56 Ω для CV и 22/12/5 Ω для CC; один подключённый CH за раз | Панель не позволяет превышение Max Volt; API отклоняет 4.51 V до SCPI; powered CV/CC и V/I/P согласуются с KEL103; соседи остаются OFF; все output/input OFF после каждой точки | NOT_RUN |
 | **H05** | `power_only`: предварительная фиксация уставок, запрет `set_channel`/`timer`/произвольной последовательности, CH1→CH2→CH3 и обратное выключение с паузами | Независимая схема, нагрузка на одном CH, остальные без нагрузки; независимый DMM/осциллограф желателен | Реальные статусы и порядок правильны; тайминги проверены с указанной погрешностью; если нет физического измерения всех фронтов — лишь PARTIAL | NOT_RUN |
 | **H06** | Таймеры CH1/CH2/CH3, отключение по таймеру, повторное включение, влияние `Output Recall` | Независимые каналы; нагрузка поочерёдно или холостой ход с измерением | Выход отключается в установленном окне; не происходит непрошеного автозапуска. Проверка recall после AC power-cycle — отдельное ручное разрешение | NOT_RUN |
 | **H07** | Мониторинг: CSV, Δt, раздельные статистики U/I/P, min/max/mean/σ, Ah/Wh, reset, пропущенные измерения | Один канал + CR 40 Ω, остальных OFF; запись 2–5 минут | Числа воспроизводятся из CSV с указанной допуском, интегралы по фактическим временным меткам; измерения не нарушают профиль | NOT_RUN |
@@ -124,18 +125,18 @@ operator panels. All 274 error-queue responses were clear. Actual UART OPER3 res
 was `38 0a` in both modes with short/full forms, including 83 s CV / 48 s CC observations
 and CH1 selected. QUES3=1/2 and library CV/CC were correct. ENAB masks were not modified.
 The anomaly is at the device response boundary; firmware versus manual cause remains
-unproven. H03 remains PARTIAL and H04 NOT_RUN. All outputs/load were read OFF and final
+unproven. At this earlier diagnostic snapshot H03 remained PARTIAL and H04 was NOT_RUN. All outputs/load were read OFF and final
 physical OFF was confirmed. No further library workaround was introduced.
 
 CH3 workaround API addendum: the existing QUES-based decoder is retained, with a
 new `Reading.regulation_source` identifying the supporting register(s). Additional
 regressions passed in the operator-approved full offline run: **66/66**, exit 0,
-0.289 s (SIM TESTED). No additional SCPI or hardware run, no change to historical
-evidence, H03 PARTIAL and H04 NOT_RUN. Usage and limits:
+0.289 s (SIM TESTED). At that offline snapshot there was no additional SCPI or hardware
+run. Usage and limits:
 [EN](../../README.md#ch3-status-workaround-and-limitations) /
 [RU](../README.ru.md#workaround-статусов-ch3-и-ограничения).
 
 
 ## H03 reviewed disposition update — 2026-10-26
 
-H03 is **PASS for the qualified functional scope**: CH1/CH2/CH3 each completed CV and CC, with panel confirmations, KEL103 comparisons and final OFF checks. CH3 ON/OFF, measured V/I, setpoints and CV/CC readback work; the library gets CH3 CV/CC from QUES when OPER contains only its ON bit. The raw diagnostic runner recorded PARTIAL because it strictly compared the redundant OPER mode bits against the manual. That runner result is preserved in its event report; this reviewed matrix classifies the functional stage PASS with an explicit caveat: firmware 1.04-1.04 CH3 OPER stays 8 in CV and CC. No calibrated DMM was used, so metrology accuracy is not claimed. H04 remains NOT_RUN.
+H03 is **PASS for the qualified functional scope**: CH1/CH2/CH3 each completed CV and CC, with panel confirmations, KEL103 comparisons and final OFF checks. CH3 ON/OFF, measured V/I, setpoints and CV/CC readback work; the library gets CH3 CV/CC from QUES when OPER contains only its ON bit. The raw diagnostic runner recorded PARTIAL because it strictly compared the redundant OPER mode bits against the manual. That runner result is preserved in its event report; this reviewed matrix classifies the functional stage PASS with an explicit caveat: firmware 1.04-1.04 CH3 OPER stays 8 in CV and CC. No calibrated DMM was used, so metrology accuracy is not claimed. H04 is now **PASS for OFF-only scope**; H04P remains NOT_RUN. See [H04 evidence](2026-10-26T095243.287282Z_H04_qualification.md).

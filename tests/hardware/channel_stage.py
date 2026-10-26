@@ -79,16 +79,19 @@ class StatusWireTrace:
 
 
 class KEL103UDP:
-    """Bounded KEL103 network adapter for the H03 load points.
+    """Bounded KEL103 network adapter for H03 and H04-Powered load points.
 
     @details Uses the documented KEL103 UDP command endpoint (LF-terminated
-             commands). Only H03 queries and CR/INPUT mutations are permitted.
+             commands). Only qualification queries and approved CR/INPUT mutations are permitted.
              Setpoint changes require a remotely confirmed INPUT OFF state.
     """
     READ_COMMANDS = frozenset(('*IDN?', ':INP?', ':FUNC?', ':RES?',
                                ':MEAS:VOLT?', ':MEAS:CURR?', ':MEAS:POW?'))
     WRITE_COMMANDS = frozenset((':FUNC CR', ':INP ON', ':INP OFF',
-                                ':RES 12OHM', ':RES 40OHM'))
+                                ':RES 5OHM', ':RES 12OHM', ':RES 22OHM',
+                                ':RES 40OHM', ':RES 47OHM', ':RES 56OHM'))
+    H04P_RESISTANCES = (5.0, 12.0, 22.0, 47.0, 56.0)
+    VERIFIED_RESISTANCES = (5.0, 12.0, 22.0, 40.0, 47.0, 56.0)
 
     def __init__(self, host, port=18190, timeout=1.5, sock=None, evidence=None):
         self.host = str(ipaddress.IPv4Address(host))
@@ -203,12 +206,30 @@ class KEL103UDP:
         self.verified_resistance = resistance_ohm
         return actual
 
+    def configure_h04p_cr(self, resistance_ohm):
+        """Select one bounded H04-Powered resistance while INPUT is confirmed OFF."""
+        if resistance_ohm not in self.H04P_RESISTANCES:
+            raise ValueError('H04-Powered CR value is not allow-listed')
+        if self.input_state() != 'OFF':
+            raise SafetyError('KEL103 INPUT must be OFF before changing CR settings')
+        self.write(':FUNC CR')
+        if self.query(':FUNC?').upper() != 'CR':
+            raise SafetyError('KEL103 did not enter CR mode')
+        self.write(f':RES {resistance_ohm:g}OHM')
+        if self.query(':FUNC?').upper() != 'CR':
+            raise SafetyError('KEL103 left CR mode while setting resistance')
+        actual = self._quantity(self.query(':RES?'), 'OHM')
+        if abs(actual - resistance_ohm) > 0.001:
+            raise SafetyError(f'KEL103 CR readback mismatch: {actual} Ω')
+        self.verified_resistance = resistance_ohm
+        return actual
+
     def set_input(self, enabled):
         """Set and verify the load input; ON requires verified H03 CR setup."""
         if type(enabled) is not bool:
             raise TypeError('enabled must be bool')
         if enabled:
-            if self.verified_resistance not in (12.0, 40.0):
+            if self.verified_resistance not in self.VERIFIED_RESISTANCES:
                 raise SafetyError('KEL103 CR setpoint must be verified before INPUT ON')
             if self.input_state() != 'OFF':
                 raise SafetyError('KEL103 INPUT is already ON unexpectedly')

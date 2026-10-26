@@ -229,6 +229,7 @@ class TestQualification(unittest.TestCase):
         q = self.module()
         self.assertTrue(q.stage_passed('PASS'))
         self.assertTrue(q.stage_passed('PASS (second attempt; first FAIL)'))
+        self.assertTrue(q.stage_passed('**PASS** (reviewed functional scope; caveat)'))
         self.assertFalse(q.stage_passed('PASSING'))
         self.assertFalse(q.stage_passed('NOT_PASS'))
         output = io.StringIO()
@@ -557,7 +558,7 @@ class TestQualification(unittest.TestCase):
                             self.idn_count += 1
                             if self.idn_count == 2:
                                 self.cmds.append(command)
-                                return 'Keithley instruments, 2231A-30-3, TEST, 1.04-0.01'
+                                return 'Keithley instruments, 2231A-30-3, OTHER, 1.04-1.04'
                         answer = super().query(command)
                         if command == 'SYST:ERR?' and self.pending_error:
                             self.pending_error = False
@@ -606,6 +607,225 @@ class TestQualification(unittest.TestCase):
                     self.assertEqual(h02(fake, evidence), 'FAIL')
             self.assertNotIn('OUTP 1', fake.cmds)
 
+    def test_h04_offline_runner_stays_off_and_detects_power_only_tampering(self):
+        q = self.module()
+        from profile_stage import H04CheckedIO, H04_MAXV_TOKEN, h04
+        from test_driver import FakeTransport
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = FakeTransport()
+            evidence = q.Evidence(Path(tmp) / 'h04.jsonl', 'H04')
+            gate_answers = iter(('wrong token', H04_MAXV_TOKEN))
+            def panel_clamps_to_limit(_prompt):
+                answer = next(gate_answers)
+                if answer == H04_MAXV_TOKEN:
+                    for channel, value in ((1, 2.0), (2, 3.0), (3, 4.0)):
+                        fake.values[channel]['VOLT'] = value
+                return answer
+            with patch('builtins.input', side_effect=panel_clamps_to_limit), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                outcome = h04(fake, evidence)
+            self.assertEqual(outcome, 'PASS')
+            self.assertIn('Max Volt Set', output.getvalue())
+            self.assertIn('4.01 V', output.getvalue())
+            self.assertTrue(fake.closed)
+            self.assertEqual(fake.values[3]['CURR'], .101)
+            self.assertEqual(fake.values[1]['VOLT:LIM'], 4.0)
+            self.assertEqual([fake.values[ch]['VOLT'] for ch in (1, 2, 3)], [1.0] * 3)
+            self.assertTrue(all(value['CHAN:OUTP'] == 0 for value in fake.values.values()))
+            self.assertFalse(any(command in ('OUTP 1', 'CHAN:OUTP 1', 'SYST:RWLOCK',
+                                             '*RST', '*CLS') for command in fake.cmds))
+            records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            self.assertEqual(records[-1]['event'], 'query_outcome')
+            self.assertEqual(records[-1]['outcome'], 'PASS')
+            self.assertIn('CURR 0.101', fake.cmds)
+            self.assertIn('VOLT:LIM 5.00', fake.cmds)
+            self.assertNotIn('VOLT 4.01', fake.cmds)
+            self.assertIn('max voltage front-panel setpoint clamped', [
+                record.get('check') for record in records])
+            maxv_cases = [record for record in records
+                          if record.get('check') == 'max voltage boundary rejected by API']
+            self.assertEqual([record['channel'] for record in maxv_cases], [1, 2, 3])
+            self.assertEqual([record['configured_max_v'] for record in maxv_cases],
+                             [2.0, 3.0, 4.0])
+            self.assertTrue(all(record['scpi_sent'] is False for record in maxv_cases))
+            current_cases = [record for record in records
+                             if record.get('check') == 'profile current boundary rejected by API']
+            self.assertEqual([record['channel'] for record in current_cases], [1, 2, 3])
+            self.assertEqual([record['configured_max_a'] for record in current_cases],
+                             [.2, .3, .4])
+            self.assertTrue(all(record['scpi_sent'] is False for record in current_cases))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            io_guard = H04CheckedIO(FakeTransport(), q.Evidence(
+                Path(tmp) / 'pause.jsonl', 'H04'))
+            io_guard.started = 0.0
+            with patch('profile_stage.time.monotonic', side_effect=(10.0, 310.0)), \
+                    patch('builtins.input', return_value='operator response'):
+                io_guard.operator_input('manual gate: ')
+            self.assertEqual(310.0 - io_guard.started, 10.0)
+
+            io_guard.cleanup = True
+            fake = io_guard.transport
+            with patch('profile_stage.time.monotonic', return_value=500.0):
+                io_guard.write('OUTP 0')
+            self.assertIn('OUTP 0', fake.cmds)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            io_guard = H04CheckedIO(FakeTransport(), q.Evidence(
+                Path(tmp) / 'guard.jsonl', 'H04'))
+            for command in ('OUTP 1', 'CHAN:OUTP 1', 'VOLT 30.00',
+                            'SYST:RWLOCK', 'STAT:OPER:EVENT?'):
+                before = io_guard.transport.cmds[:]
+                with self.subTest(command=command), self.assertRaises(ValueError):
+                    (io_guard.query(command) if command.endswith('?') else io_guard.write(command))
+                self.assertEqual(io_guard.transport.cmds, before)
+
+    def test_h04_preflight_is_manual_gated_and_dry(self):
+        q = self.module()
+        output = io.StringIO()
+        with patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(q.main(['preflight', 'H04']), 0)
+        card = output.getvalue()
+        self.assertIn('CONFIRM H04 INDEPENDENT ALL_OFF', card)
+        self.assertIn('CURR 0.101', card)
+        self.assertIn('VOLT:LIM 5.00', card)
+        self.assertIn('Max Volt Set', card)
+        self.assertIn('H04 MAXV', card)
+        self.assertIn('V-cap=2.00 V', card)
+        self.assertIn('CH2=2.00/0.200/3.00/0.300', card)
+        self.assertIn('CH3=3.00/0.300/4.00/0.400', card)
+        self.assertIn('выход', card.lower())
+
+    def test_h04p_preflight_is_dry_and_explains_load_moves(self):
+        q = self.module()
+        output = io.StringIO()
+        with patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(q.main(['preflight', 'H04P']), 0)
+        card = output.getvalue()
+        self.assertIn('CONFIRM H04P', card)
+        self.assertIn('KEL103', card)
+        self.assertIn('2.20', card)
+        self.assertIn('3.30', card)
+        self.assertIn('4.40', card)
+        self.assertIn('CR 22', card)
+        self.assertIn('CR 22/12/5', card)
+        self.assertIn('Max Volt Set', card)
+        self.assertIn('H04P MAXV', card)
+        self.assertIn('DRY RUN', card)
+
+    def test_h04p_offline_runner_auto_measures_and_pauses_only_for_load_moves(self):
+        q = self.module()
+        from powered_profile_stage import H04P_MAXV_TOKEN, PoweredProfileIO, h04_powered
+        from test_driver import FakeTransport
+
+        class LoadFake:
+            def __init__(self):
+                self.input = 'OFF'
+                self.resistance = None
+                self.live = True
+                self.closed = False
+            def identify(self): return 'KORAD-KEL103 V3.30 SN:[REDACTED]'
+            def input_state(self): return self.input
+            def configure_h04p_cr(self, resistance):
+                if self.input != 'OFF': raise RuntimeError('load input active')
+                self.resistance = resistance
+                return resistance
+            def set_input(self, enabled): self.input = 'ON' if enabled else 'OFF'
+            def measurements(self):
+                voltage, current, mode = self.transport.metrics(self.transport.active_ch)
+                return {'kel103_voltage_v': voltage, 'kel103_current_a': current,
+                        'kel103_power_w': voltage * current}
+            def close(self): self.closed = True
+
+        class PoweredFake(FakeTransport):
+            def __init__(self, load):
+                super().__init__()
+                self.load = load
+                self.load.transport = self
+                self.modes = {}
+            def metrics(self, channel):
+                values = self.values[channel]
+                if values['CHAN:OUTP'] == 0 or self.load.input != 'ON':
+                    return 0.0, 0.0, 'OFF'
+                target_v, limit_a = values['VOLT'], values['CURR']
+                demand_a = target_v / self.load.resistance
+                if demand_a >= limit_a:
+                    return limit_a * self.load.resistance, limit_a, 'CC'
+                return target_v, demand_a, 'CV'
+            def query(self, command):
+                key = command.upper().removesuffix('?')
+                if key in ('MEAS:VOLT', 'MEAS:CURR', 'MEAS:POW'):
+                    voltage, current, mode = self.metrics(self.active_ch)
+                    return str({'MEAS:VOLT': voltage, 'MEAS:CURR': current,
+                                'MEAS:POW': voltage * current}[key])
+                if key.startswith(('STAT:OPER:INST:ISUM', 'STAT:QUES:INST:ISUM')) and key.endswith(':COND'):
+                    channel = int(key.split('ISUM')[1].split(':')[0])
+                    enabled = bool(self.values[channel]['CHAN:OUTP'])
+                    voltage, current, mode = self.metrics(channel)
+                    self.modes[channel] = mode
+                    return str((8 if enabled else 0) |
+                               (1 if enabled and mode == 'CV' else
+                                2 if enabled and mode == 'CC' else 0))
+                return super().query(command)
+
+        load = LoadFake()
+        fake = PoweredFake(load)
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = q.Evidence(Path(tmp) / 'h04p.jsonl', 'H04P')
+            gate_answers = [
+                H04P_MAXV_TOKEN,
+                'CONFIRM H04P CONNECT CH1 ALL_OFF LOAD=OFF',
+                'CONFIRM H04P MOVE CH1->CH2 ALL_OFF LOAD=OFF',
+                'CONFIRM H04P MOVE CH2->CH3 ALL_OFF LOAD=OFF',
+                'CONFIRM H04P DISCONNECT CH3 ALL_OFF LOAD=OFF',
+            ]
+            answers = iter(gate_answers)
+            def panel_clamps_to_limit(_prompt):
+                answer = next(answers)
+                if answer == H04P_MAXV_TOKEN:
+                    for channel in (1, 2, 3):
+                        fake.values[channel]['VOLT'] = 4.5
+                return answer
+            with patch('builtins.input', side_effect=panel_clamps_to_limit), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                result = h04_powered(fake, evidence, load)
+            self.assertEqual(result, 'PASS')
+            self.assertTrue(fake.closed)
+            self.assertTrue(load.closed)
+            self.assertEqual(load.input, 'OFF')
+            self.assertTrue(all(values['CHAN:OUTP'] == 0
+                                for values in fake.values.values()))
+            self.assertFalse(any(command in ('OUTP 1', 'SYST:RWLOCK', '*RST', '*CLS')
+                                 for command in fake.cmds))
+            self.assertNotIn('VOLT 4.51', fake.cmds)
+            records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            points = [record for record in records if record['event'] == 'measurement']
+            self.assertEqual(len(points), 21)
+            maxv_cases = [record for record in records
+                          if record.get('check') == 'max voltage boundary rejected by API']
+            self.assertEqual([record['channel'] for record in maxv_cases], [1, 2, 3])
+            self.assertTrue(all(record['scpi_sent'] is False for record in maxv_cases))
+            self.assertEqual({point['channel'] for point in points}, {1, 2, 3})
+            self.assertEqual({point['mode'] for point in points}, {'CV', 'CC'})
+            self.assertEqual(sum(record['event'] == 'operator_gate' for record in records), 5)
+            self.assertTrue(any(record.get('phase') == 'front_panel_max_voltage_clamp'
+                                for record in records))
+            panel_clamps = [record for record in records
+                            if record.get('check') == 'max voltage front-panel setpoint clamped']
+            self.assertEqual([record['voltage_set_v'] for record in panel_clamps],
+                             [4.5, 4.5, 4.5])
+
+            timed_io = PoweredProfileIO(FakeTransport(), q.Evidence(
+                Path(tmp) / 'pause.jsonl', 'H04P'))
+            timed_io.started = 0.0
+            with patch('powered_profile_stage.time.monotonic', side_effect=(10., 910.)), \
+                    patch('builtins.input', return_value='manual gate'):
+                timed_io.operator_input('manual gate: ')
+            self.assertEqual(910. - timed_io.started, 10.)
+
     def test_h01_validates_off_identity_and_error_without_output_writes(self):
         q = self.module()
         from test_driver import FakeTransport
@@ -651,8 +871,13 @@ class TestQualification(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             evidence = q.Evidence(Path(tmp) / 'events.jsonl', 'H01')
             evidence.add('read', command='*IDN?', response='Keithley instruments, 2231A-30-3, PRIVATE123, 1.04-1.04')
+            evidence.add('read', command='*IDN?', response='Keithley instruments, 2231A-30-3, PRIVATE123, 1.04-0.01')
+            evidence.add('outcome', outcome='PASS')
             self.assertNotIn('PRIVATE123', evidence.path.read_text())
             self.assertIn('1.04-1.04', evidence.path.read_text())
+            self.assertIn('1.04-0.01', evidence.path.read_text())
+            self.assertIn('"firmware_observations": ["1.04-1.04", "1.04-0.01"]',
+                          evidence.path.read_text())
             rendered = io.StringIO()
             with contextlib.redirect_stdout(rendered): q.report(evidence.path)
             self.assertNotIn('PRIVATE123', rendered.getvalue())

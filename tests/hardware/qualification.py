@@ -45,7 +45,7 @@ def stages():
     """Read the exact authoritative matrix, keeping a single stage registry."""
     result = {}
     for line in MATRIX.read_text(encoding='utf-8').splitlines():
-        match = re.match(r'\| \*\*([HO]\d\d)\*\* \|', line)
+        match = re.match(r'\| \*\*([HO]\d\dP?)\*\* \|', line)
         if match:
             result[match[1]] = [cell.strip() for cell in line.strip('|').split('|')][1:]
     return result
@@ -53,7 +53,8 @@ def stages():
 
 def stage_passed(status: str) -> bool:
     """Accept a reviewed PASS with an explanatory suffix, never a prefix match."""
-    return re.fullmatch(r'PASS(?:\s+\(.*\))?', status.strip()) is not None
+    return re.fullmatch(r'\*{0,2}PASS\*{0,2}(?:\s+\(.*\))?',
+                        status.strip()) is not None
 
 
 def software_metadata():
@@ -76,6 +77,7 @@ class Evidence:
         self.path, self.test_id = path, test_id
         self.secrets = set()
         self.firmware = None
+        self.firmware_observations = []
         path.parent.mkdir(parents=True, exist_ok=True)
         # Refuse collisions; a new run never overwrites earlier evidence.
         with path.open('x', encoding='utf-8'):
@@ -96,6 +98,8 @@ class Evidence:
                 serial = parts[2].strip()
                 if serial: self.secrets.add(serial)
                 self.firmware = parts[3].strip()
+                if self.firmware not in self.firmware_observations:
+                    self.firmware_observations.append(self.firmware)
                 parts[2] = ' [REDACTED]'
                 fields['response'] = ','.join(parts)
             else:
@@ -103,6 +107,8 @@ class Evidence:
         record = self.sanitize({'utc': datetime.now(timezone.utc).isoformat(),
                                 'monotonic_s': time.monotonic(), 'test_id': self.test_id,
                                 'event': event, **fields})
+        if event in ('outcome', 'query_outcome'):
+            record['firmware_observations'] = list(self.firmware_observations)
         with self.path.open('a', encoding='utf-8') as stream:
             stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + '\n')
         return record
@@ -146,6 +152,76 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         for command in command_plan(): print('  ' + command)
         print('Failure path, known live link only: OUTP 0; SYST:ERR?; per-channel OFF; SYST:ERR?; SYST:LOC.\n'
               'Внутри apply_profile/verify_profile возможна более ранняя попытка OUTP 0; план запрещает иные отклонения.')
+        return
+    if test_id == 'H04P':
+        from powered_profile_stage import H04P_MAXV_TOKEN, approval_token
+        token = approval_token(load_transport, load_port, load_serial_port)
+        load_connection = (f'KEL103 UDP {load_host}:{load_port}' if load_transport == 'udp'
+                           else f'KEL103 USB {load_serial_port}, 115200 8N1')
+        print(f'Keithley: {port}, USB–TTL 9600 8N1; {load_connection}. '
+              'Independent CH1–CH3, no jumpers/DUT. Output Recall=Off; network switch accessible.\n'
+              'Start with every output OFF and KEL103 INPUT OFF/disconnected. Runner controls '
+              'KEL103 CR and readings. Operator pauses only to connect/move/disconnect its leads; '
+              'KEL polarity must be correct and only one channel may be connected.\n'
+              'Powered profile: per channel V-cap=4.50 V, software I-cap=0.500 A; one PSU '
+              'output at a time. Absolute profile envelope is 2.25 W/channel; measured current '
+              'tests use 3.00 V setpoint and stay at or below 1.50 W. No unrestricted profile '
+              'is energized; its rated caps remain covered by OFF-only H04.\n'
+              'Twenty-one automated readings: per channel CV at 3.30 V, its assigned value '
+              '(CH1 2.20 V, CH2 3.30 V, CH3 4.40 V), and exact 4.50 V cap; CC at 0.100/0.250/0.500 A '
+              'with CR 22/12/5 Ω; then one fixed power_only preset. CV uses CR 47/56 Ω. '
+              'Out-of-profile 4.51 V and 0.501 A are local API rejections with no SCPI.\n'
+              'Before connecting load: runner sets Max V=4.50 V on all channels and displays '
+              'readbacks; operator sets Protection Settings → Max Volt Set On at 4.50 V on '
+              'CH1/CH2/CH3, '
+              'tries V-set=4.51 V on CH1/CH2/CH3 with outputs OFF, and confirms each clamps '
+              'to 4.50 V. Runner reads back, restores 3.30 V, then library attempts 4.51 V and '
+              'must reject before SCPI. '
+              f'Manual max-voltage confirmation: {H04P_MAXV_TOKEN}\n'
+              'Every point: KEL INPUT OFF before setup, load readback verified, KEL INPUT ON, '
+              'only selected PSU channel ON, PSU and KEL readings/status recorded, PSU OFF, '
+              'all-channel OFF confirmed, KEL INPUT OFF. Any error/measurement/mode mismatch '
+              'stops immediately; no retry. Writes are allow-listed and checked with SYST:ERR? '
+              'except LOC. Budget 5000 commands / 900 s with a reserved OFF/verification tail.\n'
+              f'Initial authorization: {token}\n'
+              'Manual gates: CONNECT CH1; MOVE CH1→CH2; MOVE CH2→CH3; DISCONNECT CH3.\n'
+              f'Final OFF confirmation: CONFIRM H04P CH1=OFF CH2=OFF CH3=OFF LOAD=OFF')
+        return
+    if test_id == 'H04':
+        from profile_stage import H04_MAXV_TOKEN, H04_TOKEN as token
+        print(f'Порт: {port}; USB–TTL 9600 8N1, один владелец. Независимые CH1–CH3, '
+              'все выходы OFF; клеммы свободны, перемычек/DUT нет. KEL103 отключена, INPUT OFF.\n'
+              'На панели проверьте Output Recall=Off; сетевой выключатель доступен.\n'
+              'Сценарий: применить unrestricted() при уставках 0.00 V / 0.100 A, '
+              'прочитать caps CH1/2=30 V, CH3=5 V, проверить, что все выходы OFF; '
+              'попытка заменить активный профиль должна быть отклонена без SCPI.\n'
+              'Затем H04 задаст отдельный control-профиль для Max Volt Set: CH1 V=1.00 V / '
+              'I=0.100 A / V-cap=2.00 V / software I-cap=0.200 A; CH2=2.00/0.200/3.00/0.300; '
+              'CH3=3.00/0.300/4.00/0.400 (V/A/V/A). Runner прочитает уставки и VOLT:LIM каждого '
+              'канала, все OFF, затем переключит PSU в Local. На панели задайте Max Volt Set On '
+              'по каналам 2.00/3.00/4.00 V. Введите уставку на 0.01 V выше каждого предела '
+              '(2.01/3.01/4.01); ожидается ограничение до 2.00/3.00/4.00 V, не сохранение прежней '
+              'уставки. После ручной проверки runner независимо прочитает все setpoints, проверит '
+              'ошибки и OFF, восстановит 1/2/3 V и проверит до SCPI, что API отвергает voltage '
+              '2.01/3.01/4.01 V и current 0.21/0.31/0.41 A при профилях 0.20/0.30/0.40 A. '
+              f'Токен ручной проверки: {H04_MAXV_TOKEN}.\n'
+              'При всех OFF runner проверит два внешних изменения: '
+              'VOLT:LIM 5.00 V на CH1 (в пределах паспортного лимита, выше cap профиля) и '
+              'CURR 0.101 A на CH3 (в пределах cap, но точная уставка изменилась); '
+              'verify_profile должен обнаружить оба изменения и разоружить профиль.\n'
+              'Ни одна операция не включает выход. Профиль unrestricted временно задаёт caps '
+              '30/30/5 V и по 3 A, но уставка тока 0.100 A; при случайном ON уставка V=0.00 V. '
+              'Затем power_only: предел профиля до 4.00 V / 0.500 A (2 W/CH; 6 W total), '
+              'уставка 1.00 V / 0.100 A. LOAD отключена.\n'
+              'Разрешённые writes: REM/LOC, OUTP 0, сброс независимого режима, OFF таймеров, '
+              'VOLT/CURR/VOLT:LIM значения профилей и единственные тамперы VOLT:LIM 5.00 / CURR 0.101. '
+              'Запрос SYST:ERR? после каждой записи, кроме LOC; ненулевой код останавливает этап. '
+              'Запрещены все команды включения, RWLOCK, сброс и автоматический retry.\n'
+              'Один проход, бюджет 1000 команд / 180 s. При ошибке — останов и только OFF '
+              'при живой связи; при потере связи проверить OFF вручную. Уставки после теста '
+              'не откатываются автоматически.\n'
+              f'Требуется H01/H02/H03 reviewed PASS. Допуск только H04: {token}\n'
+              f'Итоговая ручная проверка: {"CONFIRM H04 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF"}')
         return
     if test_id == 'H03':
         from channel_stage import approval_token, command_plan
@@ -394,19 +470,33 @@ def main(argv=None):
     if args.command == 'preflight' or not args.execute:
         print('DRY RUN: порт не открыт, SCPI не отправлены.')
         return 0
-    if args.test_id not in ('H01', 'H02', 'H03'):
+    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
-    if args.test_id in ('H02', 'H03') and not stage_passed(stages()['H01'][-1]):
+    if args.test_id in ('H02', 'H03', 'H04', 'H04P') and not stage_passed(stages()['H01'][-1]):
         print('BLOCKED: требуется рассмотренный PASS H01; порт не открыт.')
         return 2
-    if args.test_id == 'H03' and not stage_passed(stages()['H02'][-1]):
+    if args.test_id in ('H03', 'H04', 'H04P') and not stage_passed(stages()['H02'][-1]):
         print('BLOCKED: требуется рассмотренный PASS H02; порт не открыт.')
+        return 2
+    if args.test_id in ('H04', 'H04P') and not stage_passed(stages()['H03'][-1]):
+        print('BLOCKED: требуется рассмотренный PASS H03; порт не открыт.')
         return 2
     token, final_token, runner = TOKEN, FINAL_TOKEN, h01
     if args.test_id == 'H02':
         from profile_stage import TOKEN as token, FINAL_TOKEN as final_token, h02
         runner = h02
+    if args.test_id == 'H04':
+        from profile_stage import H04_TOKEN as token, H04_FINAL_TOKEN as final_token, h04
+        runner = h04
+    if args.test_id == 'H04P':
+        from powered_profile_stage import (H04P_FINAL_TOKEN as final_token,
+                                           approval_token, h04_powered)
+        token = approval_token(args.load_transport, args.load_port, args.load_serial_port)
+        runner = h04_powered
+        if not stage_passed(stages()['H04'][-1]):
+            print('BLOCKED: требуется рассмотренный PASS H04; порт не открыт.')
+            return 2
     if args.test_id == 'H03':
         from channel_stage import approval_token, FINAL_TOKEN as final_token, h03
         token = approval_token(args.start_channel, args.load_transport,
@@ -432,14 +522,21 @@ def main(argv=None):
                  adapter=adapter,
                  topology='independent; no jumpers; no DUT',
                  load=(f'KORAD KEL103; UDP port {args.load_port}; input OFF'
-                       if args.test_id == 'H03' and args.load_transport == 'udp' else
+                       if args.test_id in ('H03', 'H04P') and args.load_transport == 'udp' else
                        f'KORAD KEL103; USB serial {args.load_serial_port}; '
                        '115200 8N1 (community-derived; physical verification pending); input OFF'
-                       if args.test_id == 'H03'
+                       if args.test_id in ('H03', 'H04P')
                        else 'disconnected; input OFF'),
                  proposed_caps=('unchanged; initial unknown' if args.test_id == 'H01' else
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; '
                                 'initial 4.00 V / 0.500 A' if args.test_id == 'H03' else
+                                'H04: unrestricted caps 30/30/5 V, 3 A; setpoints 0 V / 0.100 A; '
+                                'per-channel manual caps 2/3/4 V and 0.2/0.3/0.4 A; '
+                                'then power_only caps 4 V / 0.500 A, setpoints 1.00 V / 0.100 A'
+                                if args.test_id == 'H04' else
+                                'H04P powered: control/power_only V-cap 4.50 V, I-cap 0.500 A; '
+                                'one CH at a time; low-power CV/CC; KEL103 CR 5/12/22/47/56 Ω'
+                                if args.test_id == 'H04P' else
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
                  independent_meter=None)
     evidence.add('approval', token=token)
@@ -453,7 +550,7 @@ def main(argv=None):
                      prior_evidence=[path.name for path in args.prior_evidence])
     load = None
     try:
-        if args.test_id == 'H03':
+        if args.test_id in ('H03', 'H04P'):
             from channel_stage import KEL103Serial, KEL103UDP
             load = (KEL103UDP(args.load_host, args.load_port, evidence=evidence)
                     if args.load_transport == 'udp' else
@@ -472,7 +569,9 @@ def main(argv=None):
         return 2
     outcome = (runner(transport, evidence, load, args.start_channel,
                       diagnose_status=args.diagnose_status)
-               if args.test_id == 'H03' else runner(transport, evidence))
+               if args.test_id == 'H03' else
+               runner(transport, evidence, load) if args.test_id == 'H04P' else
+               runner(transport, evidence))
     physical_off = False
     try:
         while input(f'После ручной проверки введите {final_token}: ').strip() != final_token:
