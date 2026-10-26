@@ -1,6 +1,6 @@
 # Feature verification matrix
 
-**Current source requalification:** H01 passed read-only. H02 passed its varied OFF-only profile, panel clamp, library soft-cap and gated instrument-rejection checks (HW OBSERVED). H03 passed all six CV/CC points on the current runner with load/display comparisons and final OFF confirmation; CH3 OPER status caveat remains documented. H04 passed its OFF-only scope on the current runner with distinct panel limits, API soft-cap rejection, tamper checks and final OFF confirmation. Offline results do not qualify hardware behavior.
+**Current source requalification:** H01 passed read-only. H02 passed its varied OFF-only profile, panel clamp, library soft-cap and gated instrument-rejection checks (HW OBSERVED). H03 passed all six CV/CC points on the current runner with load/display comparisons and final OFF confirmation; CH3 OPER status caveat remains documented. H04 passed its OFF-only scope on the current runner with distinct panel limits, API soft-cap rejection, tamper checks and final OFF confirmation. H05 passed the low-power three-channel sequence with TDS capture, KEL103/PSU readbacks, clean error queue and final OFF confirmation. Offline results do not qualify hardware behavior.
 
 [English](VERIFICATION.md) | [Русский](VERIFICATION.ru.md) · [Hardware test procedure](HARDWARE_TESTS.md)
 
@@ -29,7 +29,7 @@
 | PRF-05 | `power_only` API denylist/fixed preset | SIM TESTED | **HW OBSERVED PASS (current H04 OFF-only; H04P fixed presets energized)** | profile guards and fixed preset exercised; timer behavior remains unverified; [H04 report](hardware_reports/2026-10-26T182004.069364Z_H04_qualification.md) |
 | PRF-06 | Per-channel `Max Volt Set` clamp, library soft cap, instrument rejection under explicitly gated profile bypass | SIM TESTED with distinct CH values | **HW OBSERVED PASS (H02 and current H04; OFF-only)** | Panel 2.01/3.01/4.01→2/3/4 V; API rejected above individual V/I caps before SCPI; gated debug probes returned error 120 and preserved 1/1.5/2 V. `VOLT:LIM` is a setpoint ceiling, not independent analog OVP. [H02](hardware_reports/2026-10-26T164414.981773Z_H02_qualification.md), [H04](hardware_reports/2026-10-26T182004.069364Z_H04_qualification.md) |
 | PRF-07 | Low-power profile CV/CC boundaries and independent KEL103 comparison | SIM TESTED | **PASS; HW OBSERVED (current H03 runner, six points)** | Distinct initial V/I and profile caps; live display checks; CH3 OPER=`8` caveat with QUES/library/panel agreement. [H03 report](hardware_reports/2026-10-26T174052.170220Z_H03_qualification.md). H04P fixed preset and unrestricted rated limits are separate scopes. |
-| SEQ-01 | Fixed `power_only` CH1→CH2→CH3 power-up and reverse power-down, profile guards and measured delays | **SIM TESTED** | **HW UNVERIFIED (H05 ABORTED before energizing; missing Remote entry fixed; powered retest pending)** | TDS 3064B x10 capture of all six edges, actual PSU status/readbacks, KEL103 CR22 on CH1; common-negative wiring means isolation is outside this test |
+| SEQ-01 | Fixed `power_only` CH1→CH2→CH3 power-up and reverse power-down, profile guards and measured delays | **SIM TESTED** | **PASS; HW OBSERVED (H05, firmware field 1.04-1.04)** | TDS 3064B x10 recorded all six edges in order; edge-onset intervals 2.551/2.491/4.200/1.189/1.140 s; KEL103 CR22 on CH1 read 0.9976 V, 0.0452 A, 0.0450 W; PSU readbacks and all error responses recorded, final outputs/KEL INPUT OFF. 0.5 V CH2 chatter is preserved as diagnostic; common-negative wiring does not qualify channel isolation. [H05 evidence](hardware_reports/2026-10-26T190417.647970Z_H05_qualification.md) |
 | OUT-01 | Individual output enable/disable | SIM TESTED | **HW OBSERVED PASS (H03; each output separately enabled and verified OFF)** | per-channel `CHAN:OUTP?`, KEL103 measurement and live display check; [H03 report](hardware_reports/2026-10-26T174052.170220Z_H03_qualification.md) |
 | OUT-02 | Timers and command-triggered expiration | SIM TESTED | **HW UNVERIFIED** | characterize manual/remote operation |
 | OUT-03 | Series combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
@@ -75,7 +75,7 @@ were ambiguous. H03 current-runner requalification passed six CV/CC points with 
 initial V/I values and per-channel caps; the runner sets the shared 4.00 V test point only
 with outputs OFF. CH3 retains an OPER status caveat; see the current report. KEL103 USB
 serial control was exercised on hardware in H03; UDP control was separately exercised on
-CH2. H04 is reviewed **PASS for OFF-only scope on the current runner**; the first attempt stopped because the manual panel protection values were still 4 V on all channels, then the corrected attempt passed. H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05–H12/O01/O02 remain pending individual review.
+CH2. H04 is reviewed **PASS for OFF-only scope on the current runner**; the first attempt stopped because the manual panel protection values were still 4 V on all channels, then the corrected attempt passed. H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05 is reviewed **PASS for its bounded power-sequence scope (HW OBSERVED)**; see the report for exact readings and the measurement definition. H06–H12/O01/O02 remain pending individual review.
 
 H04 runner preparation is **SIM TESTED**, not hardware verified. The approved offline
 suite `PYTHONPATH=src python -m unittest discover -s tests -v` passed **68/68** after
@@ -124,7 +124,7 @@ first attempt failed its manual panel clamp check: CH1 `VOLT?` returned `1.00 V`
 The corrected attempt explicitly set the panel limits per channel and passed all OFF-only
 checks; see the [current H04 report](hardware_reports/2026-10-26T182004.069364Z_H04_qualification.md)
 and [first failed attempt](hardware_reports/2026-10-26T180828.280308Z_H04_qualification.md).
-H04-Powered has completed separately; H05–H12/O01/O02 remain pending review/approval.
+H04-Powered and H05 have completed separately; H06–H12/O01/O02 remain pending review/approval.
 
 ## H04-Powered reviewed disposition — current-runner replay, 2026-10-26
 

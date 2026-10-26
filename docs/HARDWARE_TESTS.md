@@ -92,8 +92,8 @@ Record `*IDN?`, SCPI version, selected channel readbacks, basic output states, s
 ## Stage 4 — power-only profile
 
 - Apply static 3-channel values with `access='power_only'`; verify denied setpoint/timer/arbitrary power-sequence operations **before energizing** a dummy load.
-- Configure `(CH1 0.0 s, CH2 0.5 s, CH3 1.0 s)` and capture electrical edges on scope or logic+voltage probes. Confirm *actual* order and measured inter-edge intervals; software delays will include SCPI latency.
-- Call `power_off()`. Confirm CH3→CH2→CH1 and gaps corresponding to the reverse plan. Repeat on command failure and verify attempted global OFF.
+- The qualified H05 profile uses delays `(CH1 0.0 s, CH2 1.0 s, CH3 1.0 s)`. Capture all three rails in one TDS record and confirm CH1→CH2→CH3 then CH3→CH2→CH1. Define edge onset at 10% of the captured span on rising edges and 90% on falling edges, requiring the opposite rail to confirm each transition; require each programmed one-second minimum delay to measure at least 0.95 s.
+- Preserve raw 0.5 V crossings as diagnostic evidence, not as the edge detector: the unloaded CH2 rail can chatter around that midpoint during its slow fall. The fixed H05 setup, measurements, scope isolation limitation and report are in [the H05 preflight](H05_PREFLIGHT.ru.md) and [qualification matrix](hardware_reports/qualification_matrix_2026-10-25.md). Failure-injection and empty-sequence variants remain outside H05.
 - Repeat with an empty `power_sequence` and independent output control, documenting its different permissions.
 
 ## Stage 5 — Series/Parallel/Tracking

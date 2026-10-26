@@ -67,13 +67,21 @@ class TestQualification(unittest.TestCase):
             self.assertIn('CH1→CH2→CH3', text)
             self.assertIn('22 Ω', text)
             self.assertIn('×10', text)
+            self.assertIn('10% при включении и 90% при выключении', text)
+            self.assertIn('пересечения 0.5 V', text)
             self.assertIn('НЕ ВКЛЮЧАТЬ ВЫХОДЫ', text)
 
     def test_h05_scope_edge_analysis_and_transport_allowlist(self):
-        from h05_stage import H05Scope, decode_isf, transitions
+        from h05_stage import H05Scope, decode_isf, transitions, qualified_transitions
 
         self.assertEqual(transitions([(0, 0), (1, 1), (2, 1), (3, 0)]),
                          [(0.5, 'RISE'), (2.5, 'FALL')])
+        noisy_fall = [(0, 0), (1, 1), (2, 1), (3, .80), (3.1, .50),
+                      (3.2, .53), (3.3, .48), (3.4, .51), (3.5, .44),
+                      (3.6, .20), (3.7, .05), (3.8, .03)]
+        self.assertGreater(len(transitions(noisy_fall)), 2)
+        self.assertEqual(qualified_transitions(noisy_fall),
+                         [(0.1, 'RISE'), (2.5, 'FALL')])
         header = (b':WFMPRE:BYT_NR 1;BIT_NR 8;ENCDG BIN;BN_FMT RI;BYT_OR MSB;NR_PT 4;'
                   b'PT_FMT Y;XINCR 1;XZERO 0;PT_OFF 0;YMULT 1;YOFF 0;YZERO 0;'
                   b'XUNIT "s";YUNIT "V";WFID "CH1, synthetic";:CURVE #14')
@@ -93,6 +101,38 @@ class TestQualification(unittest.TestCase):
             with self.assertRaises(ValueError):
                 guarded.write('OUTP 1')
             self.assertEqual(raw.calls, [])
+
+    def test_h05_single_sequence_accepts_one_capture_after_counter_reset(self):
+        from h05_stage import TDS3064B
+
+        class Evidence:
+            def __init__(self, path): self.path = path
+            def add(self, *args, **kwargs): pass
+
+        class Scope(TDS3064B):
+            def __init__(self, path):
+                super().__init__(path, Evidence(path / 'events.jsonl'))
+                self.count_reads = 0
+            def number(self, command):
+                if command == 'ACQUIRE:STATE?': return 0
+                if command == 'ACQUIRE:NUMACQ?':
+                    self.count_reads += 1
+                    return 13 if self.count_reads == 1 else 1
+                if command == '*ESR?': return 0
+                raise AssertionError(command)
+            def command(self, command):
+                if command == 'ALLEV?': return '0,"No events to report - queue empty"'
+                if command == 'ACQUIRE:STATE RUN': return ''
+                raise AssertionError(command)
+            def post(self, endpoint, fields): return b'waveform'
+
+        with tempfile.TemporaryDirectory() as tmp:
+            scope = Scope(Path(tmp))
+            with patch('h05_stage.decode_isf', return_value=[(0.0, 0.0), (1.0, 1.0)]):
+                scope.arm()
+                waveforms = scope.collect()
+            self.assertEqual(set(waveforms), {1, 2, 3})
+            self.assertEqual(scope.count_reads, 2)
 
     def test_h05_enters_remote_before_channel_queries(self):
         from h05_stage import h05
@@ -1240,3 +1280,14 @@ class TestQualification(unittest.TestCase):
             with contextlib.redirect_stdout(rendered): q.report(evidence.path)
             self.assertNotIn('PRIVATE123', rendered.getvalue())
             self.assertIn('1.04-1.04', rendered.getvalue())
+
+            numeric_serial = q.Evidence(Path(tmp) / 'numeric-serial.jsonl', 'H05')
+            numeric_serial.add('read', command='*IDN?',
+                               response='Keithley instruments, 2231A-30-3, 0, 1.04-0.01')
+            numeric_serial.add('read', command='MEAS:CURR?', response='0.099')
+            record = numeric_serial.path.read_text()
+            self.assertNotIn('"test_id": "H[REDACTED]5"', record)
+            self.assertIn('"test_id": "H05"', record)
+            self.assertIn('"response": "0.099"', record)
+            self.assertIn('"response": "Keithley instruments, 2231A-30-3, [REDACTED], 1.04-0.01"',
+                          record)

@@ -74,10 +74,9 @@ def software_metadata():
 
 
 class Evidence:
-    """Append timestamped events, redacting serial numbers before persistence."""
+    """Append timestamped events, redacting only the identity response's serial field."""
     def __init__(self, path: Path, test_id: str):
         self.path, self.test_id = path, test_id
-        self.secrets = set()
         self.firmware = None
         self.firmware_observations = []
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -88,8 +87,6 @@ class Evidence:
     def sanitize(self, value):
         if isinstance(value, dict): return {k: self.sanitize(v) for k, v in value.items()}
         if isinstance(value, list): return [self.sanitize(v) for v in value]
-        if isinstance(value, str):
-            for secret in self.secrets: value = value.replace(secret, '[REDACTED]')
         return value
 
     def add(self, event: str, **fields):
@@ -97,8 +94,6 @@ class Evidence:
                 and not event.startswith('kel103_')):
             parts = fields['response'].split(',')
             if len(parts) == 4:
-                serial = parts[2].strip()
-                if serial: self.secrets.add(serial)
                 self.firmware = parts[3].strip()
                 if self.firmware not in self.firmware_observations:
                     self.firmware_observations.append(self.firmware)
@@ -249,9 +244,11 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
               'на канал, 0.30 W суммарно; через CR22 на CH1 ожидаются около 45 mA.\n'
               'Осциллограф: один захват 10 kpts, Sample, 2 s/div, CH1 rising trigger '
               '0.5 V, позиция 10%; записать CH1–CH3 одновременно. Существующие probe '
-              'factor=10 только прочитать и проверить, не менять. Анализировать все '
-              'шесть фронтов при пороге 0.5 V; фактические интервалы брать из общей '
-              'оси времени waveform.\n'
+              'factor=10 только прочитать и проверить, не менять. Начало фронта '
+              'определять по 10% при включении и 90% при выключении; событие принимать '
+              'только после подтверждения противоположного уровня. Это отсекает '
+              'дрожание CH2 около 0.5 V на открытом выходе. Все пересечения 0.5 V '
+              'сохранять отдельно для диагностики; интервалы брать с общей оси времени.\n'
               'Сценарий: после identity и исходной очереди ошибок выполнить SYST:REM '
               'до чтения статусов каналов; подтвердить все исходные OFF и профиль, проверить запреты '
               'set_channel/timer/arbitrary sequence без передачи SCPI, настроить KEL CR22, '

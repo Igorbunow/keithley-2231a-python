@@ -235,6 +235,7 @@ class TDS3064B:
         if self.number('ACQUIRE:STATE?') != 0:
             raise SafetyError('TDS unexpectedly running before arm')
         self.initial_acquisitions = int(self.number('ACQUIRE:NUMACQ?'))
+        self.evidence.add('scope_acquisition_baseline', count=self.initial_acquisitions)
         self.command('ACQUIRE:STATE RUN')
 
     def collect(self, timeout_s=45):
@@ -244,7 +245,9 @@ class TDS3064B:
                 raise TimeoutError('TDS H05 acquisition timeout; no forced trigger/rearm')
             time.sleep(0.2)
         count = int(self.number('ACQUIRE:NUMACQ?'))
-        if count != self.initial_acquisitions + 1:
+        # NUMACQ counts acquisitions since acquisition started, not across STOP/RUN cycles.
+        # H05 requests one single-sequence record containing all six channel edges.
+        if count != 1:
             raise SafetyError(f'TDS capture count mismatch: {count}')
         self.events()
         all_rows = {}
@@ -314,12 +317,82 @@ def decode_isf(raw: bytes, channel: int):
 
 
 def transitions(rows, threshold=0.5):
-    """Return threshold crossing times and edge directions from a waveform."""
+    """Return raw midpoint crossings, including chatter for diagnostic evidence."""
     edges = []
     for (t0, v0), (t1, v1) in zip(rows, rows[1:]):
         if (v0 < threshold <= v1) or (v0 > threshold >= v1):
             fraction = (threshold - v0) / (v1 - v0)
             edges.append((t0 + fraction * (t1 - t0), 'RISE' if v1 > v0 else 'FALL'))
+    return edges
+
+
+def qualified_transitions(rows):
+    """Find full-rail edges at 10% rise/90% fall, qualified by the opposite rail.
+
+    Open outputs can discharge slowly and chatter around the midpoint. A single
+    10% rising or 90% falling crossing identifies the start of the physical edge;
+    requiring the opposite rail before accepting it rejects noise without moving
+    the timestamp to the end of the transition.
+    """
+    if len(rows) < 2:
+        raise ValueError('TDS waveform is too short for edge analysis')
+    voltages = [voltage for _, voltage in rows]
+    low = min(voltages)
+    high = max(voltages)
+    span = high - low
+    if not math.isfinite(span) or span <= 0:
+        raise ValueError('TDS waveform has no finite voltage span')
+    rise_level = low + 0.1 * span
+    fall_level = low + 0.9 * span
+    if voltages[0] >= rise_level:
+        raise SafetyError('H05 scope capture did not start with the output low')
+
+    edges = []
+    is_high = False
+    index = 0
+    while index < len(rows) - 1:
+        found = False
+        for crossing_index in range(index, len(rows) - 1):
+            t0, v0 = rows[crossing_index]
+            t1, v1 = rows[crossing_index + 1]
+            if not is_high and v0 < rise_level <= v1:
+                confirmation = None
+                qualification = None
+                for j in range(crossing_index + 1, len(rows)):
+                    if rows[j][1] >= fall_level:
+                        confirmation, qualification = 'HIGH', j
+                        break
+                    if rows[j][1] <= rise_level:
+                        confirmation, qualification = 'LOW', j
+                        break
+                if confirmation != 'HIGH':
+                    continue
+                fraction = (rise_level - v0) / (v1 - v0)
+                edges.append((t0 + fraction * (t1 - t0), 'RISE'))
+                is_high = True
+                index = qualification
+                found = True
+                break
+            if is_high and v0 > fall_level >= v1:
+                confirmation = None
+                qualification = None
+                for j in range(crossing_index + 1, len(rows)):
+                    if rows[j][1] <= rise_level:
+                        confirmation, qualification = 'LOW', j
+                        break
+                    if rows[j][1] >= fall_level:
+                        confirmation, qualification = 'HIGH', j
+                        break
+                if confirmation != 'LOW':
+                    continue
+                fraction = (fall_level - v0) / (v1 - v0)
+                edges.append((t0 + fraction * (t1 - t0), 'FALL'))
+                is_high = False
+                index = qualification
+                found = True
+                break
+        if not found:
+            break
     return edges
 
 
@@ -431,7 +504,9 @@ def h05(transport, evidence, load, scope_host=HOST):
         load.set_input(False)
         evidence.add('kel103_input', state='OFF')
         waveforms = scope.collect()
-        per_channel = {channel: transitions(rows) for channel, rows in waveforms.items()}
+        midpoint_crossings = {channel: transitions(rows) for channel, rows in waveforms.items()}
+        per_channel = {channel: qualified_transitions(rows)
+                       for channel, rows in waveforms.items()}
         time_axes = [tuple(t for t, _ in waveforms[channel]) for channel in (1, 2, 3)]
         if not time_axes[0] == time_axes[1] == time_axes[2]:
             raise SafetyError('TDS channel waveform time axes do not match')
@@ -443,12 +518,19 @@ def h05(transport, evidence, load, scope_host=HOST):
         actual = [(channel, direction) for _, channel, direction in all_edges]
         if actual != expected:
             raise SafetyError(f'H05 measured edge order mismatch: {actual}')
+        evidence.add('scope_midpoint_crossings', threshold_v=0.5,
+                     crossings=[{'time_s': t, 'channel': ch, 'direction': d}
+                                for ch, crossings in midpoint_crossings.items()
+                                for t, d in crossings],
+                     outcome='DIAGNOSTIC_ONLY')
         intervals = [all_edges[index + 1][0] - all_edges[index][0] for index in range(5)]
-        # One-second configured minimum; allow one waveform sample plus threshold noise.
+        # Edge onset uses 10% rising / 90% falling crossings; the opposite rail
+        # qualifies each full transition and midpoint chatter remains diagnostic.
         if any(interval < 0.95 for interval in (intervals[0], intervals[1], intervals[3], intervals[4])):
             raise SafetyError(f'H05 minimum transition delay failed: {intervals}')
         evidence.add('scope_edges', edges=[{'time_s': t, 'channel': ch, 'direction': d}
                                           for t, ch, d in all_edges],
+                     measurement='10% rising / 90% falling edge onset; qualified by opposite rail',
                      intervals_s=intervals, minimum_delay_s=1.0,
                      measured_tolerance_s=0.05, outcome='PASS')
         states = dev.output_states()
