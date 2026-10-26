@@ -1,8 +1,15 @@
 # Feature verification matrix
 
-**Current source requalification:** H01 passed read-only. H02 passed its varied OFF-only profile, panel clamp, library soft-cap and gated instrument-rejection checks (HW OBSERVED). H03 passed all six CV/CC points on the current runner with load/display comparisons and final OFF confirmation; CH3 OPER status caveat remains documented. H04 passed its OFF-only scope on the current runner with distinct panel limits, API soft-cap rejection, tamper checks and final OFF confirmation. H05 passed the low-power three-channel sequence with TDS capture, KEL103/PSU readbacks, clean error queue and final OFF confirmation. H06 timer subgroup passed on hardware: CH1/2/3 expired at 3.051/3.063/3.056 s and re-enabled with timer disabled; 841 error-queue reads were clean and final OFF was confirmed. Its first attempt had aborted before energizing due runner defects, subsequently corrected and covered by the 95/95 offline suite. Output Recall power-cycle remains HW UNVERIFIED, so H06 overall is partial. Offline results do not qualify hardware behavior.
+**Current source requalification:** H01 passed read-only. H02 passed its varied OFF-only profile, panel clamp, library soft-cap and gated instrument-rejection checks (HW OBSERVED). H03 passed all six CV/CC points on the current runner with load/display comparisons and final OFF confirmation; CH3 OPER status caveat remains documented. H04 passed its OFF-only scope on the current runner with distinct panel limits, API soft-cap rejection, tamper checks and final OFF confirmation. H05 passed the low-power three-channel sequence with TDS capture, KEL103/PSU readbacks, clean error queue and final OFF confirmation. H06 timer subgroup passed on hardware: CH1/2/3 expired at 3.051/3.063/3.056 s and re-enabled with timer disabled; 841 error-queue reads were clean and final OFF was confirmed. Its first attempt had aborted before energizing due runner defects, subsequently corrected and covered by the 95/95 offline suite. Output Recall passed four hardware mains-cycle cases: OFF `111→000`, ON `101→101`, `010→010`, `000→000`. Final physical OFF and restored Recall OFF/Save Last ON were confirmed. Offline results do not qualify hardware behavior.
 
 [English](VERIFICATION.md) | [Русский](VERIFICATION.ru.md) · [Hardware test procedure](HARDWARE_TESTS.md)
+
+The separate `H06 --recall` runner is **SIM TESTED 97/97** and **PASS (HW
+OBSERVED)** for its four manually gated power-cycle cases. Save Last remained ON,
+no load was connected, and each boot state was captured before profile or output
+writes. All 970 `SYST:ERR?` replies were `0, "No error"`; final outputs were
+confirmed OFF and the panel settings restored. [Procedure](H06_OUTPUT_RECALL.ru.md)
+and [hardware evidence](hardware_reports/2026-10-26T201550.519080Z_H06_qualification.md).
 
 ## Meaning of statuses
 
@@ -31,7 +38,7 @@
 | PRF-07 | Low-power profile CV/CC boundaries and independent KEL103 comparison | SIM TESTED | **PASS; HW OBSERVED (current H03 runner, six points)** | Distinct initial V/I and profile caps; live display checks; CH3 OPER=`8` caveat with QUES/library/panel agreement. [H03 report](hardware_reports/2026-10-26T174052.170220Z_H03_qualification.md). H04P fixed preset and unrestricted rated limits are separate scopes. |
 | SEQ-01 | Fixed `power_only` CH1→CH2→CH3 power-up and reverse power-down, profile guards and measured delays | **SIM TESTED** | **PASS; HW OBSERVED (H05, firmware field 1.04-1.04)** | TDS 3064B x10 recorded all six edges in order; edge-onset intervals 2.551/2.491/4.200/1.189/1.140 s; KEL103 CR22 on CH1 read 0.9976 V, 0.0452 A, 0.0450 W; PSU readbacks and all error responses recorded, final outputs/KEL INPUT OFF. 0.5 V CH2 chatter is preserved as diagnostic; common-negative wiring does not qualify channel isolation. [H05 evidence](hardware_reports/2026-10-26T190417.647970Z_H05_qualification.md) |
 | OUT-01 | Individual output enable/disable | SIM TESTED | **HW OBSERVED PASS (H03; each output separately enabled and verified OFF)** | per-channel `CHAN:OUTP?`, KEL103 measurement and live display check; [H03 report](hardware_reports/2026-10-26T174052.170220Z_H03_qualification.md) |
-| OUT-02 | Per-channel timers, remote-on expiry, re-enable and Output Recall | **SIM TESTED (H06 runner; shared driver path)** | **PASS (HW OBSERVED) for CH1–CH3 timer expiry and re-enable; Output Recall HW UNVERIFIED** | 3.0 s timer expiry: CH1 3.051 s, CH2 3.063 s, CH3 3.056 s; each timer-disabled re-enable held 0.5 s. 841 clean error-queue replies; final all-off confirmed. Output Recall mains-cycle remains separately gated; overall H06 runner result PARTIAL. [H06 results](hardware_reports/2026-10-26T195235.744227Z_H06_qualification.md) · [first aborted attempt](hardware_reports/2026-10-26T193545.109045Z_H06_qualification.md) |
+| OUT-02 | Per-channel timers, remote-on expiry, re-enable and Output Recall | **SIM TESTED (H06 runner; shared driver path)** | **PASS (HW OBSERVED)** — timer expiry/re-enable on CH1–CH3 and four Recall power cycles | 3.0 s timer expiry: CH1 3.051 s, CH2 3.063 s, CH3 3.056 s; each timer-disabled re-enable held 0.5 s. Recall OFF `111→000`; Recall ON `101→101`, `010→010`, `000→000`. 970 clean error-queue replies; final all-off confirmed and Recall OFF restored. [Recall evidence](hardware_reports/2026-10-26T201550.519080Z_H06_qualification.md) · [timer results](hardware_reports/2026-10-26T195235.744227Z_H06_qualification.md) · [first aborted attempt](hardware_reports/2026-10-26T193545.109045Z_H06_qualification.md) |
 | OUT-03 | Series combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
 | OUT-04 | Parallel combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
 | OUT-05 | Tracking and ratio/timer behavior | SIM TESTED (basic) | **HW UNVERIFIED** | real tracking readback and timed output |
@@ -75,7 +82,7 @@ were ambiguous. H03 current-runner requalification passed six CV/CC points with 
 initial V/I values and per-channel caps; the runner sets the shared 4.00 V test point only
 with outputs OFF. CH3 retains an OPER status caveat; see the current report. KEL103 USB
 serial control was exercised on hardware in H03; UDP control was separately exercised on
-CH2. H04 is reviewed **PASS for OFF-only scope on the current runner**; the first attempt stopped because the manual panel protection values were still 4 V on all channels, then the corrected attempt passed. H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05 is reviewed **PASS for its bounded power-sequence scope (HW OBSERVED)**; see the report for exact readings and the measurement definition. H06–H12/O01/O02 remain pending individual review.
+CH2. H04 is reviewed **PASS for OFF-only scope on the current runner**; the first attempt stopped because the manual panel protection values were still 4 V on all channels, then the corrected attempt passed. H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05 is reviewed **PASS for its bounded power-sequence scope (HW OBSERVED)**; see the report for exact readings and the measurement definition. H06 is reviewed **PASS for timer and Output Recall scopes (HW OBSERVED)**; later H07–H12/O01/O02 remain pending individual review.
 
 H04 runner preparation is **SIM TESTED**, not hardware verified. The approved offline
 suite `PYTHONPATH=src python -m unittest discover -s tests -v` passed **68/68** after
@@ -124,7 +131,7 @@ first attempt failed its manual panel clamp check: CH1 `VOLT?` returned `1.00 V`
 The corrected attempt explicitly set the panel limits per channel and passed all OFF-only
 checks; see the [current H04 report](hardware_reports/2026-10-26T182004.069364Z_H04_qualification.md)
 and [first failed attempt](hardware_reports/2026-10-26T180828.280308Z_H04_qualification.md).
-H04-Powered and H05 have completed separately; H06–H12/O01/O02 remain pending review/approval.
+H04-Powered and H05 have completed separately; H06 is reviewed PASS for timer and Output Recall; H07–H12/O01/O02 remain pending review/approval.
 
 ## H04-Powered reviewed disposition — current-runner replay, 2026-10-26
 

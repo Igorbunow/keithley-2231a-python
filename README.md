@@ -57,6 +57,13 @@ The driver validates identity and enters Remote when necessary. Queries do not
 configure setpoints or energize outputs. Ordinary API and diagnostics share one
 command dispatcher, Remote/Local tracking, locking and fault handling.
 
+Output Recall and Save Last are front-panel settings; the reference manual lists
+no SCPI access to them. The driver cannot enforce Recall Off during instrument
+startup. To inspect restored outputs, call `output_states()` before
+`apply_profile()`, which deliberately switches all outputs OFF. The gated
+[H06 Output Recall procedure](docs/H06_OUTPUT_RECALL.ru.md) tests this using fresh
+serial-bound sessions and records startup state before shutdown.
+
 Diagnostics are disabled by default. Use `debug=True` to enable
 `diagnostic_query()`, `diagnostic_write()` and optional `debug_trace=callback`.
 Trace records redact the identity serial field. Optional `debug_wire_trace=callback`

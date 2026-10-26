@@ -141,8 +141,13 @@ def verify_serial_adapter(port, adapter, available_ports=None):
 
 def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_channel=1,
               load_transport='udp', load_serial_port='/dev/ttyACM0', diagnose_status=False,
-              load_connected=False):
+              load_connected=False, recall=False):
     """Print a human-readable card; never contact hardware."""
+    if test_id == 'H06' and recall:
+        from h06_recall import preflight as recall_preflight
+        print('[H06 Output Recall] Отдельная подгруппа ручных сетевых циклов')
+        recall_preflight(port)
+        return
     row = stages()[test_id]
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
     if test_id == 'H02':
@@ -567,6 +572,8 @@ def main(argv=None):
                         help='H03 CH1 recovery only: load remains wired, INPUT OFF; verify all PSU outputs OFF first')
     parser.add_argument('--diagnose-status', action='store_true',
                         help='H03 CH3 only: wire trace, delayed and channel-selection status snapshots')
+    parser.add_argument('--recall', action='store_true',
+                        help='H06 only: separately gated Output Recall mains cycles, all terminals empty')
     parser.add_argument('--prior-evidence', type=Path, action='append',
                         help='H03 evidence log; repeat once per completed-channel log when resuming')
     mode = parser.add_mutually_exclusive_group()
@@ -574,6 +581,8 @@ def main(argv=None):
     mode.add_argument('--dry-run', action='store_true')
     parser.add_argument('--evidence', type=Path)
     args = parser.parse_args(argv)
+    if args.recall and args.test_id != 'H06':
+        parser.error('--recall requires H06')
     if args.load_connected and (args.test_id != 'H03' or args.start_channel != 1):
         parser.error('--load-connected requires H03 start channel 1')
     if args.diagnose_status and (args.test_id != 'H03' or args.start_channel != 3):
@@ -593,7 +602,7 @@ def main(argv=None):
     if args.test_id is None: parser.error('preflight/run requires one test ID')
     preflight(args.test_id, args.port, args.load_host, args.load_port,
               args.start_channel, args.load_transport, args.load_serial_port,
-              args.diagnose_status, args.load_connected)
+              args.diagnose_status, args.load_connected, args.recall)
     if args.test_id == 'H03' and args.start_channel > 1:
         if args.prior_evidence is None:
             parser.error('--prior-evidence is required when resuming H03; repeat for each prior channel log')
@@ -649,10 +658,12 @@ def main(argv=None):
             return 2
     if args.test_id == 'H06':
         from h06_stage import FINAL_TOKEN as final_token, approval_token, h06
-        token = approval_token(args.load_serial_port)
-        runner = h06
-        final_token = 'CONFIRM H06 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
-        if args.load_transport != 'serial' or args.load_serial_port != '/dev/ttyACM0':
+        if args.recall:
+            from h06_recall import TOKEN as token, recall as runner
+        else:
+            token, runner = approval_token(args.load_serial_port), h06
+        if not args.recall and (args.load_transport != 'serial' or
+                                args.load_serial_port != '/dev/ttyACM0'):
             print('BLOCKED: H06 uses the reviewed KEL103 USB port /dev/ttyACM0.')
             return 2
     if args.test_id == 'H03':
@@ -685,7 +696,10 @@ def main(argv=None):
                  adapter=adapter,
                  topology=('independent; CH1/CH2/CH3 negative terminals tied to scope common'
                            if args.test_id == 'H05' else 'independent; no jumpers; no DUT'),
-                 load=(f'KORAD KEL103; UDP port {args.load_port}; input OFF'
+                 subgroup='output_recall' if args.recall else None,
+                 load=('disconnected; KEL103 INPUT OFF; scope disconnected; no jumpers'
+                       if args.recall else
+                       f'KORAD KEL103; UDP port {args.load_port}; input OFF'
                        if args.test_id in ('H03', 'H04P') and args.load_transport == 'udp' else
                        f'KORAD KEL103; USB serial {args.load_serial_port}; '
                        '115200 8N1; USB link previously HW OBSERVED on H03; input OFF'
@@ -704,6 +718,10 @@ def main(argv=None):
                                 'H05 power_only: each CH 1.00 V / 0.100 A, caps 1.00 V / 0.100 A; '
                                 'CH1→CH2→CH3 and reverse OFF with 1 s delays; KEL103 CR22 on CH1'
                                 if args.test_id == 'H05' else
+                                'H06 Recall: CH1/2/3 1.00/1.50/2.00 V and 0.100/0.200/0.300 A; '
+                                'V-cap 2/3/4 V, software I-cap 0.300/0.400/0.500 A; '
+                                'timers OFF; no load; four manually gated mains cycles'
+                                if args.recall else
                                 'H06 timer test: CH1/2/3 1.00/1.50/2.00 V and 0.100/0.200/0.300 A; '
                                 '3.0 s timer, KEL103 CR22; Output Recall cycle separately gated'
                                 if args.test_id == 'H06' else
@@ -720,7 +738,7 @@ def main(argv=None):
                      prior_evidence=[path.name for path in args.prior_evidence])
     load = None
     try:
-        if args.test_id in ('H03', 'H04P', 'H05', 'H06'):
+        if args.test_id in ('H03', 'H04P', 'H05', 'H06') and not args.recall:
             from channel_stage import KEL103Serial, KEL103UDP
             load = (KEL103UDP(args.load_host, args.load_port, evidence=evidence)
                     if args.load_transport == 'udp' else
@@ -733,7 +751,13 @@ def main(argv=None):
         evidence.add('outcome', outcome='ABORTED', stop_reason='port open failed; verify OFF manually')
         print(f'ABORTED: порт не открыт; проверить OFF вручную. Evidence: {evidence.path}')
         return 2
-    outcome = (runner(transport, evidence, load, args.start_channel,
+    def reopen_recall_transport():
+        """Open once after a completed operator cycle; never scan or auto-retry."""
+        verify_serial_adapter(args.port, adapter)
+        return open_transport(args.port)
+
+    outcome = (runner(transport, evidence, reopen_recall_transport) if args.recall else
+               runner(transport, evidence, load, args.start_channel,
                       diagnose_status=args.diagnose_status,
                       load_connected=args.load_connected)
                if args.test_id == 'H03' else

@@ -53,6 +53,7 @@ class TestQualification(unittest.TestCase):
                      ['preflight', 'H02'], ['run', 'H02'],
                      ['preflight', 'H05'], ['run', 'H05'],
                      ['preflight', 'H06'], ['run', 'H06'],
+                     ['preflight', 'H06', '--recall'], ['run', 'H06', '--recall'],
                      ['run', 'H09'], ['abort'], ['report']):
             with self.subTest(args=args), patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
                 with contextlib.redirect_stdout(io.StringIO()):
@@ -86,6 +87,127 @@ class TestQualification(unittest.TestCase):
             self.assertIn('AC power-cycle', text)
             self.assertIn('Разрешение на H06 timer pass', text)
             self.assertIn('LOAD=KEL103 DISCONNECTED USB=/dev/ttyACM0 BAUD=115200', text)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                q.main(['preflight', 'H06', '--recall', '--port', '/dev/ttyUSB3'])
+            self.assertIn('111→000', output.getvalue())
+            self.assertIn('101→101', output.getvalue())
+            self.assertIn('010→010', output.getvalue())
+            self.assertIn('000→000', output.getvalue())
+            self.assertIn('SCOPE=DISCONNECTED', output.getvalue())
+
+    def test_h06_recall_records_boot_before_shutdown_and_stops_on_fault(self):
+        from h06_recall import recall
+        from test_driver import FakeTransport
+
+        cases = (('OFF', '111', '000'), ('ON', '101', '101'),
+                 ('ON', '010', '010'), ('ON', '000', '000'))
+        for fault in (None, 'unexpected_boot', 'wrong_panel', 'wrong_serial',
+                      'boot_timeout', 'interrupted_cycle', 'interrupted_menu'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                sessions = [FakeTransport()]
+                boot_prefixes = []
+
+                class RecordedEvidence(self.module().Evidence):
+                    def add(self, event, **fields):
+                        if event == 'recall_boot_observation':
+                            boot_prefixes.append(list(sessions[-1].cmds))
+                        return super().add(event, **fields)
+
+                class BootTransport(FakeTransport):
+                    def query(self, command):
+                        reply = super().query(command)
+                        if fault == 'wrong_serial' and command == '*IDN?':
+                            return reply.replace('TEST', 'OTHER')
+                        return reply
+
+                def reopen():
+                    self.assertTrue(sessions[-1].closed)
+                    previous = sessions[-1]
+                    boot = BootTransport()
+                    boot.values = {ch: dict(values) for ch, values in previous.values.items()}
+                    mode = cases[len(sessions) - 1][0]
+                    if mode == 'OFF':
+                        for values in boot.values.values(): values['CHAN:OUTP'] = 0.0
+                    if fault == 'unexpected_boot': boot.values[1]['CHAN:OUTP'] = 1.0
+                    if fault == 'boot_timeout': boot.failed_query = 'CHAN:OUTP?'
+                    sessions.append(boot)
+                    return boot
+
+                answers = []
+                for mode, before, expected in cases:
+                    case = f'{mode}_{before}'
+                    answers.append(f'CONFIRM H06 RECALL CASE={case} RECALL={mode} '
+                                   'SAVE_LAST=ON ALL_OFF CYCLE=AUTHORIZED')
+                    answers.append(f'CONFIRM H06 RECALL CASE={case} POWER_CYCLED PANEL={expected}')
+                answers.append('CONFIRM H06 RECALL RESTORED RECALL=OFF SAVE_LAST=ON ALL_OFF')
+                if fault == 'interrupted_cycle': answers[1] = KeyboardInterrupt()
+                if fault == 'interrupted_menu': answers[0] = KeyboardInterrupt()
+                if fault == 'wrong_panel':
+                    answers[1] = 'CONFIRM H06 RECALL CASE=OFF_111 POWER_CYCLED PANEL=100'
+                evidence = RecordedEvidence(Path(tmp) / 'events.jsonl', 'H06')
+                with patch('builtins.input', side_effect=answers), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    result = recall(sessions[0], evidence, reopen)
+                events = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+                self.assertEqual(result, 'PASS' if fault is None else
+                                 'FAIL' if fault in ('unexpected_boot', 'wrong_panel')
+                                 else 'ABORTED', events[-2:])
+                self.assertEqual(len(sessions), 5 if fault is None else
+                                 1 if fault in ('interrupted_cycle', 'interrupted_menu') else 2)
+                sent = [event['trace']['command'] for event in events
+                        if event['event'] == 'driver_trace' and
+                        event['trace']['event'] in ('write', 'query')]
+                self.assertEqual(sent, [command for session in sessions for command in session.cmds])
+                for prefix in boot_prefixes:
+                    self.assertTrue(all(command.endswith('?') or command == 'SYST:REM' or
+                                        command.startswith('INST:NSEL ') for command in prefix), prefix)
+                if fault is None:
+                    self.assertEqual(len(boot_prefixes), 4)
+                    self.assertEqual([event['case'] for event in events
+                                      if event['event'] == 'recall_case_result'],
+                                     ['OFF_111', 'ON_101', 'ON_010', 'ON_000'])
+                    self.assertFalse(any(sessions[-1].values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+                elif fault == 'wrong_serial':
+                    self.assertTrue(all(command.endswith('?') for command in sessions[-1].cmds))
+                elif fault == 'boot_timeout':
+                    self.assertEqual(sessions[-1].cmds[-1], 'CHAN:OUTP?')
+
+    def test_h06_recall_cli_skips_load_and_rechecks_explicit_port(self):
+        import h06_recall
+        from test_driver import FakeTransport
+        q = self.module()
+        sessions = [FakeTransport(), FakeTransport()]
+
+        def simulated_runner(transport, evidence, reopen):
+            self.assertIs(transport, sessions[0])
+            transport.close()
+            reopened = reopen()
+            self.assertIs(reopened, sessions[1])
+            reopened.close()
+            return 'PASS'
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'docs/hardware_reports').mkdir(parents=True)
+            with patch.object(q, 'ROOT', root), \
+                    patch.object(q, 'software_metadata', return_value={}), \
+                    patch.object(q, 'stage_passed', return_value=True), \
+                    patch.object(q, 'verify_serial_adapter', return_value=True) as verify, \
+                    patch.object(q, 'open_transport', side_effect=sessions) as opened, \
+                    patch.object(q.sys.stdin, 'isatty', return_value=True), \
+                    patch.object(h06_recall, 'recall', side_effect=simulated_runner), \
+                    patch('channel_stage.KEL103Serial', side_effect=AssertionError('load opened')), \
+                    patch('channel_stage.KEL103UDP', side_effect=AssertionError('load opened')), \
+                    patch('builtins.input', side_effect=['CP2102 10C4:EA60', h06_recall.TOKEN,
+                                                       'CONFIRM H06 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF']), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                result = q.main(['run', 'H06', '--recall', '--execute', '--port', '/dev/ttyUSB3'])
+            self.assertEqual(result, 0)
+            self.assertEqual([call.args for call in opened.call_args_list],
+                             [('/dev/ttyUSB3',), ('/dev/ttyUSB3',)])
+            self.assertEqual([call.args for call in verify.call_args_list],
+                             [('/dev/ttyUSB3', 'CP2102 10C4:EA60')] * 2)
 
     def test_h06_timer_expiry_and_reenable_use_common_driver_path(self):
         from h06_stage import h06
