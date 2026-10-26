@@ -216,11 +216,11 @@ INPUT ON/OFF и телеметрия под нагрузкой; это HW OBSERV
 [карточку H03](H03_PREFLIGHT.ru.md), [отчёт предыдущей попытки](hardware_reports/2026-10-25T235449.217553Z_H03_qualification.md) и [отчёт точки CH3](hardware_reports/2026-10-25T235757.702842Z_H03_qualification.md).
 
 H03 остаётся PARTIAL из-за неквалифицированной status-телеметрии CH3. Последний gated
-повтор по USB выполнил обе точки CH3. CV: Keithley 3.99576 V / 0.0998173 A / 0.398929 W;
-KEL103 4.0003 V / 0.0999 A / 0.3996 W. CC: Keithley 2.98031 V / 0.249532 A /
-0.743684 W; KEL103 2.9840 V / 0.2487 A / 0.7421 W. Оператор подтвердил PSU CV, затем
+повтор по USB выполнил обе точки CH3. CV: Keithley 3.99576 V / 0.0998173 A / 0.399012 W (SCPI power);
+KEL103 4.0003 V / 0.0999 A / 0.3996 W. CC: Keithley 2.98781 V / 0.249532 A /
+0.745347 W (SCPI power); KEL103 2.9840 V / 0.2487 A / 0.7421 W. Оператор подтвердил PSU CV, затем
 CC, KEL CR и INPUT ON на соответствующих live gates. Обе электрические точки прошли
-допуски H03. Все 190 ответов Keithley `SYST:ERR?` были `0, "No error"`.
+допуски H03. Все 192 ответа Keithley `SYST:ERR?` были `0, "No error"`.
 В обеих точках `STAT:OPER:INST:ISUM3:COND?` вернул `8` (только ON), а
 `STAT:QUES:INST:ISUM3:COND?` вернул `1` (CV) и `2` (CC). Руководство Keithley
 определяет биты CV/CC 0/1 в обоих channel summary registers и бит ON 3 в operation
@@ -228,8 +228,10 @@ summary. Причина `UNKNOWN` в API локализована: `read_channel
 из operation status. Драйвер теперь читает оба регистра, использует документированный
 режим, если второй регистр не содержит mode bit, возвращает обе маски в `Reading` и
 сообщает UNKNOWN при конфликте. Строгий runner продолжает отдельно фиксировать operation
-status. Offline-регрессия прошла 60/60; powered-повтор CH3 CV/CC ещё нужен для проверки
-изменения на приборе. Все три выхода и INPUT KEL103 считаны OFF; оператор подтвердил
-финальный OFF. См. [отчёт](hardware_reports/2026-10-26T002312.484924Z_H03_qualification.md),
-[сырой журнал](../reports/hardware/2026-10-26T002312.484924Z_H03/events.jsonl) и
+status. Offline-регрессия прошла 60/60. Физический повтор CH3 подтвердил, что
+`read_channel()` теперь возвращает CV/CC из questionable status для обоих режимов; operation
+status остаётся `8`, поэтому строгий runner обоснованно оставляет H03 в PARTIAL. Все три
+выхода и INPUT KEL103 считаны OFF; оператор подтвердил финальный OFF. См.
+[отчёт](hardware_reports/2026-10-26T003341.714219Z_H03_qualification.md),
+[сырой журнал](../reports/hardware/2026-10-26T003341.714219Z_H03/events.jsonl) и
 [модель регистров Keithley, стр. 5-30](https://download.tek.com/manual/077100401_Referencemanual.pdf).

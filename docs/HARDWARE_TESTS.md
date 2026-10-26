@@ -21,12 +21,12 @@ the failed first attempt and safety-path correction.
 
 H03: [KEL103 load and transition operator card](H03_PREFLIGHT.ru.md). CH1, CH2 and CH3
 CV/CC points have physical measurements and live display confirmations. The last CH3 run
-compared both Keithley/KEL103 readings within tolerance and recorded 190 `SYST:ERR?`
+compared both Keithley/KEL103 readings within tolerance and recorded 192 `SYST:ERR?`
 replies of `0, "No error"`. However, CH3 returned operation status `8` in both CV and CC,
 while questionable status returned `1` (CV) and `2` (CC). This contradicts the manual's
 mode-bit definition for both channel summaries; status interpretation remains unresolved
-and H03 is PARTIAL. All channels and KEL103 INPUT were read and confirmed OFF. See the
-[latest H03 report](hardware_reports/2026-10-26T002312.484924Z_H03_qualification.md).
+and H03 is PARTIAL. All channels and KEL103 INPUT were read and confirmed OFF. The corrected library now returns CV/CC from questionable status on physical CH3 replay, while retaining operation status `8` as an unqualified manual discrepancy. H03 remains PARTIAL. All outputs/load were confirmed OFF. See the
+[latest H03 report](hardware_reports/2026-10-26T003341.714219Z_H03_qualification.md).
 
 The next CH3 resume aborted before configuration: KEL103 UDP `*IDN?` timed out;
 cleanup then read `-200, "Execution error"` after `OUTP 0`. The error response cannot

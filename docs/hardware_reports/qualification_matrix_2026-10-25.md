@@ -1,6 +1,6 @@
 # Hardware qualification matrix / Матрица аппаратной квалификации
 
-Исходная матрица из CODEX_HARDWARE_ROADMAP.ru.md, 2026-10-25. Current result: H01 PASS after an aborted first attempt; H02 PASS after a failed first attempt; H03 PARTIAL (CH1/CH2 CV/CC reviewed PASS; CH3 CV and CC function, display and electrical comparison observed PASS; status interpretation unresolved); H04–H12/O01/O02 NOT_RUN.
+Исходная матрица из CODEX_HARDWARE_ROADMAP.ru.md, 2026-10-25. Current result: H01 PASS after an aborted first attempt; H02 PASS after a failed first attempt; H03 PARTIAL (CH1/CH2 CV/CC reviewed PASS; CH3 CV/CC behavior, library mode decoding, display and electrical comparison observed PASS; operation-status interpretation unresolved); H04–H12/O01/O02 NOT_RUN.
 
 An earlier H03 CH3 resume aborted before a measurement: KEL103 `*IDN?` timed out, and the
 cleanup sequence read `-200, "Execution error"` after its first `OUTP 0`. The response
@@ -69,16 +69,18 @@ The runner stopped at its status guard (`UNKNOWN`, `OPER=8`, `QUES=1`); this is 
 SCPI error and does not indicate that CV failed to operate. Status interpretation/source
 remains unresolved. All channels and load were shut down and confirmed OFF. See [physical evidence](2026-10-26T000805.061853Z_H03_qualification.md).
 
-The next gated USB run completed CH3 CV and CC with live PSU/KEL103 display confirmations.
-CV: Keithley 3.99576 V / 0.0998173 A / 0.398929 W; KEL103 4.0003 V / 0.0999 A /
-0.3996 W; `OPER=8`, `QUES=1`. CC: Keithley 2.98031 V / 0.249532 A / 0.743684 W;
+The prior gated USB run completed CH3 CV and CC with live PSU/KEL103 display confirmations.
+CV: Keithley 3.99576 V / 0.0998173 A / 0.399012 W (SCPI power); KEL103 4.0003 V / 0.0999 A /
+0.3996 W; `OPER=8`, `QUES=1`. CC: Keithley 2.98781 V / 0.249532 A / 0.745347 W (SCPI power);
 KEL103 2.9840 V / 0.2487 A / 0.7421 W; `OPER=8`, `QUES=2`. Both comparisons passed H03
-tolerances and all 190 error-queue reads were `0, "No error"`. The operation status omits
+tolerances and all 192 error-queue reads were `0, "No error"`. The operation status omits
 the documented CV/CC bits in both modes while the questionable status, panel and electrical
-measurements agree; this telemetry discrepancy remains unresolved. Thus CH3 mode behavior
-is physically observed in both modes, while H03 remains PARTIAL on status qualification.
+measurements agree. The corrected library now returns CV and CC from questionable status on
+physical CH3 replay, while operation status remains inconsistent with the documented mode bits.
+CH3 mode behavior and library mode decoding are physically observed in both modes; H03 remains
+PARTIAL on operation-status qualification.
 All channels and KEL103 INPUT were read OFF and final physical OFF was confirmed. See
-[latest report](2026-10-26T002312.484924Z_H03_qualification.md) and [raw event log](../../reports/hardware/2026-10-26T002312.484924Z_H03/events.jsonl).
+[latest report](2026-10-26T003341.714219Z_H03_qualification.md) and [raw event log](../../reports/hardware/2026-10-26T003341.714219Z_H03/events.jsonl).
 
 H01 attempt: [2026-10-26 local / 2026-10-25 UTC report](2026-10-25T210502.973378Z_H01_preflight.md).
 Stopped on OUTP:PARA? after an I/O exception. Last channel ON bits were 0/0/0;
@@ -103,3 +105,11 @@ error-queue replies were zero. CH3 uses a distinct 5 V rating (CH1/2: 30 V), whi
 test capped it at 4 V / 0.5 A. A diagnostic runner update and offline regression are
 prepared but unrun. See the [latest physical trace](../../reports/hardware/2026-10-25T231834.474816Z_H03/events.jsonl)
 and [review report](2026-10-25T231834.474816Z_H03_qualification.md).
+
+
+Latest corrected CH3 replay (`2026-10-26T003341.714219Z`): `read_channel()` reported library
+regulation CV/CC from questionable masks 1/2 while operation masks remained 8. Keithley CV was
+3.99576 V / 0.0998173 A / 0.399012 W (SCPI power); CC was 2.98781 V / 0.249532 A / 0.745347 W.
+KEL103 readings were 4.0003 V / 0.0999 A / 0.3996 W and 2.9840 V / 0.2487 A / 0.7421 W.
+All 192 error-queue replies were `0, "No error"`; physical final OFF was confirmed. Outcome
+remains PARTIAL solely because operation-status mode qualification did not match.

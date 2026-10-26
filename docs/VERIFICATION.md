@@ -203,11 +203,11 @@ emergency-off path enters Remote, requests global OFF, checks all channels and
 individually issues `CHAN:OUTP 0` for any remaining ON channel. The full offline suite is
 56/56 SIM TESTED.
 H03 remains PARTIAL because CH3 mode-status telemetry is unqualified. The latest live-gated
-USB run completed both CH3 points. CV: Keithley 3.99576 V / 0.0998173 A / 0.398929 W;
-KEL103 4.0003 V / 0.0999 A / 0.3996 W. CC: Keithley 2.98031 V / 0.249532 A /
-0.743684 W; KEL103 2.9840 V / 0.2487 A / 0.7421 W. The operator confirmed PSU CV then
+USB run completed both CH3 points. CV: Keithley 3.99576 V / 0.0998173 A / 0.399012 W (SCPI power);
+KEL103 4.0003 V / 0.0999 A / 0.3996 W. CC: Keithley 2.98781 V / 0.249532 A /
+0.745347 W (SCPI power); KEL103 2.9840 V / 0.2487 A / 0.7421 W. The operator confirmed PSU CV then
 CC, KEL CR and INPUT ON at the live gates. Both electrical comparisons met H03 tolerances.
-All 190 Keithley `SYST:ERR?` replies were `0, "No error"`. For both powered points,
+All 192 Keithley `SYST:ERR?` replies were `0, "No error"`. For both powered points,
 `STAT:OPER:INST:ISUM3:COND?` returned `8` (ON only), while
 `STAT:QUES:INST:ISUM3:COND?` returned `1` (CV) and `2` (CC), respectively. The Keithley
 manual specifies CV/CC bits 0/1 in both channel summary registers and ON bit 3 in the
@@ -215,10 +215,11 @@ operation summary. The library defect is now localized: `read_channel()` decoded
 only from operation status. It now reads both registers, uses a single documented mode when
 the other has no mode bit, returns both masks on `Reading`, and reports UNKNOWN if the
 registers conflict. The strict H03 runner still records operation status separately. Offline
-regression passed 60/60; powered CH3 CV/CC replay is still required to verify the change on
-the instrument. All three outputs and KEL103 INPUT were read OFF, and the operator confirmed
-the final OFF state. See the [latest report](hardware_reports/2026-10-26T002312.484924Z_H03_qualification.md)
-and [raw event log](../reports/hardware/2026-10-26T002312.484924Z_H03/events.jsonl).
+regression passed 60/60. A powered CH3 replay physically verified that `read_channel()` now
+returns CV/CC from questionable status for both modes; operation status remains `8`, so the
+strict runner correctly leaves H03 PARTIAL. All three outputs and KEL103 INPUT were read OFF,
+and the operator confirmed the final OFF state. See the [latest report](hardware_reports/2026-10-26T003341.714219Z_H03_qualification.md)
+and [raw event log](../reports/hardware/2026-10-26T003341.714219Z_H03/events.jsonl).
 
 An earlier CH3 resume stopped before load or PSU profile configuration: KEL103 `*IDN?`
 timed out. During cleanup, the first Keithley command was `OUTP 0` while the instrument
