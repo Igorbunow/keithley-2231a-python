@@ -126,15 +126,27 @@ def require_outputs(dev, expected=None, *, settle_timeout_s=0.0):
         time.sleep(.1)
 
 
-def channel_snapshot(dev, channel, *, measured=False):
-    """Read and validate one selected channel through driver diagnostics."""
-    dev.diagnostic_write(f'INST:NSEL {channel}')
+def selected_settings(dev, *, measured=False):
+    """Observe the current selection and its registers without assigning a channel.
+
+    Combined modes may alias a requested channel. Callers must retain the actual
+    INST:NSEL? context rather than label its registers as the requested channel.
+    """
     commands = ('INST:NSEL?', 'VOLT?', 'CURR?', 'VOLT:LIM?', 'VOLT:LIM:STAT?',
                 'CHAN:OUTP?', 'OUTP:TIM:STAT?', 'OUTP:TIM:DEL?')
     if measured: commands += ('MEAS:VOLT?', 'MEAS:CURR?')
     values = {command: float(dev.diagnostic_query(command)) for command in commands}
-    if (not all(math.isfinite(v) for v in values.values()) or values['INST:NSEL?'] != channel or
+    if (not all(math.isfinite(v) for v in values.values()) or values['INST:NSEL?'] not in (1, 2, 3) or
             any(values[key] not in (0, 1) for key in ('VOLT:LIM:STAT?', 'CHAN:OUTP?', 'OUTP:TIM:STAT?'))):
+        raise SafetyError(f'Invalid selected settings snapshot: {values}')
+    return values
+
+
+def channel_snapshot(dev, channel, *, measured=False):
+    """Read one channel strictly; a selection alias is not a channel readback."""
+    dev.diagnostic_write(f'INST:NSEL {channel}')
+    values = selected_settings(dev, measured=measured)
+    if values['INST:NSEL?'] != channel:
         raise SafetyError(f'Invalid CH{channel} settings snapshot: {values}')
     return values
 

@@ -157,6 +157,11 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         recall_preflight(port)
         return
     row = stages()[test_id]
+    if test_id == 'H09':
+        print('[H09] Series — первая OFF-подгруппа')
+        from h09_stage import preflight as h09_preflight
+        h09_preflight(port)
+        return
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
     if test_id == 'H08':
         from h08_stage import preflight as h08_preflight
@@ -658,7 +663,7 @@ def main(argv=None):
     if args.command == 'preflight' or not args.execute:
         print('DRY RUN: порт не открыт, SCPI не отправлены.')
         return 0
-    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08'):
+    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
     if args.test_id in ('H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07') and not stage_passed(stages()['H01'][-1]):
@@ -680,6 +685,13 @@ def main(argv=None):
         print('BLOCKED: требуется рассмотренный PASS H06; порт не открыт.')
         return 2
     token, final_token, runner = TOKEN, FINAL_TOKEN, h01
+    if args.test_id == 'H09':
+        required = ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08')
+        if any(not stage_passed(stages()[stage][-1]) for stage in required):
+            print('BLOCKED: H09 requires reviewed PASS H01–H08; port not opened.')
+            return 2
+        from h09_stage import TOKEN as token, FINAL_TOKEN as final_token, h09
+        runner = h09
     if args.test_id == 'H08':
         required = ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07')
         if any(not stage_passed(stages()[stage][-1]) for stage in required):
@@ -759,7 +771,8 @@ def main(argv=None):
                            if args.test_id == 'H08' else
                            'independent; CH1/CH2/CH3 negative terminals tied to scope common'
                            if args.test_id == 'H05' else 'independent; no jumpers; no DUT'),
-                 subgroup='output_recall' if args.recall else None,
+                 subgroup=('series_off_diagnostic' if args.test_id == 'H09' else
+                           'output_recall' if args.recall else None),
                  load=('disconnected; KEL103 INPUT OFF; scope disconnected; no jumpers'
                        if args.recall else
                        f'KORAD KEL103; UDP port {args.load_port}; input OFF'
@@ -768,7 +781,10 @@ def main(argv=None):
                        '115200 8N1; USB link previously HW OBSERVED on H03; input OFF'
                        if args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07')
                        else 'disconnected; input OFF'),
-                 proposed_caps=('H08 V-cap 2/3/4 V, I-cap 0.300/0.400/0.500 A; '
+                 proposed_caps=('H09 OFF only: V-set 1/1.5/2 V, I-set 0.100/0.200/0.300 A; '
+                                'V-cap 2/3/4 V, software I-cap 0.300/0.400/0.500 A; ON forbidden'
+                                if args.test_id == 'H09' else
+                                'H08 V-cap 2/3/4 V, I-cap 0.300/0.400/0.500 A; '
                                 'I-set 0.100/0.200/0.300 A; CH1 1..1.4 V, CH2 1..2.8 V, CH3 0.5 V'
                                 if args.test_id == 'H08' else
                                 'unchanged; initial unknown' if args.test_id == 'H01' else

@@ -126,9 +126,9 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(fake.values[2]['CHAN:OUTP'], 1.0)
         self.assertFalse(dev.armed)
         self.assertEqual(fake.cmds, ['*IDN?', 'SYST:REM', 'INST:NSEL?',
-                                   'INST:NSEL 1', 'CHAN:OUTP?',
-                                   'INST:NSEL 2', 'CHAN:OUTP?',
-                                   'INST:NSEL 3', 'CHAN:OUTP?',
+                                   'INST:NSEL 1', 'INST:NSEL?', 'CHAN:OUTP?',
+                                   'INST:NSEL 2', 'INST:NSEL?', 'CHAN:OUTP?',
+                                   'INST:NSEL 3', 'INST:NSEL?', 'CHAN:OUTP?',
                                    'INST:NSEL 1'])
 
     def test_output_states_preserves_profile_and_does_not_retry_faults(self):
@@ -504,6 +504,35 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(r.label,'CH1+CH2')
         self.assertIsNone(r.voltage_set_v)
         self.assertIsNone(r.current_limit_set_a)
+
+    def test_combined_mode_cannot_arm_with_aliased_selection_or_changed_limits(self):
+        for fault in ('selection', 'limit_state', 'limit_value'):
+            with self.subTest(fault=fault):
+                class CombinedSource(FakeTransport):
+                    def query(self, command):
+                        value = super().query(command)
+                        if self.flags['OUTP:SER']:
+                            if fault == 'selection' and command == 'INST:NSEL?': return '1'
+                            if fault == 'limit_state' and command == 'VOLT:LIM:STAT?': return '0'
+                            if fault == 'limit_value' and command == 'VOLT:LIM?': return '5'
+                        return value
+                source = CombinedSource()
+                dev = Keithley2231A(source)
+                with self.assertRaises(SafetyError):
+                    dev.apply_profile(profile('series'), confirmed_wiring='series')
+                self.assertFalse(dev.armed)
+                self.assertTrue(dev.faulted)
+                self.assertNotIn('OUTP 1', source.cmds)
+
+    def test_output_states_refuses_a_channel_selection_alias(self):
+        class AliasedSource(FakeTransport):
+            def write(self, command):
+                super().write(command)
+                if command == 'INST:NSEL 2': self.active_ch = 1
+        source = AliasedSource()
+        dev = Keithley2231A(source)
+        with self.assertRaises(SafetyError): dev.output_states()
+        self.assertTrue(dev.faulted)
 
     def test_fixed_setpoint_tampering_within_caps_trips(self):
         for key, value in (('VOLT', 1.01), ('CURR', .101)):

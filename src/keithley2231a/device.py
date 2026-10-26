@@ -356,6 +356,9 @@ class Keithley2231A:
         try:
             for ch in (1, 2, 3):
                 self._select(ch)
+                actual = self._num('INST:NSEL?')
+                if actual != ch:
+                    raise SafetyError(f'Cannot read CH{ch} output state: selected channel is {actual:g}')
                 states[ch] = self._bool(self._query('CHAN:OUTP?'))
         finally:
             if not self._link_uncertain:
@@ -444,6 +447,10 @@ class Keithley2231A:
                     raise SafetyError('Unexpected output ON while applying profile')
                 self._last_verify = time.monotonic()
                 self._armed = True  # Outputs remain OFF until explicitly enabled.
+                if profile.wiring in ('series', 'parallel'):
+                    # Changing combine mode can change the exposed limit/register
+                    # context. Never arm on checks made before the transition.
+                    self.verify_profile()
             except BaseException:
                 self._profile = None
                 self._armed = False
