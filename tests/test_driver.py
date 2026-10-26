@@ -1,13 +1,14 @@
 import math
 import unittest
 from dataclasses import replace
-from keithley2231a import (Profile, ChannelProfile, LimitsError, SafetyError,
+from keithley2231a import (Profile, ChannelProfile, InstrumentError, LimitsError, SafetyError,
                           Keithley2231A, Acquisition, ChannelStats, Reading)
 
 class FakeTransport:
     """Stateful minimal SCPI emulator; validates command sequences, no hardware."""
     def __init__(self):
         self.cmds = []
+        self.remote = False
         self.active_ch = 1
         self.values = {ch: {'VOLT': 0., 'CURR': 0., 'VOLT:LIM': 30.,
                             'VOLT:LIM:STAT': 0., 'CHAN:OUTP': 0.,
@@ -20,6 +21,14 @@ class FakeTransport:
 
     def write(self, cmd):
         self.cmds.append(cmd)
+        if cmd in ('SYST:REM', 'SYST:RWLOCK'):
+            self.remote = True
+            return
+        if cmd == 'SYST:LOC':
+            self.remote = False
+            return
+        if not self.remote:
+            raise RuntimeError('SCPI command requires Remote mode')
         arg = cmd.split(' ', 1)
         key = arg[0].upper()
         if key == 'INST:NSEL': self.active_ch = int(arg[1]); return
@@ -39,6 +48,8 @@ class FakeTransport:
 
     def query(self, cmd):
         self.cmds.append(cmd)
+        if not self.remote and cmd not in ('*IDN?', 'SYST:ERR?'):
+            raise RuntimeError('SCPI query requires Remote mode')
         if cmd == self.failed_query: raise RuntimeError('simulated link failure')
         key = cmd.upper().removesuffix('?')
         if key == '*IDN': return 'Keithley instruments, 2231A-30-3, TEST, 1.04-1.04'
@@ -63,6 +74,8 @@ class FakeTransport:
         raise AssertionError(f'Unexpected query: {cmd}')
 
     def close(self): self.closed = True
+
+    def set_debug_status_trace(self, observer): self.debug_status_trace = observer
 
 def profile(wiring='independent', expected='auto'):
     return Profile('demo', (
@@ -89,6 +102,134 @@ class TestDevice(unittest.TestCase):
         self.fake = FakeTransport()
         self.dev = Keithley2231A(self.fake)
         self.dev.apply_profile(profile())
+
+    def test_output_states_handles_initial_local_without_changing_outputs(self):
+        fake = FakeTransport()
+        fake.values[2]['CHAN:OUTP'] = 1.0
+        dev = Keithley2231A(fake)
+        self.assertEqual(dev.output_states(), {1: False, 2: True, 3: False})
+        self.assertEqual(fake.values[2]['CHAN:OUTP'], 1.0)
+        self.assertFalse(dev.armed)
+        self.assertEqual(fake.cmds, ['*IDN?', 'SYST:REM',
+                                   'STAT:OPER:INST:ISUM1:COND?',
+                                   'STAT:OPER:INST:ISUM2:COND?',
+                                   'STAT:OPER:INST:ISUM3:COND?'])
+
+    def test_output_states_preserves_profile_and_does_not_retry_faults(self):
+        self.fake.cmds.clear()
+        self.assertEqual(self.dev.output_states(), {1: False, 2: False, 3: False})
+        self.assertNotIn('SYST:REM', self.fake.cmds)
+        self.assertTrue(self.dev.armed)
+        self.fake.failed_query = 'STAT:OPER:INST:ISUM2:COND?'
+        with self.assertRaises(RuntimeError): self.dev.output_states()
+        self.assertTrue(self.dev.faulted)
+        before = list(self.fake.cmds)
+        with self.assertRaises(SafetyError): self.dev.output_states()
+        self.assertEqual(self.fake.cmds, before)
+
+    def test_output_states_rejects_wrong_identity_before_remote_entry(self):
+        fake = FakeTransport()
+        dev = Keithley2231A(fake, expected_serial='OTHER')
+        with self.assertRaisesRegex(InstrumentError, 'serial number mismatch'):
+            dev.output_states()
+        self.assertEqual(fake.cmds, ['*IDN?'])
+        self.assertTrue(dev.faulted)
+
+    def test_debug_queries_share_remote_setup_and_are_disabled_by_default(self):
+        fake = FakeTransport()
+        dev = Keithley2231A(fake)
+        with self.assertRaises(SafetyError): dev.diagnostic_query('VOLT?')
+        self.assertEqual(fake.cmds, [])
+        events = []
+        dev = Keithley2231A(fake, debug=True, debug_trace=events.append)
+        self.assertEqual(dev.diagnostic_query('VOLT?'), '0.0')
+        self.assertEqual(fake.cmds, ['*IDN?', 'SYST:REM', 'VOLT?'])
+        self.assertEqual([e['command'] for e in events if e['event'] in ('write', 'query')], fake.cmds)
+        self.assertNotIn('TEST', repr(events))
+        with self.assertRaises(ValueError): dev.diagnostic_query('VOLT?;OUTP 1')
+        dev.diagnostic_write('SYSTem:LOCal')
+        self.assertEqual(dev.diagnostic_query('VOLT?'), '0.0')
+        self.assertEqual(fake.cmds[-3:], ['SYST:LOC', 'SYST:REM', 'VOLT?'])
+
+    def test_debug_profile_bypass_is_explicit_and_soft_rejection_sends_nothing(self):
+        class VoltageLimitedFake(FakeTransport):
+            pending_error = False
+
+            def write(self, command):
+                values = self.values[self.active_ch]
+                before = values['VOLT']
+                super().write(command)
+                if (command.startswith('VOLT ') and values['VOLT:LIM:STAT'] and
+                        values['VOLT'] > values['VOLT:LIM']):
+                    values['VOLT'] = before
+                    self.pending_error = True
+
+            def query(self, command):
+                answer = super().query(command)
+                if command == 'SYST:ERR?' and self.pending_error:
+                    self.pending_error = False
+                    return '120,"Out of voltage setting range"'
+                return answer
+
+        fake = VoltageLimitedFake()
+        dev = Keithley2231A(fake, debug=True)
+        dev.apply_profile(profile())
+        before = list(fake.cmds)
+        with self.assertRaises(LimitsError): dev.diagnostic_write('VOLT 3.31')
+        self.assertEqual(fake.cmds, before)
+        dev.debug_bypass_profile = True
+        with self.assertRaises(LimitsError): dev.set_channel(3, voltage=3.31)
+        self.assertEqual(fake.cmds, before)
+        dev.diagnostic_write('VOLT 3.31')
+        self.assertEqual(fake.cmds[-1], 'VOLT 3.31')
+        self.assertEqual(dev.diagnostic_query('SYST:ERR?'), '120,"Out of voltage setting range"')
+        self.assertEqual(fake.values[3]['VOLT'], 1.0)
+        dev.debug_bypass_profile = False
+        before = list(fake.cmds)
+        with self.assertRaises(LimitsError): dev.diagnostic_write('VOLT 3.31')
+        self.assertEqual(fake.cmds, before)
+        ordinary = Keithley2231A(FakeTransport())
+        with self.assertRaises(SafetyError): ordinary.debug_bypass_profile = True
+        wrong = FakeTransport()
+        dev = Keithley2231A(wrong, debug=True, debug_bypass_profile=True, expected_serial='OTHER')
+        dev.diagnostic_write('SYST:REM')
+        with self.assertRaises(InstrumentError): dev.diagnostic_write('VOLT 1.00')
+        self.assertEqual(wrong.cmds, ['SYST:REM', '*IDN?'])
+
+    def test_normal_and_debug_profiles_use_identical_wire_sequences(self):
+        normal, diagnostic = FakeTransport(), FakeTransport()
+        events = []
+        Keithley2231A(normal).apply_profile(profile())
+        Keithley2231A(diagnostic, debug=True, debug_trace=events.append).apply_profile(profile())
+        self.assertEqual(normal.cmds, diagnostic.cmds)
+        self.assertEqual([e['command'] for e in events if e['event'] in ('write', 'query')], normal.cmds)
+
+    def test_debug_adapter_cannot_send_outside_driver_dispatch(self):
+        fake = FakeTransport()
+        dev = Keithley2231A(fake, debug=True, debug_adapter=lambda channel: channel)
+        with self.assertRaises(SafetyError): dev.debug_transport.query('VOLT?')
+        self.assertEqual(fake.cmds, [])
+        self.assertEqual(dev.diagnostic_query('VOLT?'), '0.0')
+
+    def test_interrupted_wire_query_latches_uncertain_link_for_both_modes(self):
+        from keithley2231a import TransportError
+
+        class InterruptedFake(FakeTransport):
+            def query(self, command):
+                if command == 'STAT:OPER:INST:ISUM1:COND?':
+                    self.cmds.append(command)
+                    raise KeyboardInterrupt()
+                return super().query(command)
+
+        for debug in (False, True):
+            with self.subTest(debug=debug):
+                fake = InterruptedFake()
+                dev = Keithley2231A(fake, debug=debug)
+                with self.assertRaises(KeyboardInterrupt): dev.output_states()
+                before = list(fake.cmds)
+                with self.assertRaises(TransportError): dev.emergency_off()
+                self.assertEqual(fake.cmds, before)
+                self.assertTrue(dev.faulted)
 
     def test_outputs_off_after_apply(self):
         self.assertEqual(self.fake.flags['OUTP:STAT:ALL'],0)

@@ -50,6 +50,47 @@ qualification-specific: record the version shown in the instrument menu and the 
 
 [Keithley/Tektronix official reference manual (PDF)](https://download.tek.com/manual/077100401_Referencemanual.pdf) · [Upstream product documentation](https://www.tek.com/en/tektronix-and-keithley-dc-power-supplies/keithley-2220-2230-2231-series-manual-0)
 
+## Shared session and diagnostic mode
+
+`output_states()` reads all three ON states before or after a profile is applied.
+The driver validates identity and enters Remote when necessary. Queries do not
+configure setpoints or energize outputs. Ordinary API and diagnostics share one
+command dispatcher, Remote/Local tracking, locking and fault handling.
+
+Diagnostics are disabled by default. Use `debug=True` to enable
+`diagnostic_query()`, `diagnostic_write()` and optional `debug_trace=callback`.
+Trace records redact the identity serial field. Optional `debug_wire_trace=callback`
+records actual UART bytes for status commands only; identity bytes are excluded.
+
+Without an override, diagnostic `VOLT`/`CURR` writes use `set_channel()` and its
+profile guards. Raw configuration requires the additional explicit flag
+`debug_bypass_profile=True`. This flag affects diagnostic writes only: normal
+`set_channel()` still enforces software caps. A test can therefore prove software
+rejection first, then test the instrument limit through the same dispatcher.
+
+```python
+# Existing debug-enabled instance, validated profile and all outputs OFF.
+psu.diagnostic_write('INST:NSEL 1')
+# A request above the profile cap is rejected before sending SCPI.
+psu.debug_bypass_profile = True
+try:
+    psu.diagnostic_write('VOLT 4.51')  # Only in an approved 4.50 V limit test.
+    reply = psu.diagnostic_query('SYST:ERR?')  # Preserve the actual rejection.
+finally:
+    psu.debug_bypass_profile = False
+```
+
+The override intentionally bypasses software profile restrictions; it does not
+bypass a failed link, session ownership or a qualification adapter's command scope.
+It is never enabled automatically. A wire failure, including an interrupted query,
+latches the connection as uncertain; neither API reconnects or retries it.
+`debug_adapter` is a qualification policy factory around the same command engine;
+sending directly through that adapter is refused outside driver dispatch.
+
+H01–H05 use this mechanism and shared checks in `tests/hardware/common.py`.
+Historical hardware reports apply to their recorded source versions; the changed
+path requires H01/H02/H03/H04/H04P replay before H05 proceeds.
+
 ## CH3 status workaround and limitations
 
 CH3 remains available through the normal profile, `set_channel(3, ...)`,

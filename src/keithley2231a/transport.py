@@ -26,6 +26,18 @@ class SerialTransport:
         self._terminator = terminator
         self._lock = threading.RLock()
         self._failed = False
+        self._debug_status_trace = None
+
+    def set_debug_status_trace(self, observer):
+        """Install a driver-controlled status-byte observer; None disables it."""
+        if observer is not None and not callable(observer):
+            raise TypeError('status observer must be callable or None')
+        with self._lock: self._debug_status_trace = observer
+
+    def _trace_status(self, event, command, payload):
+        if self._debug_status_trace is not None and command.upper().startswith(('STAT:', 'STATUS:')):
+            field = 'tx_hex' if event == 'status_wire_write' else 'rx_hex'
+            self._debug_status_trace(dict(event=event, command=command, **{field: payload.hex(' ')}))
 
     def write(self, line: str) -> None:
         if '\n' in line or '\r' in line: raise ValueError("one command per line")
@@ -33,6 +45,7 @@ class SerialTransport:
             if self._failed: raise TransportError('serial link uncertain; close and requalify before reconnecting')
             try:
                 message = line.encode("ascii") + self._terminator
+                self._trace_status('status_wire_write', line, message)
                 if self._serial.write(message) != len(message):
                     raise TransportError('short serial write')
                 self._serial.flush()
@@ -49,6 +62,7 @@ class SerialTransport:
                     raise TransportError('unsolicited/stale serial input')
                 self.write(line)
                 reply = self._serial.readline(4097)
+                self._trace_status('status_wire_read', line, reply)
                 if not reply.endswith(b"\n") or len(reply) > 4096:
                     raise TransportError('incomplete/oversized/timeout reply')
                 return reply.decode("ascii").strip()

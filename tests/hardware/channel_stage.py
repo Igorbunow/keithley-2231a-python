@@ -15,6 +15,8 @@ import re
 import socket
 import time
 
+from common import StageAdapter, operator_gate, require_outputs
+
 from keithley2231a import ChannelProfile, Keithley2231A, Profile, SafetyError
 
 TOKEN = ('CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED '
@@ -53,29 +55,6 @@ def approval_token(start_channel, load_transport='udp', load_host='192.168.22.10
     action = 'DIAGNOSTIC_CH3' if diagnose_status else f'RESUME_CH{start_channel}'
     return (f'CONFIRM H03 {action} INDEPENDENT ALL_OFF '
             f'LOAD=KEL103 INPUT=OFF {connection} VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
-
-
-class StatusWireTrace:
-    """Observe serial status bytes without changing framing or logging identity bytes."""
-    def __init__(self, serial_port, evidence):
-        self.serial_port, self.evidence = serial_port, evidence
-        self.status_command = None
-
-    def __getattr__(self, name):
-        return getattr(self.serial_port, name)
-
-    def write(self, data):
-        command = data.decode('ascii').strip()
-        self.status_command = command if command.upper().startswith(('STAT:', 'STATUS:')) else None
-        if self.status_command:
-            self.evidence.add('status_wire_write', command=command, tx_hex=data.hex(' '))
-        return self.serial_port.write(data)
-
-    def readline(self, size):
-        data = self.serial_port.readline(size)
-        if self.status_command:
-            self.evidence.add('status_wire_read', command=self.status_command, rx_hex=data.hex(' '))
-        return data
 
 
 class KEL103UDP:
@@ -338,187 +317,54 @@ def profile():
         verify_every_s=3600.0)
 
 
-def command_plan(start_channel=1, diagnose_status=False):
-    """Return the exact successful SCPI trace for this library version.
+class H03Scope(StageAdapter):
+    """Approved commands; driver methods own their execution sequences."""
+    READS = frozenset(
+        ('*IDN?', 'CHAN:OUTP?', 'CURR?', 'INST:NSEL?', 'MEAS:CURR?', 'MEAS:POW?', 'MEAS:VOLT?',
+         'OUTP:PARALLEL?', 'OUTP:SER?', 'OUTP:TIM:STAT?', 'OUTP:TRAC?',
+         'STAT:OPER:INST:ISUM1:COND?', 'STAT:OPER:INST:ISUM2:COND?',
+         'STAT:OPER:INST:ISUM3:COND?', 'STAT:OPER:INST:ISUM3:ENAB?',
+         'STAT:QUES:INST:ISUM1:COND?', 'STAT:QUES:INST:ISUM2:COND?',
+         'STAT:QUES:INST:ISUM3:COND?', 'STAT:QUES:INST:ISUM3:ENAB?',
+         'STATus:OPERation:INSTrument:ISUMmary3:CONDition?',
+         'STATus:QUEStionable:INSTrument:ISUMmary3:CONDition?', 'SYST:ERR?', 'VOLT:LIM:STAT?',
+         'VOLT:LIM?', 'VOLT?')
+    )
+    WRITES = frozenset(
+        ('CHAN:OUTP 0', 'CHAN:OUTP 1', 'CURR 0', 'CURR 0.250', 'CURR 0.500', 'INST:NSEL 1',
+         'INST:NSEL 2', 'INST:NSEL 3', 'OUTP 0', 'OUTP:PARALLEL 0', 'OUTP:SER 0',
+         'OUTP:TIM:STAT 0', 'OUTP:TRAC 0', 'SYST:LOC', 'SYST:REM', 'VOLT 0', 'VOLT 4.00',
+         'VOLT:LIM 4.00', 'VOLT:LIM:STAT 1')
+    )
+    MAX_SECONDS = 600
 
-    Every write except LOC is followed by an error queue read by StageIO. The
-    sequence mirrors apply_profile(), verify_profile(), set_channel(), output(),
-    and read_channel(); drift is rejected before transmission.
-    """
-    if start_channel not in (1, 2, 3):
-        raise ValueError('start_channel must be 1, 2 or 3')
-    if diagnose_status and start_channel != 3:
-        raise ValueError('status diagnosis is restricted to CH3')
-    plan = []
-    def add(*commands):
-        for command in commands:
-            plan.append(command)
-            if command not in ('SYST:ERR?', 'SYST:LOC'):
-                plan.append('SYST:ERR?')
-    def select(ch): add(f'INST:NSEL {ch}')
-    def status(): add(*OFF)
-    def check_setpoints(ch): select(ch); add('VOLT?', 'CURR?')
-    def wiring(): add(*MODES)
-    def verify():
-        wiring(); status()
-        for ch in (1, 2, 3):
-            select(ch); add('VOLT:LIM:STAT?', 'VOLT:LIM?')
-            check_setpoints(ch)
-    # Public apply_profile() success trace.
-    plan.append('SYST:ERR?')  # Attribute any queued error before the first mutation.
-    add('SYST:REM', '*IDN?', 'OUTP 0', *OFF,
-        'OUTP:SER 0', 'OUTP:PARALLEL 0', 'OUTP:TRAC 0')
-    for ch in (1, 2, 3):
-        select(ch)
-        add('OUTP:TIM:STAT 0', 'OUTP:TIM:STAT?', 'VOLT 0', 'CURR 0',
-            'VOLT:LIM 4.00', 'VOLT:LIM:STAT 1', 'VOLT:LIM:STAT?', 'VOLT:LIM?',
-            'CURR 0.500', 'VOLT 4.00')
-        check_setpoints(ch)
-    wiring(); status()
-    for ch in range(start_channel, 4):
-        for mode in ('CV', 'CC'):
-            if mode == 'CC':
-                verify()
-                select(ch); add('CURR 0.250')
-                check_setpoints(ch)
-                # set_channel() performs one final readback for each changed
-                # setpoint; CC changes current only.
-                select(ch); add('CURR?')
-            verify()
-            select(ch); add('CHAN:OUTP 1', 'CHAN:OUTP?')
-            status()
-            # read_channel(): selected output, U/I, setpoints and status bits.
-            select(ch); add('CHAN:OUTP?', 'MEAS:VOLT?', 'MEAS:CURR?', 'VOLT?',
-                            'CURR?', f'STAT:OPER:INST:ISUM{ch}:COND?',
-                            f'STAT:QUES:INST:ISUM{ch}:COND?', 'MEAS:POW?',
-                            f'STAT:OPER:INST:ISUM{ch}:COND?',
-                            f'STAT:QUES:INST:ISUM{ch}:COND?')
-            if diagnose_status:
-                # Early sample, followed by independent display confirmation.
-                add('INST:NSEL 3', *STATUS_DIAGNOSTIC_QUERIES)
-                # A late sample at >=5 s, then repeat with CH1 selected.
-                add('INST:NSEL 3', *STATUS_DIAGNOSTIC_QUERIES)
-                add('INST:NSEL 1', *STATUS_DIAGNOSTIC_QUERIES)
-                add('INST:NSEL 3', 'INST:NSEL?')
-            select(ch); add('CHAN:OUTP 0', 'CHAN:OUTP?')
-            status()
-    # emergency_off() verifies all channels, then h03() performs its final
-    # independent all-off check before returning local control.
-    add('SYST:REM', 'OUTP 0', *OFF, *OFF, 'INST:NSEL 1', 'SYST:LOC')
-    return tuple(plan)
-
-
-class StageIO:
-    """Exact success-path guard and error-queue check for H03."""
     def __init__(self, transport, evidence, start_channel=1, diagnose_status=False):
-        self.transport, self.evidence = transport, evidence
-        self.plan, self.index = command_plan(start_channel, diagnose_status), 0
-        self.live, self.cleanup = True, False
-        self.selected = 1
-        self.authorized_channel = None
-        self.started = time.monotonic()
+        if start_channel not in (1, 2, 3) or (diagnose_status and start_channel != 3):
+            raise ValueError('Invalid H03 channel/diagnostic scope')
+        super().__init__(transport, evidence)
 
-    def _transfer(self, command, is_query):
-        if not self.live:
-            raise OSError('uncertain link; no further SCPI')
-        if not is_query:
-            if command == 'OUTP 1':
-                raise ValueError('global output ON is forbidden in H03')
-            if command == 'CHAN:OUTP 1' and self.authorized_channel != self.selected:
-                raise ValueError('individual ON requires a matching confirmed operator gate')
-        if self.cleanup:
-            allowed = ('SYST:REM', 'OUTP 0', 'SYST:ERR?', *OFF, 'SYST:LOC',
-                       'INST:NSEL 1', 'INST:NSEL 2', 'INST:NSEL 3', 'CHAN:OUTP 0')
-            if command not in allowed:
-                raise ValueError('only shutdown is permitted after H03 failure')
-        else:
-            if time.monotonic() - self.started > 600:
-                raise TimeoutError('H03 10-minute stage budget exceeded')
-            if self.index >= len(self.plan) or command != self.plan[self.index]:
-                raise ValueError(f'SCPI differs from approved H03 plan at step {self.index + 1}: {command}')
-            self.index += 1
-        self.evidence.add('query' if is_query else 'write', command=command)
-        try:
-            response = self.transport.query(command) if is_query else self.transport.write(command)
-        except BaseException as exc:
-            self.live = False
-            self.evidence.add('io_error', command=command,
-                              exception_type=type(exc).__name__,
-                              cause_type=type(exc.__cause__).__name__ if exc.__cause__ else None)
-            raise
-        if is_query:
-            units = {'MEAS:VOLT?': 'V', 'MEAS:CURR?': 'A', 'MEAS:POW?': 'W',
-                     'VOLT?': 'V', 'VOLT:LIM?': 'V', 'CURR?': 'A'}
-            record = self.evidence.add('read', command=command, response=response,
-                                       units=units.get(command))
-            print(f'{command}: {record["response"]}')
-            if command != 'SYST:ERR?':
-                self._check_error_queue()
-            return response
-        if command.startswith('INST:NSEL '):
-            self.selected = int(command.rsplit(' ', 1)[1])
-        if command != 'SYST:LOC':
-            self._check_error_queue(command)
-        return response
-
-    def _check_error_queue(self, command='query'):
-        error = self._transfer('SYST:ERR?', True)
-        code, message = error.split(',', 1)
-        if int(code.strip()) != 0 or not message.strip():
-            raise ValueError(f'instrument error after {command}: {error}')
-
-    def query(self, command): return self._transfer(command, True)
-    def write(self, command): self._transfer(command, False)
+    def _validate(self, command, query):
+        super()._validate(command, query)
+        if command == 'CHAN:OUTP 1' and self.authorized_channel != self.selected:
+            raise ValueError('Individual ON requires a matching operator gate')
 
 
-def guarded_profile(): return profile()
-
-
-def _gate(token, prompt):
-    print(prompt)
-    while True:
-        try: answer = input(f'Подтверждение: {token}\n> ').strip()
-        except (EOFError, KeyboardInterrupt): raise InterruptedError('operator gate interrupted')
-        if answer == token:
-            return
-        print('Подтверждение не распознано; ожидаю повторный ввод. Для остановки — Ctrl-C.')
-
-
-def _all_off(io):
-    for command in OFF:
-        raw = io.query(command)
-        value = float(raw)
-        if not math.isfinite(value) or value != int(value) or not 0 <= value <= 255 or int(value) & 8:
-            raise SafetyError(f'CH status not OFF: {command}={raw}')
-
-
-def _only_target_on(io, target):
-    """Confirm operation-register ON bits while the one approved channel runs."""
-    for ch, command in enumerate(OFF, 1):
-        raw = io.query(command)
-        value = float(raw)
-        if not math.isfinite(value) or value != int(value) or not 0 <= value <= 255:
-            raise SafetyError(f'invalid CH{ch} operation status: {raw}')
-        if bool(int(value) & 8) != (ch == target):
-            raise SafetyError(f'expected only CH{target} ON; CH{ch} status={raw}')
-
-
-def _display_gate(evidence, channel, mode, readings):
+def _display_gate(evidence, channel, mode, readings, io):
     """Require independent panel confirmation against the network readbacks."""
     token = f'CONFIRM H03 DISPLAY CH{channel} PSU={mode} KEL=CR INPUT=ON'
-    _gate(token, f"Проверьте на Keithley режим {mode}; на KEL103 — CR, INPUT ON. "
+    operator_gate(token, f"Проверьте на Keithley режим {mode}; на KEL103 — CR, INPUT ON. "
           f"Сверьте дисплей KEL103 с сетевыми показаниями "
           f"{readings['kel103_voltage_v']:.4f} V / {readings['kel103_current_a']:.4f} A / "
-          f"{readings['kel103_power_w']:.4f} W. При любом расхождении не подтверждайте.")
+          f"{readings['kel103_power_w']:.4f} W. При любом расхождении не подтверждайте.", io)
     evidence.add('operator_display_confirmation', token=token, channel=channel,
                  keithley_panel_mode=mode, kel103_panel_mode='CR', kel103_panel_input='ON',
                  kel103_display_matches_remote=True)
 
 
-def _status_snapshot(io, evidence, mode, phase, selected_channel, output_started):
+def _status_snapshot(dev, io, evidence, mode, phase, selected_channel, output_started):
     """Record direct status replies; the library regulation decoder is bypassed."""
-    io.write(f'INST:NSEL {selected_channel}')
-    responses = {command: io.query(command) for command in STATUS_DIAGNOSTIC_QUERIES}
+    dev.diagnostic_write(f'INST:NSEL {selected_channel}')
+    responses = {command: dev.diagnostic_query(command) for command in STATUS_DIAGNOSTIC_QUERIES}
     values = {command: float(answer) for command, answer in responses.items()}
     evidence.add('status_diagnostic', channel=3, mode=mode, phase=phase,
                  selected_channel=selected_channel,
@@ -540,8 +386,11 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
     """Run H03 once; operator wires and confirms panels, UDP controls KEL103."""
     if start_channel not in (1, 2, 3):
         raise ValueError('start_channel must be 1, 2 or 3')
-    io = StageIO(transport, evidence, start_channel, diagnose_status)
-    dev = Keithley2231A(io)
+    dev = Keithley2231A(transport, debug=True,
+                         debug_wire_trace=(lambda record: evidence.add(**record)) if diagnose_status else None,
+                         debug_trace=lambda record: evidence.add('driver_trace', trace=record),
+                         debug_adapter=lambda channel: H03Scope(channel, evidence, start_channel, diagnose_status))
+    io = dev.debug_transport
     outcome, reason = 'ABORTED', 'incomplete H03'
     status_unqualified = False
     try:
@@ -551,7 +400,7 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
         load_transport_name = getattr(load, 'transport', type(load).__name__)
         evidence.add('kel103_preflight', connection=load.port,
                      transport=load_transport_name, input_state='OFF')
-        baseline_error = io.query('SYST:ERR?')
+        baseline_error = dev.diagnostic_query('SYST:ERR?')
         try:
             error_code, error_message = baseline_error.split(',', 1)
             clean_queue = int(error_code.strip()) == 0 and bool(error_message.strip())
@@ -561,7 +410,7 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
                      clean=clean_queue)
         if not clean_queue:
             raise ValueError(f'pre-existing instrument error before H03: {baseline_error}')
-        dev.apply_profile(guarded_profile())
+        dev.apply_profile(profile())
         if not dev.armed or dev.faulted or dev.profile.wiring != 'independent':
             raise SafetyError('H03 profile not armed in independent mode')
         evidence.add('profile', name='H03 CV CC qualification', voltage_cap_v=4.0,
@@ -577,8 +426,8 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
         for channel in range(start_channel, 4):
             if previous_channel is not None:
                 move = f'CONFIRM H03 MOVE CH{previous_channel}->CH{channel} ALL_OFF LOAD=OFF'
-                _gate(move, f'Keithley и KEL103 OFF; отключите нагрузку от CH{previous_channel}, '
-                      f'проверьте отсутствие напряжения и подключите полярность только CH{channel}.')
+                operator_gate(move, f'Keithley и KEL103 OFF; отключите нагрузку от CH{previous_channel}, '
+                      f'проверьте отсутствие напряжения и подключите полярность только CH{channel}.', io)
                 evidence.add('operator_gate', token=move, action='load relocation',
                              from_channel=previous_channel, to_channel=channel)
             for mode, resistance in (('CV', '40.0'), ('CC', '12.0')):
@@ -586,10 +435,10 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
                     # Change only the target-channel current setpoint while OFF.
                     dev.set_channel(channel, current=0.250)
                 token = f'CONFIRM H03 CH{channel} {mode} CR={resistance} CONNECTED PSU=OFF'
-                _gate(token, f'CH{channel}: Keithley OFF; INPUT KEL103 OFF. Подключите '
+                operator_gate(token, f'CH{channel}: Keithley OFF; INPUT KEL103 OFF. Подключите '
                       f'KEL103 только к CH{channel} (+ к +, − к −), остальные каналы '
                       f'оставьте неподключёнными. Runner проверит и задаст CR {resistance} Ω, '
-                      'затем включит INPUT; источник останется OFF до отдельной команды.')
+                      'затем включит INPUT; источник останется OFF до отдельной команды.', io)
                 evidence.add('operator_gate', token=token, channel=channel, mode=mode,
                              connection=f'KEL103 to CH{channel}; correct polarity',
                              other_channels='OFF', psu_output='OFF')
@@ -600,21 +449,21 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
                 io.authorized_channel = channel
                 dev.output(channel, True)
                 output_started = time.monotonic()
-                _only_target_on(io, channel)
+                require_outputs(dev, {ch: ch == channel for ch in (1, 2, 3)})
                 sample = dev.read_channel(channel)
                 if not sample.enabled:
                     raise SafetyError(f'CH{channel} unexpectedly OFF during {mode} point')
                 if abs(sample.power_w - sample.voltage_v * sample.current_a) > 1e-9:
                     raise SafetyError('library power arithmetic mismatch')
                 # Explicit power query is in the Keithley manual; retain actual reply.
-                scpi_power = float(io.query('MEAS:POW?'))
+                scpi_power = float(dev.diagnostic_query('MEAS:POW?'))
                 if not math.isfinite(scpi_power) or scpi_power < 0:
                     raise SafetyError('invalid MEAS:POW? response')
-                raw_status = int(float(io.query(f'STAT:OPER:INST:ISUM{channel}:COND?')))
-                questionable_status = int(float(io.query(
+                raw_status = int(float(dev.diagnostic_query(f'STAT:OPER:INST:ISUM{channel}:COND?')))
+                questionable_status = int(float(dev.diagnostic_query(
                     f'STAT:QUES:INST:ISUM{channel}:COND?')))
                 if diagnose_status:
-                    _status_snapshot(io, evidence, mode, 'early', 3, output_started)
+                    _status_snapshot(dev, io, evidence, mode, 'early', 3, output_started)
                 observed = load.measurements()
                 # Worst published KEL103 measurement range is used because the
                 # selected range is not remotely observable in this runner.
@@ -642,16 +491,16 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
                     raise SafetyError('MEAS:POW? differs from measured U*I by more than 0.31 W')
                 # In a diagnostic status mismatch, preserve independent panel
                 # evidence before failing the point and shutting down.
-                _display_gate(evidence, channel, mode, observed)
+                _display_gate(evidence, channel, mode, observed, io)
                 if diagnose_status:
                     # Directed second sample, not a retry of a failed command.
                     remaining = 5.0 - (time.monotonic() - output_started)
                     if remaining > 0:
                         time.sleep(remaining)
-                    _status_snapshot(io, evidence, mode, 'after_display', 3, output_started)
-                    _status_snapshot(io, evidence, mode, 'selected_other_channel', 1, output_started)
-                    io.write('INST:NSEL 3')
-                    if int(io.query('INST:NSEL?')) != 3:
+                    _status_snapshot(dev, io, evidence, mode, 'after_display', 3, output_started)
+                    _status_snapshot(dev, io, evidence, mode, 'selected_other_channel', 1, output_started)
+                    dev.diagnostic_write('INST:NSEL 3')
+                    if int(dev.diagnostic_query('INST:NSEL?')) != 3:
                         raise SafetyError('CH3 selection restore did not verify')
                 operation_mode = ('CV' if raw_status & 1 and not raw_status & 2 else
                                   'CC' if raw_status & 2 and not raw_status & 1 else 'UNKNOWN')
@@ -673,20 +522,18 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
                                  reason='operation status did not confirm the panel/load-verified mode')
                 dev.output(channel, False)
                 io.authorized_channel = None
-                _all_off(io)
+                require_outputs(dev)
                 load.set_input(False)
                 off_token = f'CONFIRM H03 CH{channel} {mode} PSU=OFF LOAD=OFF'
-                _gate(off_token, f'Keithley и KEL103 INPUT опрошены и подтверждены как OFF. '
-                      'Проверьте оба дисплея и подтвердите OFF перед следующей точкой.')
+                operator_gate(off_token, f'Keithley и KEL103 INPUT опрошены и подтверждены как OFF. '
+                      'Проверьте оба дисплея и подтвердите OFF перед следующей точкой.', io)
                 evidence.add('operator_gate', token=off_token, channel=channel,
                              mode=mode, psu_output='OFF', load_input='OFF')
             previous_channel = channel
         dev.emergency_off()
-        _all_off(io)
-        io.write('INST:NSEL 1')
-        io.write('SYST:LOC')
-        if io.index != len(io.plan):
-            raise ValueError(f'incomplete H03 command plan: {io.index}/{len(io.plan)}')
+        require_outputs(dev)
+        dev.diagnostic_write('INST:NSEL 1')
+        dev.diagnostic_write('SYST:LOC')
         cases = (4 if start_channel == 2 else 2 if start_channel == 3 else 6)
         if status_unqualified:
             outcome, reason = ('PARTIAL', f'{cases} CV/CC cases completed; operation status '
@@ -704,7 +551,7 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False):
                 dev.emergency_off()
                 if load.live:
                     load.set_input(False)
-                io.write('SYST:LOC')
+                dev.diagnostic_write('SYST:LOC')
             except BaseException as cleanup_exc:
                 outcome, reason = 'ABORTED', 'shutdown unconfirmed; UNKNOWN OUTPUT STATE'
                 evidence.add('cleanup_error', exception_type=type(cleanup_exc).__name__)

@@ -115,3 +115,22 @@ Hardware evidence has three axes: **software version/commit**, **instrument mode
 - Hardware current cap is the commanded `CURR` limit (no separate guaranteed programmable OCP trip exposed here).
 - Multi-channel combined control has firmware-specific semantics; verify it before relying on Series/Parallel or Tracking on a DUT.
 - Future work: hardware-trigger adapters, registered generic instrument drivers, triggered source setpoints, more complete SCPI status/error handling, interface ownership/leases, deterministic power-cut hardware, and an optional UI/CLI.
+
+## One SCPI execution path
+
+Normal methods and opt-in diagnostics call the same `_write`/`_query` dispatcher.
+An optional qualification policy adapter wraps the private command channel; the
+channel refuses sends made outside driver dispatch. `_execute` owns actual
+transport I/O, Remote/Local state, trace redaction and uncertain-link latching.
+The policy adapter's automatic error reads also use `_execute`.
+
+`debug=False` is the default. Enabling debug permits raw reply inspection but keeps
+profile guards on diagnostic voltage/current changes. `debug_bypass_profile` must
+be explicitly enabled for deliberate configuration/tamper tests; it never changes
+normal API guards. UART status-byte tracing belongs to the transport and is enabled
+by the driver only in debug mode, replacing external wrappers of `_serial`.
+
+All qualification scopes inherit `StageAdapter` in `tests/hardware/common.py`.
+They define command limits, permitted values and operator-authorized channels;
+they do not implement SCPI initialization or copy driver command sequences.
+Common output-state, snapshot and operator-gate checks are reused across stages.

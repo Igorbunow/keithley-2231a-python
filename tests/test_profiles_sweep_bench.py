@@ -60,6 +60,36 @@ class TestAccessProfiles(unittest.TestCase):
             self.assertEqual(fake.cmds[stops[1]-1], 'INST:NSEL 2')
             self.assertEqual(sleeper.call_count,4)
 
+    def test_power_only_h05_three_channel_order_and_reverse_delays(self):
+        steps = [PowerStep(1, 0.0), PowerStep(2, 1.0), PowerStep(3, 1.0)]
+        fake = FakeTransport()
+        psu = Keithley2231A(fake)
+        psu.apply_profile(power_profile(steps))
+        with patch('keithley2231a.device.time.sleep') as sleeper:
+            psu.power_on()
+            selected = 1
+            selected_on = []
+            for command in fake.cmds:
+                if command.startswith('INST:NSEL '):
+                    selected = int(command.split()[-1])
+                elif command == 'CHAN:OUTP 1':
+                    selected_on.append(selected)
+            self.assertEqual(selected_on, [1, 2, 3])
+            psu.power_off()
+            selected = 1
+            selected_off = []
+            for command in fake.cmds:
+                if command.startswith('INST:NSEL '):
+                    selected = int(command.split()[-1])
+                elif command == 'CHAN:OUTP 0':
+                    selected_off.append(selected)
+            self.assertEqual(selected_off, [3, 2, 1])
+            self.assertEqual(sleeper.call_args_list,
+                             [unittest.mock.call(0.0), unittest.mock.call(1.0),
+                              unittest.mock.call(1.0), unittest.mock.call(1.0),
+                              unittest.mock.call(1.0), unittest.mock.call(0.0)])
+        self.assertTrue(all(not fake.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+
     def test_json_profile_power_sequence(self):
         with tempfile.TemporaryDirectory() as tmp:
             f=Path(tmp)/'profile.json'

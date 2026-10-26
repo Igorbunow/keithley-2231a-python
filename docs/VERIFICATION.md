@@ -1,5 +1,7 @@
 # Feature verification matrix
 
+**Current source requalification:** H01 passed read-only on the shared driver/diagnostic path (HW OBSERVED; physical OFF confirmed). H02/H03/H04/H04P remain NOT_RUN and H05 previously ABORTED before energizing; replay is required. Earlier stage PASS/HW VERIFIED results are historical evidence for their recorded revisions. Offline results do not qualify hardware behavior.
+
 [English](VERIFICATION.md) | [Русский](VERIFICATION.ru.md) · [Hardware test procedure](HARDWARE_TESTS.md)
 
 ## Meaning of statuses
@@ -14,24 +16,26 @@
 
 | ID | Feature | Simulator | Physical hardware | Evidence required |
 | --- | --- | --- | --- | --- |
-| COM-01 | UART DB9 TTL communications 9600 8N1 | transport modeled | **HW VERIFIED (H01)** | repeatable report including connection and `*IDN?` |
-| COM-02 | `SYST:REM` + `*IDN?` | basic query fake | **HW VERIFIED (H01)** | menu Main 1.04 / Aux 0.01; raw revision observations 1.04-1.04 and 1.04-0.01 |
-| COM-03 | Additional read-only SCPI (`VOLT?`, `STAT?`, `SYST:VERS?`) | SIM TESTED | **HW VERIFIED (H01 subset only)** | `examples/probe.py` output vs front panel |
+| COM-01 | UART DB9 TTL communications 9600 8N1 | transport modeled | **HW OBSERVED (current H01 shared-path report; CP2102, 9600 8N1)** | [H01 evidence](hardware_reports/2026-10-26T145345.082772Z_H01_qualification.md) |
+| COM-02 | `SYST:REM` + `*IDN?` | basic query fake | **HW OBSERVED (current H01; IDN `Keithley instruments, 2231A-30-3`, firmware field `1.04-0.01`)** | [H01 evidence](hardware_reports/2026-10-26T145345.082772Z_H01_qualification.md) |
+| COM-03 | Additional read-only SCPI (`VOLT?`, `STAT?`, `SYST:VERS?`) | SIM TESTED | **HW OBSERVED (current H01; channel setpoints, caps, output/timer status, measurements, status and error queue)** | [H01 evidence](hardware_reports/2026-10-26T145345.082772Z_H01_qualification.md) |
 | COM-04 | Raw TCP-to-UART bridge | SIM TESTED (local loopback) | **HW UNVERIFIED** | MCU firmware/version + loss/fragment tests |
-| LOAD-01 | KEL103 control over UDP or USB CDC serial | UDP exercised on H03 CH2; USB exercised for H03 and H04P CH1–CH3 | **HW OBSERVED (USB H04P)** | 21 KEL103 comparisons and full input sequencing; [H04P report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
-| PRF-01 | Applying independent guarded profile, output-OFF-first | SIM TESTED | **HW VERIFIED (H04; OFF-only)** | no-load SCPI and front panel + readbacks |
-| PRF-02 | Hardware `VOLT:LIM` setting/readback | SIM TESTED | **HW VERIFIED (H04; OFF-only)** | instrument limit readbacks, outputs OFF |
-| PRF-03 | Software cap/health integrity alarms | SIM TESTED | **HW VERIFIED (H04; OFF-only tamper)** | out-of-band limit and setpoint changes detected; profile disarmed |
-| PRF-04 | Full rated-range profile (`unrestricted()`) | SIM TESTED | **HW VERIFIED (H04; OFF-only)** | rated-bound profile readbacks, zero voltage setpoint, outputs OFF |
-| PRF-05 | `power_only` API denylist/fixed preset | SIM TESTED | **HW OBSERVED (H04 OFF-only; H04P fixed presets energized)** | profile guards and fixed preset exercised; timer behavior remains unverified |
-| PRF-06 | Per-channel `Max Volt Set` clamp plus library voltage/current profile caps | SIM TESTED | **HW VERIFIED (H04; OFF-only) + HW OBSERVED (H04P; 4.50 V)** | H04 clamps 2/3/4 V; H04P clamps 4.51 to 4.50 V and rejects above-cap API requests before SCPI; [H04](hardware_reports/2026-10-26T095243.287282Z_H04_qualification.md), [H04P](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
-| PRF-07 | Low-power profile CV/CC boundaries and independent KEL103 comparison | SIM TESTED | **HW OBSERVED (H04P; 21 points)** | 3 channels × CV/CC points and fixed preset; unrestricted rated limits not energized; [report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
+| COM-05 | Shared normal/diagnostic dispatcher, explicit profile bypass, driver-controlled tracing | SIM TESTED | **HW UNVERIFIED (replay required)** | [Requalification plan](REQUALIFICATION.ru.md) |
+| LOAD-01 | KEL103 control over UDP or USB CDC serial | SIM TESTED (UDP and USB CDC fixtures) | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (USB H04P)** | 21 KEL103 comparisons and full input sequencing; [H04P report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
+| PRF-01 | Applying independent guarded profile, output-OFF-first | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only)** | no-load SCPI and front panel + readbacks |
+| PRF-02 | Hardware `VOLT:LIM` setting/readback | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only)** | instrument limit readbacks, outputs OFF |
+| PRF-03 | Software cap/health integrity alarms | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only tamper)** | out-of-band limit and setpoint changes detected; profile disarmed |
+| PRF-04 | Full rated-range profile (`unrestricted()`) | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only)** | rated-bound profile readbacks, zero voltage setpoint, outputs OFF |
+| PRF-05 | `power_only` API denylist/fixed preset | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (H04 OFF-only; H04P fixed presets energized)** | profile guards and fixed preset exercised; timer behavior remains unverified |
+| PRF-06 | Per-channel `Max Volt Set` clamp plus library voltage/current profile caps | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW VERIFIED (H04; OFF-only) + HW OBSERVED (H04P; 4.50 V)** | H04 clamps 2/3/4 V; H04P clamps 4.51 to 4.50 V and rejects above-cap API requests before SCPI; [H04](hardware_reports/2026-10-26T095243.287282Z_H04_qualification.md), [H04P](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
+| PRF-07 | Low-power profile CV/CC boundaries and independent KEL103 comparison | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (H04P; 21 points)** | 3 channels × CV/CC points and fixed preset; unrestricted rated limits not energized; [report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
+| SEQ-01 | Fixed `power_only` CH1→CH2→CH3 power-up and reverse power-down, profile guards and measured delays | **SIM TESTED** | **HW UNVERIFIED (H05 ABORTED before energizing; missing Remote entry fixed; powered retest pending)** | TDS 3064B x10 capture of all six edges, actual PSU status/readbacks, KEL103 CR22 on CH1; common-negative wiring means isolation is outside this test |
 | OUT-01 | Individual output enable/disable | SIM TESTED | **HW UNVERIFIED** | per-channel lamp/readback/independent dummy load |
 | OUT-02 | Timers and command-triggered expiration | SIM TESTED | **HW UNVERIFIED** | characterize manual/remote operation |
 | OUT-03 | Series combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
 | OUT-04 | Parallel combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
 | OUT-05 | Tracking and ratio/timer behavior | SIM TESTED (basic) | **HW UNVERIFIED** | real tracking readback and timed output |
-| MET-01 | Read voltage/current/status and inferred CV/CC | SIM TESTED | **HW OBSERVED (H03/H04P; CH3 OPER caveat)** | CV/CC confirmed by KEL103; CH3 OPER stays 8 while QUES distinguishes CV/CC; calibrated DMM accuracy unverified; [H03](hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md), [H04P](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
+| MET-01 | Read voltage/current/status and inferred CV/CC | SIM TESTED | **HW UNVERIFIED (shared-path replay pending)**; previous source: **HW OBSERVED (H03/H04P; CH3 OPER caveat)** | CV/CC confirmed by KEL103; CH3 OPER stays 8 while QUES distinguishes CV/CC; calibrated DMM accuracy unverified; [H03](hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md), [H04P](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md) |
 | MET-02 | CSV, min/max/mean/stddev, Ah/Wh arithmetic | SIM TESTED | **HW UNVERIFIED** | duration run + independent reference |
 | IV-01 | Single-channel voltage sweep + external sample callback | SIM TESTED | **HW UNVERIFIED** | resistor/diode test with series protection |
 | BEN-01 | Multi-PSU host coordination / generic meter | SIM TESTED | **HW UNVERIFIED** | dual PSU + DMM comparison with clock uncertainty |

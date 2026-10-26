@@ -15,6 +15,8 @@ import math
 import re
 import time
 
+from common import StageAdapter, operator_gate, require_outputs
+
 from keithley2231a import (ChannelProfile, Keithley2231A, LimitsError, Profile,
                           SafetyError)
 
@@ -46,7 +48,7 @@ def approval_token(load_transport='udp', load_port=18190,
             'CV=3.30,2.20,3.30,4.40,4.50 CC=0.100,0.250,0.500')
 
 
-class PoweredProfileIO:
+class H04PoweredScope(StageAdapter):
     """Bound SCPI to H04-Powered profiles, readbacks and one output at a time."""
     _QUERY = re.compile(
         r'^(?:\*IDN\?|SYST:ERR\?|INST:NSEL\?|CHAN:OUTP\?|'
@@ -60,136 +62,27 @@ class PoweredProfileIO:
         r'CURR (?:0|0\.100|0\.250|0\.500)|'
         r'VOLT:LIM 4\.50|VOLT:LIM:STAT 1)$')
 
+    MAX_COMMANDS = MAX_COMMANDS
+    SHUTDOWN_RESERVE = SHUTDOWN_RESERVE
+    MAX_SECONDS = MAX_SECONDS
+    _CLEANUP_WRITE = re.compile(r'^(?:SYST:(?:REM|LOC)|OUTP 0|OUTP:TIM:STAT 0|INST:NSEL [123]|CHAN:OUTP 0)$')
+
     def __init__(self, transport, evidence):
-        self.transport, self.evidence = transport, evidence
-        self.live = True
-        self.commands = 0
-        self.started = time.monotonic()
-        self.selected = 1
-        self.authorized_channel = None
+        super().__init__(transport, evidence)
         self.remote_limit_probe_channel = None
-        self.outputs = {channel: False for channel in (1, 2, 3)}
 
-    def operator_input(self, prompt):
-        """Pause the hardware deadline while the operator handles a manual gate."""
-        pause_started = time.monotonic()
-        try:
-            return input(prompt)
-        finally:
-            self.started += time.monotonic() - pause_started
-
-    @staticmethod
-    def _shutdown_command(command, query):
-        """Keep OFF, OFF verification and error checks available after a budget fault."""
-        if query:
-            return command == 'SYST:ERR?' or command in OFF
-        return (command in ('SYST:REM', 'SYST:LOC', 'OUTP 0', 'OUTP:TIM:STAT 0') or
-                command.startswith('INST:NSEL ') or command == 'CHAN:OUTP 0')
-
-    def _transfer(self, command, query, expected_error=None):
-        self.commands += 1
-        over_budget = (self.commands > MAX_COMMANDS or
-                       time.monotonic() - self.started > MAX_SECONDS)
-        if over_budget and not self._shutdown_command(command, query):
-            raise TimeoutError('H04-Powered command/time budget exceeded')
-        if self.commands > MAX_COMMANDS + SHUTDOWN_RESERVE:
-            raise TimeoutError('H04-Powered shutdown command reserve exhausted')
-        if not self.live:
-            raise OSError('uncertain link; no further SCPI')
-        if query and not self._QUERY.fullmatch(command):
-            raise ValueError(f'H04-Powered query not allowed: {command}')
-        if not query:
-            if not self._WRITE.fullmatch(command):
-                raise ValueError(f'H04-Powered write not allowed: {command}')
-            if command == 'VOLT 4.51' and (
-                    self.remote_limit_probe_channel != self.selected or
-                    any(self.outputs.values())):
-                raise ValueError('4.51 V is allowed only for the OFF-state Max Volt probe')
-            if command == 'CHAN:OUTP 1' and (
-                    self.authorized_channel != self.selected or
-                    any(state for channel, state in self.outputs.items()
-                        if channel != self.selected)):
-                raise ValueError('only the operator-approved channel may turn ON')
-        self.evidence.add('query' if query else 'write', command=command)
-        try:
-            answer = self.transport.query(command) if query else self.transport.write(command)
-        except BaseException as exc:
-            self.live = False
-            self.evidence.add('io_error', command=command,
-                              exception_type=type(exc).__name__)
-            raise
-        if query:
-            record = self.evidence.add('read', command=command, response=answer,
-                                       units={'VOLT?': 'V', 'VOLT:LIM?': 'V',
-                                              'CURR?': 'A', 'MEAS:VOLT?': 'V',
-                                              'MEAS:CURR?': 'A', 'MEAS:POW?': 'W'}.get(command))
-            print(f'{command}: {record["response"]}')
-            if command != 'SYST:ERR?':
-                self._check_error_queue(command)
-            return answer
-        if command.startswith('INST:NSEL '):
-            self.selected = int(command.rsplit(' ', 1)[1])
-        elif command == 'OUTP 0':
-            self.outputs = {channel: False for channel in (1, 2, 3)}
-        elif command.startswith('CHAN:OUTP '):
-            self.outputs[self.selected] = command.endswith('1')
-        if command != 'SYST:LOC':
-            if expected_error is None:
-                self._check_error_queue(command)
-            else:
-                response = self._transfer('SYST:ERR?', True)
-                code, message = response.split(',', 1)
-                if int(code.strip()) != expected_error or not message.strip():
-                    raise ValueError(
-                        f'expected instrument error {expected_error} after {command}; got {response}')
-                self.evidence.add('expected_instrument_rejection', command=command,
-                                  response=response, outcome='EXPECTED_REJECTION')
-        return answer
-
-    def _check_error_queue(self, source):
-        response = self._transfer('SYST:ERR?', True)
-        code, message = response.split(',', 1)
-        if int(code.strip()) != 0 or not message.strip():
-            raise ValueError(f'instrument error after {source}: {response}')
-
-    def query(self, command):
-        return self._transfer(command, True)
-
-    def write(self, command):
-        self._transfer(command, False)
-
-    def write_expected_error(self, command, code):
-        """Send the guarded 4.51 V probe and accept only its documented rejection."""
-        if command != 'VOLT 4.51' or code != 120:
-            raise ValueError('only the guarded voltage-limit probe may expect error 120')
-        if (self.remote_limit_probe_channel != self.selected or
-                any(self.outputs.values())):
-            raise SafetyError('voltage-limit rejection probe requires the selected output OFF')
-        self._transfer(command, False, expected_error=code)
-
-
-def _gate(token, prompt, io):
-    print(prompt)
-    while True:
-        try:
-            answer = io.operator_input(f'Подтверждение: {token}\n> ').strip()
-        except (EOFError, KeyboardInterrupt):
-            raise InterruptedError('operator gate interrupted')
-        if answer == token:
-            return
-        print('Подтверждение не распознано; ожидаю повторный ввод. Для остановки — Ctrl-C.')
-
-
-def _all_off(io):
-    states = {}
-    for channel, command in enumerate(OFF, 1):
-        raw = io.query(command)
-        value = float(raw)
-        if (not math.isfinite(value) or value != int(value) or
-                not 0 <= value <= 255 or int(value) & 8):
-            raise SafetyError(f'CH{channel} is not confirmed OFF: {raw}')
-        states[channel] = int(value)
-    return states
+    def _validate(self, command, query):
+        super()._validate(command, query)
+        if command == 'VOLT 4.51' and (
+                self.remote_limit_probe_channel != self.selected or any(self.outputs.values())):
+            raise SafetyError('4.51 V probe requires selected output OFF')
+        if command == 'CHAN:OUTP 1' and (
+                self.authorized_channel != self.selected or
+                any(v for ch, v in self.outputs.items() if ch != self.selected)):
+            raise SafetyError('Only the operator-approved channel may turn ON')
+        if self.expected_error is not None and not query and (
+                command != 'VOLT 4.51' or self.expected_error != 120):
+            raise ValueError('Only the approved Max Volt probe may expect error 120')
 
 
 def _profile(access='control'):
@@ -206,11 +99,11 @@ def _max_voltage_panel_gate(io, dev, evidence):
     """Verify the 4.50 V front-panel ceiling and library rejection before loading."""
     dev.verify_profile()
     for channel in (1, 2, 3):
-        io.write(f'INST:NSEL {channel}')
-        maximum = float(io.query('VOLT:LIM?'))
-        enabled = dev._bool(io.query('VOLT:LIM:STAT?'))
-        voltage = float(io.query('VOLT?'))
-        output = dev._bool(io.query('CHAN:OUTP?'))
+        dev.diagnostic_write(f'INST:NSEL {channel}')
+        maximum = float(dev.diagnostic_query('VOLT:LIM?'))
+        enabled = dev._bool(dev.diagnostic_query('VOLT:LIM:STAT?'))
+        voltage = float(dev.diagnostic_query('VOLT?'))
+        output = dev._bool(dev.diagnostic_query('CHAN:OUTP?'))
         if maximum != 4.5 or not enabled or abs(voltage - 3.3) > .0049 or output:
             raise SafetyError(f'CH{channel}: expected 4.50 V ceiling and 3.30 V setpoint, output OFF')
         evidence.add('max_voltage_panel_limit', channel=channel,
@@ -218,7 +111,7 @@ def _max_voltage_panel_gate(io, dev, evidence):
                      voltage_set_v=voltage, output=output)
     print('Установленный предел напряжения, считанный с прибора: '
           'CH1=4.50 V, CH2=4.50 V, CH3=4.50 V.')
-    io.write('SYST:LOC')
+    dev.diagnostic_write('SYST:LOC')
     print('До подключения нагрузки откройте на панели Protection Settings → Max Volt Set '
           'и подтвердите для CH1/CH2/CH3 Max V=4.50 V, состояние On. Для каждого канала '
           'попробуйте ввести V-set=4.51 V и подтвердить; выходы не включать. Прибор должен '
@@ -231,12 +124,12 @@ def _max_voltage_panel_gate(io, dev, evidence):
     evidence.add('operator_gate', phase='front_panel_max_voltage_clamp',
                  token=H04P_MAXV_TOKEN)
 
-    io.write('SYST:REM')
-    _all_off(io)
+    dev.diagnostic_write('SYST:REM')
+    require_outputs(dev)
     for channel in (1, 2, 3):
-        io.write(f'INST:NSEL {channel}')
-        voltage = float(io.query('VOLT?'))
-        current = float(io.query('CURR?'))
+        dev.diagnostic_write(f'INST:NSEL {channel}')
+        voltage = float(dev.diagnostic_query('VOLT?'))
+        current = float(dev.diagnostic_query('CURR?'))
         if abs(voltage - 4.5) > .0049 or abs(current - .1) > .00049:
             raise SafetyError(f'CH{channel}: front-panel request was not clamped to 4.50 V')
         evidence.add('max_voltage_panel_readback', channel=channel,
@@ -244,9 +137,13 @@ def _max_voltage_panel_gate(io, dev, evidence):
                      voltage_set_v=voltage, current_set_a=current,
                      expected_clamped_voltage_v=4.5, output_off=True,
                      outcome='PASS')
-        io.write(f'INST:NSEL {channel}')
-        io.write('VOLT 3.30')
-        if abs(float(io.query('VOLT?')) - 3.3) > .0049:
+        dev.diagnostic_write(f'INST:NSEL {channel}')
+        dev.debug_bypass_profile = True
+        try:
+            dev.diagnostic_write('VOLT 3.30')
+        finally:
+            dev.debug_bypass_profile = False
+        if abs(float(dev.diagnostic_query('VOLT?')) - 3.3) > .0049:
             raise SafetyError(f'CH{channel}: failed to restore 3.30 V after panel check')
         before = io.commands
         rejection = _expect_local_rejection(dev, io, channel, voltage=4.51)
@@ -258,26 +155,43 @@ def _max_voltage_panel_gate(io, dev, evidence):
     dev.emergency_off()
 
 
-def _remote_max_voltage_scpi_probe(io, evidence):
+def _remote_max_voltage_scpi_probe(dev, io, evidence):
     """Verify the instrument enforces Max Volt Set on direct remote setpoint writes."""
-    _all_off(io)
+    require_outputs(dev)
     for channel in (1, 2, 3):
-        io.write(f'INST:NSEL {channel}')
-        enabled = bool(int(io.query('VOLT:LIM:STAT?')))
-        limit = float(io.query('VOLT:LIM?'))
-        output = bool(int(io.query('CHAN:OUTP?')))
+        dev.diagnostic_write(f'INST:NSEL {channel}')
+        enabled = bool(int(dev.diagnostic_query('VOLT:LIM:STAT?')))
+        limit = float(dev.diagnostic_query('VOLT:LIM?'))
+        output = bool(int(dev.diagnostic_query('CHAN:OUTP?')))
         if not enabled or abs(limit - 4.5) > .0049 or output:
             raise SafetyError(f'CH{channel}: remote clamp probe requires 4.50 V limit enabled and OFF')
-        before = float(io.query('VOLT?'))
+        before = float(dev.diagnostic_query('VOLT?'))
         if abs(before - 3.3) > .0049:
             raise SafetyError(f'CH{channel}: unexpected pre-probe setpoint {before} V')
-        io.remote_limit_probe_channel = channel
+        if dev.debug_bypass_profile:
+            raise SafetyError('Software-boundary test requires the bypass flag OFF')
+        commands_before = io.commands
         try:
-            io.write_expected_error('VOLT 4.51', code=120)
+            dev.diagnostic_write('VOLT 4.51')
+        except LimitsError:
+            pass
+        else:
+            raise SafetyError('Diagnostic write escaped the software voltage cap')
+        if io.commands != commands_before:
+            raise SafetyError('Software rejection emitted SCPI')
+        evidence.add('case', channel=channel, check='debug soft rejection before hardware probe',
+                     requested_voltage_v=4.51, profile_bypass=False, scpi_sent=False, outcome='PASS')
+        io.remote_limit_probe_channel = channel
+        io.expected_error = 120
+        dev.debug_bypass_profile = True
+        try:
+            dev.diagnostic_write('VOLT 4.51')
         finally:
+            dev.debug_bypass_profile = False
+            io.expected_error = None
             io.remote_limit_probe_channel = None
-        actual = float(io.query('VOLT?'))
-        output = bool(int(io.query('CHAN:OUTP?')))
+        actual = float(dev.diagnostic_query('VOLT?'))
+        output = bool(int(dev.diagnostic_query('CHAN:OUTP?')))
         if abs(actual - before) > .0049 or output:
             raise SafetyError(f'CH{channel}: rejected remote setpoint changed output or setpoint')
         evidence.add('case', channel=channel,
@@ -318,9 +232,9 @@ def _measure_point(dev, io, evidence, load, channel, *, phase, point,
     if configure:
         dev.set_channel(channel, voltage=voltage, current=current)
     else:
-        io.write(f'INST:NSEL {channel}')
-        if (abs(float(io.query('VOLT?')) - voltage) > .0049 or
-                abs(float(io.query('CURR?')) - current) > .00049):
+        dev.diagnostic_write(f'INST:NSEL {channel}')
+        if (abs(float(dev.diagnostic_query('VOLT?')) - voltage) > .0049 or
+                abs(float(dev.diagnostic_query('CURR?')) - current) > .00049):
             raise SafetyError('fixed power_only preset readback mismatch')
     actual_resistance = load.configure_h04p_cr(resistance)
     if abs(actual_resistance - resistance) > .001:
@@ -332,10 +246,10 @@ def _measure_point(dev, io, evidence, load, channel, *, phase, point,
     finally:
         io.authorized_channel = None
     try:
-        _all_off_except(io, channel)
+        require_outputs(dev, {ch: ch == channel for ch in (1, 2, 3)}, settle_timeout_s=3.0)
         sample = dev.read_channel(channel)
         load_values = load.measurements()
-        scpi_power = float(io.query('MEAS:POW?'))
+        scpi_power = float(dev.diagnostic_query('MEAS:POW?'))
         if not sample.enabled or sample.regulation != expected_mode:
             raise SafetyError(f'CH{channel} expected {expected_mode}, got {sample.regulation}')
         if (abs(sample.voltage_v - load_values['kel103_voltage_v']) > .06 or
@@ -365,61 +279,39 @@ def _measure_point(dev, io, evidence, load, channel, *, phase, point,
               f'{load_values["kel103_power_w"]:.4f} W')
     finally:
         dev.output(channel, False)
-        _all_off(io)
+        require_outputs(dev)
         load.set_input(False)
 
 
-def _all_off_except(io, target, *, settle_timeout_s=3.0):
-    """Verify one output and tolerate delayed OPER ON-bit propagation after enable."""
-    deadline = time.monotonic() + settle_timeout_s
-    while True:
-        states = {}
-        for channel, command in enumerate(OFF, 1):
-            raw = io.query(command)
-            value = float(raw)
-            if (not math.isfinite(value) or value != int(value) or
-                    not 0 <= value <= 255):
-                raise SafetyError(f'invalid CH{channel} status: {raw}')
-            enabled = bool(int(value) & 8)
-            if channel != target and enabled:
-                raise SafetyError(f'expected only CH{target} ON; CH{channel}={raw}')
-            states[channel] = int(value)
-        if states[target] & 8:
-            return states
-        if not bool(int(io.query('CHAN:OUTP?'))):
-            raise SafetyError(f'CH{target} output turned OFF before OPER ON-bit appeared')
-        if time.monotonic() >= deadline:
-            raise SafetyError(f'CH{target} OPER ON-bit did not appear within {settle_timeout_s:g} s')
-        time.sleep(.1)
 
 
 def h04_powered(transport, evidence, load):
     """Run bounded low-power CV/CC points; manually gate only load movement."""
-    io = PoweredProfileIO(transport, evidence)
-    dev = Keithley2231A(io)
+    dev = Keithley2231A(transport, debug=True,
+                         debug_trace=lambda record: evidence.add('driver_trace', trace=record),
+                         debug_adapter=lambda channel: H04PoweredScope(channel, evidence))
+    io = dev.debug_transport
     outcome, reason = 'ABORTED', 'incomplete H04-Powered'
     try:
         load_identity = load.identify()
         if load.input_state() != 'OFF':
             raise SafetyError('KEL103 INPUT must be OFF at H04-Powered start')
-        baseline = io.query('SYST:ERR?')
+        baseline = dev.diagnostic_query('SYST:ERR?')
         code, message = baseline.split(',', 1)
         evidence.add('instrument_error_queue_baseline', response=baseline,
                      clean=int(code.strip()) == 0 and bool(message.strip()))
         if int(code.strip()) != 0 or not message.strip():
             raise SafetyError(f'pre-existing Keithley error: {baseline}')
-        io.write('SYST:REM')
-        identity = dev.identity()
-        if identity.split(',')[-1].strip() != evidence.firmware:
-            raise SafetyError('instrument identity changed during H04-Powered preflight')
-        _all_off(io)
-        if any(dev._bool(io.query(command)) for command in MODES):
+        dev.diagnostic_write('SYST:REM')
+        dev.identity()  # Stable identity is checked by the driver, not the revision field.
+        require_outputs(dev)
+        if any(dev._bool(dev.diagnostic_query(command)) for command in MODES):
             raise SafetyError('independent wiring required for H04-Powered')
         if load.input_state() != 'OFF':
             raise SafetyError('KEL103 INPUT must remain OFF during maximum voltage check')
         dev.apply_profile(_profile(access='control'))
         dev.verify_profile()
-        _remote_max_voltage_scpi_probe(io, evidence)
+        _remote_max_voltage_scpi_probe(dev, io, evidence)
         _max_voltage_panel_gate(io, dev, evidence)
         safe_load_identity = re.sub(r'(?i)(SN\s*:?\s*)[^,\s]+',
                                     r'\1[REDACTED]', load_identity)
@@ -433,13 +325,13 @@ def h04_powered(transport, evidence, load):
         for channel in (1, 2, 3):
             if channel == 1:
                 token = 'CONFIRM H04P CONNECT CH1 ALL_OFF LOAD=OFF'
-                _gate(token, 'Keithley CH1–CH3 OFF, KEL103 INPUT OFF. Подключите KEL103 '
+                operator_gate(token, 'Keithley CH1–CH3 OFF, KEL103 INPUT OFF. Подключите KEL103 '
                       'с правильной полярностью только к CH1; остальные каналы свободны.', io)
                 evidence.add('operator_gate', token=token, action='connect', channel=1)
             else:
                 previous = channel - 1
                 token = f'CONFIRM H04P MOVE CH{previous}->CH{channel} ALL_OFF LOAD=OFF'
-                _gate(token, f'Keithley CH1–CH3 OFF и KEL103 INPUT OFF. Отключите нагрузку '
+                operator_gate(token, f'Keithley CH1–CH3 OFF и KEL103 INPUT OFF. Отключите нагрузку '
                       f'от CH{previous}; проверьте отсутствие напряжения, подключите '
                       f'правильную полярность только к CH{channel}.', io)
                 evidence.add('operator_gate', token=token, action='move',
@@ -500,13 +392,13 @@ def h04_powered(transport, evidence, load):
                            voltage=CHANNEL_VOLTAGES[channel], current=.1,
                            resistance=47.0, expected_mode='CV', configure=False)
             dev.emergency_off()
-            _all_off(io)
+            require_outputs(dev)
 
         token = 'CONFIRM H04P DISCONNECT CH3 ALL_OFF LOAD=OFF'
-        _gate(token, 'Убедитесь, что все выходы Keithley OFF и KEL103 INPUT OFF; '
+        operator_gate(token, 'Убедитесь, что все выходы Keithley OFF и KEL103 INPUT OFF; '
               'отсоедините нагрузку от CH3 и проверьте отсутствие напряжения.', io)
         evidence.add('operator_gate', token=token, action='disconnect', channel=3)
-        io.write('SYST:LOC')
+        dev.diagnostic_write('SYST:LOC')
         outcome, reason = 'PASS', 'all 21 low-power CV/CC readings and profile guards passed'
     except BaseException as exc:
         outcome = ('ABORTED' if not io.live or isinstance(
@@ -517,10 +409,10 @@ def h04_powered(transport, evidence, load):
         if io.live:
             try:
                 dev.emergency_off()
-                _all_off(io)
+                require_outputs(dev)
                 if getattr(load, 'live', True):
                     load.set_input(False)
-                io.write('SYST:LOC')
+                dev.diagnostic_write('SYST:LOC')
             except BaseException as cleanup_exc:
                 outcome, reason = 'ABORTED', 'shutdown unconfirmed; UNKNOWN OUTPUT/LOAD STATE'
                 evidence.add('cleanup_error', exception_type=type(cleanup_exc).__name__)

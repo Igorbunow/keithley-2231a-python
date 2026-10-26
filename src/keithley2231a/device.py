@@ -6,10 +6,12 @@ The API does not guarantee a fail-safe output after a cable/PC/network failure.
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 import math
+import re
 import threading
 import time
-from typing import Iterable
+from typing import Callable, Iterable
 from .profile import Profile, LimitsError, ProfileError
 from .transport import Transport, TransportError
 
@@ -18,11 +20,19 @@ class InstrumentError(RuntimeError):
 class SafetyError(InstrumentError):
     pass
 
+
+class _CommandChannel:
+    """Transport seam for diagnostic policy/recording adapters, owned by one driver."""
+    def __init__(self, owner): self._owner = owner
+    def write(self, command): self._owner._execute(command, query=False)
+    def query(self, command): return self._owner._execute(command, query=True)
+    def close(self): self._owner._raw.close()
+
 @dataclass(frozen=True)
 class Reading:
     """Sequential channel readback, not an atomic instrument snapshot.
 
-    Firmware 1.04-1.04 has been observed to omit CH3 OPER CV/CC bits.
+    Main 1.04 / Aux 0.01 has been observed to omit CH3 OPER CV/CC bits.
     An unambiguous QUES condition mode remains usable when OPER has no mode.
     ``regulation_source`` identifies the supporting register(s): operation,
     questionable, both, or None for OFF, UNKNOWN or skipped regulation checks.
@@ -46,14 +56,37 @@ class Reading:
     regulation_source: str | None = None
 
 class Keithley2231A:
-    def __init__(self, transport: Transport, *, expected_serial: str | None = None):
+    def __init__(self, transport: Transport, *, expected_serial: str | None = None,
+                 debug: bool = False, debug_bypass_profile: bool = False,
+                 debug_trace: Callable[[dict], None] | None = None,
+                 debug_wire_trace: Callable[[dict], None] | None = None,
+                 debug_adapter: Callable[[Transport], Transport] | None = None):
+        if type(debug) is not bool or type(debug_bypass_profile) is not bool:
+            raise TypeError('debug flags must be bool')
+        if not debug and (debug_bypass_profile or debug_adapter is not None or
+                          debug_trace is not None or debug_wire_trace is not None):
+            raise ValueError('diagnostic options require debug=True')
+        for option in (debug_trace, debug_wire_trace, debug_adapter):
+            if option is not None and not callable(option):
+                raise TypeError('diagnostic callbacks/adapters must be callable')
+        status_observer = getattr(transport, 'set_debug_status_trace', None)
+        if debug_wire_trace is not None and status_observer is None:
+            raise ValueError('Transport does not support status-byte tracing')
+        if status_observer is not None: status_observer(debug_wire_trace)
         if expected_serial is not None:
             if not isinstance(expected_serial, str):
                 raise TypeError('expected_serial must be a string or None')
             expected_serial = expected_serial.strip()
             if not expected_serial:
                 raise ValueError('expected_serial must not be empty')
-        self._io = transport
+        self._raw = transport
+        self._debug = debug
+        self._debug_bypass_profile = debug_bypass_profile
+        self._debug_trace = debug_trace
+        self._dispatch_depth = 0
+        self._remote_mode = False
+        self._link_uncertain = False
+        self._selected_channel = None
         self._expected_serial = expected_serial
         self._lock = threading.RLock()
         self._profile: Profile | None = None
@@ -65,6 +98,139 @@ class Keithley2231A:
         self._sequencing = False
         self._expected_setpoints = {}
         self._expected_outputs = {ch: False for ch in (1, 2, 3)}
+        channel = _CommandChannel(self)
+        self._io = debug_adapter(channel) if debug_adapter is not None else channel
+
+    @property
+    def debug_transport(self) -> Transport:
+        """Expose diagnostic adapter policy state; sending outside dispatch is refused."""
+        if not self._debug: raise SafetyError('Diagnostic mode is disabled')
+        return self._io
+
+    @property
+    def debug_bypass_profile(self) -> bool:
+        return self._debug_bypass_profile
+
+    @debug_bypass_profile.setter
+    def debug_bypass_profile(self, enabled: bool):
+        if type(enabled) is not bool: raise TypeError('debug_bypass_profile must be bool')
+        with self._lock:
+            if not self._debug: raise SafetyError('Diagnostic mode is disabled')
+            self._debug_bypass_profile = enabled
+
+    @staticmethod
+    def _command(command: str, *, query: bool):
+        if (not isinstance(command, str) or not command or
+                any(c in command for c in ('\r', '\n', ';')) or
+                not command.isascii() or command.endswith('?') != query):
+            raise ValueError('one ASCII SCPI query or write per call')
+
+    def _trace(self, event: str, command: str, **fields):
+        if not self._debug: return
+        if command == '*IDN?' and 'response' in fields:
+            parts = fields['response'].split(',')
+            if len(parts) == 4:
+                parts[2] = ' [REDACTED]'
+                fields['response'] = ','.join(parts)
+            else:
+                fields['response'] = '[REDACTED INVALID IDENTITY]'
+        record = dict(event=event, command=command, monotonic_s=time.monotonic(),
+                      profile_bypass=self._debug_bypass_profile, **fields)
+        logging.getLogger(__name__).debug('SCPI %s', record)
+        if self._debug_trace is not None: self._debug_trace(record)
+
+    def _ensure_remote(self):
+        if self._idn is None:
+            if self._faulted:
+                raise SafetyError('Resolve identity fault before further operations')
+            self.identity()
+        if not self._remote_mode:
+            if self._faulted:
+                raise SafetyError('Faulted session cannot automatically re-enter Remote')
+            self.remote(lock_panel=False)
+
+    @staticmethod
+    def _session_command(command: str) -> str:
+        """Recognize documented long/short session commands without rewriting traces."""
+        upper = command.upper()
+        match = re.fullmatch(r'SYST(?:EM)?:(REM(?:OTE)?|LOC(?:AL)?|RWL(?:OCK)?|ERR(?:OR)?\?)', upper)
+        if match:
+            keyword = match[1]
+            return 'SYST:' + ('RWLOCK' if keyword.startswith('RWL') else
+                              'ERR?' if keyword.startswith('ERR') else keyword[:3])
+        match = re.fullmatch(r'INST(?:RUMENT)?:NSEL(?:ECT)? ([123])', upper)
+        if match: return f'INST:NSEL {match[1]}'
+        return upper
+
+    def _execute(self, command: str, *, query: bool):
+        """Single wire path for normal API, diagnostics and adapter error checks."""
+        with self._lock:
+            if not self._dispatch_depth:
+                raise SafetyError('Use the driver API; direct adapter sends are forbidden')
+            self._command(command, query=query)
+            if self._link_uncertain:
+                raise TransportError('Link uncertain; no commands or automatic reconnect')
+            session_command = self._session_command(command)
+            if session_command not in ('*IDN?', 'SYST:ERR?', 'SYST:REM', 'SYST:RWLOCK', 'SYST:LOC'):
+                self._ensure_remote()
+            self._trace('query' if query else 'write', command)
+            try:
+                answer = self._raw.query(command) if query else self._raw.write(command)
+            except BaseException as exc:
+                self._link_uncertain = True
+                self._faulted, self._armed = True, False
+                self._trace('io_error', command, exception_type=type(exc).__name__)
+                raise
+            if not query:
+                if session_command in ('SYST:REM', 'SYST:RWLOCK'): self._remote_mode = True
+                elif session_command == 'SYST:LOC': self._remote_mode = False
+                elif session_command.startswith('INST:NSEL '):
+                    self._selected_channel = int(session_command[-1])
+            else:
+                self._trace('reply', command, response=answer)
+            return answer
+
+    def diagnostic_query(self, command: str) -> str:
+        """Read a raw SCPI reply through the normal session; debug must be enabled."""
+        with self._lock:
+            if not self._debug: raise SafetyError('Diagnostic mode is disabled')
+            self._command(command, query=True)
+            return self.identity() if command.upper() == '*IDN?' else self._query(command)
+
+    def diagnostic_write(self, command: str):
+        """Use normal profile guards unless debug_bypass_profile is explicitly set.
+
+        The bypass permits deliberate negative tests, not normal operation. It does
+        not bypass transport failures, session ownership or adapter command gates.
+        """
+        with self._lock:
+            if not self._debug: raise SafetyError('Diagnostic mode is disabled')
+            self._command(command, query=False)
+            if self._debug_bypass_profile:
+                self._write(command)
+                return
+            command = self._session_command(command)
+            match = re.fullmatch(r'(VOLT|CURR) ([+-]?(?:\d+(?:\.\d*)?|\.\d+))', command)
+            if match:
+                if self._selected_channel is None:
+                    raise SafetyError('Select a channel through the driver first')
+                key = 'voltage' if match[1] == 'VOLT' else 'current'
+                self.set_channel(self._selected_channel, **{key: float(match[2])})
+            elif re.fullmatch(r'INST:NSEL [123]', command):
+                self._select(int(command[-1]))
+            elif command == 'SYST:REM':
+                self.remote(lock_panel=False)
+            elif command == 'SYST:RWLOCK':
+                self.remote(lock_panel=True)
+            elif command == 'SYST:LOC':
+                if self._armed and self._profile is not None and (
+                        self._profile.lock_front_panel or self._profile.access == 'power_only'):
+                    raise SafetyError('Disarm protected profile before returning to Local')
+                self._write(command)
+            elif command == 'OUTP 0':
+                self.emergency_off()
+            else:
+                raise SafetyError('Raw configuration requires debug_bypass_profile=True')
 
     @property
     def instrument_id(self) -> str | None: return self._idn
@@ -78,16 +244,22 @@ class Keithley2231A:
     def faulted(self) -> bool: return self._faulted
 
     def _write(self, command: str):
-        try: self._io.write(command)
-        except Exception:
-            self._faulted, self._armed = True, False
-            raise
+        with self._lock:
+            self._dispatch_depth += 1
+            try: self._io.write(command)
+            except Exception:
+                self._faulted, self._armed = True, False
+                raise
+            finally: self._dispatch_depth -= 1
 
     def _query(self, command: str) -> str:
-        try: return self._io.query(command)
-        except Exception:
-            self._faulted, self._armed = True, False
-            raise
+        with self._lock:
+            self._dispatch_depth += 1
+            try: return self._io.query(command)
+            except Exception:
+                self._faulted, self._armed = True, False
+                raise
+            finally: self._dispatch_depth -= 1
     def _num(self, command: str) -> float:
         s = self._query(command)
         try:
@@ -151,6 +323,23 @@ class Keithley2231A:
         try: self._off_confirmed()
         except Exception: pass
         raise SafetyError(f'{why}; emergency output-off attempted (not guaranteed)')
+
+    def output_states(self) -> dict[int, bool]:
+        """Read all channel ON states without applying a profile or changing outputs.
+
+        The shared session validates identity and enters Remote when necessary.
+        An armed profile retains its current remote/panel-lock configuration.
+        Read-only checks remain possible after semantic faults on a live session;
+        uncertain I/O prohibits further commands and never reconnects or retries.
+        """
+        with self._lock:
+            if self._link_uncertain:
+                raise SafetyError('Link uncertain; no further operations')
+            try:
+                return self._output_states()
+            except Exception:
+                self._faulted, self._armed = True, False
+                raise
 
     def _output_states(self) -> dict[int, bool]:
         """Read per-channel ON bits; global status has ambiguous mixed-state semantics."""
@@ -564,6 +753,20 @@ class Keithley2231A:
 
     def error(self) -> str:
         with self._lock: return self._query('SYST:ERR?')
+
+    def check_errors(self) -> str:
+        """Consume one error entry and reject any nonzero code or malformed reply."""
+        with self._lock:
+            response = self.error()
+            try:
+                code, message = response.split(',', 1)
+                clear = int(code.strip()) == 0 and bool(message.strip())
+            except (ValueError, TypeError):
+                clear = False
+            if not clear:
+                self._faulted, self._armed = True, False
+                raise InstrumentError(f'Instrument error: {response}')
+            return response
 
     def beep(self):
         with self._lock:

@@ -2,8 +2,10 @@
 import contextlib
 import io
 import json
+import runpy
 from pathlib import Path
 import sys
+import struct
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -12,6 +14,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'hardware'))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 class TestQualification(unittest.TestCase):
+    def assert_driver_path(self, evidence, transport):
+        """Every simulated wire command must come from the common driver dispatch."""
+        records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+        sent = [r['trace']['command'] for r in records if r['event'] == 'driver_trace'
+                and r['trace']['event'] in ('write', 'query')]
+        self.assertEqual(sent, transport.cmds)
+
     def module(self):
         import qualification
         return qualification
@@ -20,52 +29,125 @@ class TestQualification(unittest.TestCase):
         q = self.module()
         for args in (['list'], ['preflight', 'H01'], ['run', 'H01'],
                      ['preflight', 'H02'], ['run', 'H02'],
+                     ['preflight', 'H05'], ['run', 'H05'],
                      ['run', 'H09'], ['abort'], ['report']):
             with self.subTest(args=args), patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
                 with contextlib.redirect_stdout(io.StringIO()):
                     q.main(args)
 
-    def test_h03_plan_covers_six_individual_cases_without_global_on(self):
+    def test_h05_preflight_is_explicit_and_offline(self):
         q = self.module()
-        from channel_stage import FINAL_TOKEN, TOKEN, StageIO, command_plan
-        from test_driver import FakeTransport
-        plan = command_plan()
-        resumed_plan = command_plan(2)
-        self.assertEqual(plan.count('CHAN:OUTP 1'), 6)
-        self.assertEqual(resumed_plan.count('CHAN:OUTP 1'), 4)
-        self.assertEqual(resumed_plan.count('CHAN:OUTP 0'), 4)
-        self.assertEqual(plan.count('CHAN:OUTP 0'), 6)
-        self.assertEqual(plan.count('MEAS:POW?'), 6)
-        self.assertEqual(plan.count('STAT:OPER:INST:ISUM1:COND?'), 29)
-        self.assertEqual(plan.count('STAT:OPER:INST:ISUM2:COND?'), 29)
-        self.assertEqual(plan.count('STAT:OPER:INST:ISUM3:COND?'), 29)
-        self.assertEqual(plan.count('STAT:QUES:INST:ISUM1:COND?'), 4)
-        self.assertEqual(plan.count('STAT:QUES:INST:ISUM2:COND?'), 4)
-        self.assertEqual(plan.count('STAT:QUES:INST:ISUM3:COND?'), 4)
-        self.assertNotIn('OUTP 1', plan)
-        self.assertEqual(TOKEN, 'CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED LAN=UDP:18190 RECALL=OFF VCAP=4.00 ICAP=0.500 ERRBASE=CHECK')
-        self.assertEqual(FINAL_TOKEN, 'CONFIRM H03 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF')
+        with patch.object(q, 'open_transport', side_effect=AssertionError('port opened')):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                q.preflight('H05', '/dev/ttyUSB3')
+            text = output.getvalue()
+            self.assertIn('CH1→CH2→CH3', text)
+            self.assertIn('22 Ω', text)
+            self.assertIn('×10', text)
+            self.assertIn('НЕ ВКЛЮЧАТЬ ВЫХОДЫ', text)
+
+    def test_h05_scope_edge_analysis_and_transport_allowlist(self):
+        from h05_stage import H05Scope, decode_isf, transitions
+
+        self.assertEqual(transitions([(0, 0), (1, 1), (2, 1), (3, 0)]),
+                         [(0.5, 'RISE'), (2.5, 'FALL')])
+        header = (b':WFMPRE:BYT_NR 1;BIT_NR 8;ENCDG BIN;BN_FMT RI;BYT_OR MSB;NR_PT 4;'
+                  b'PT_FMT Y;XINCR 1;XZERO 0;PT_OFF 0;YMULT 1;YOFF 0;YZERO 0;'
+                  b'XUNIT "s";YUNIT "V";WFID "CH1, synthetic";:CURVE #14')
+        raw = header + struct.pack('>4b', -1, 0, 1, 0) + b'\n'
+        rows = decode_isf(raw, 1)
+        self.assertEqual(transitions(rows), [(1.5, 'RISE'), (2.5, 'FALL')])
+
+        class Raw:
+            def __init__(self): self.calls = []
+            def write(self, command): self.calls.append(('write', command))
+            def query(self, command): self.calls.append(('query', command)); return '0, No error'
+
+        raw = Raw()
         with tempfile.TemporaryDirectory() as tmp:
-            fake = FakeTransport()
-            evidence = q.Evidence(Path(tmp) / 'events.jsonl', 'H03')
-            guarded = StageIO(fake, evidence)
+            guarded = H05Scope(raw, self.module().Evidence(
+                Path(tmp) / 'events.jsonl', 'H05'))
+            with self.assertRaises(ValueError):
+                guarded.write('OUTP 1')
+            self.assertEqual(raw.calls, [])
+
+    def test_h05_enters_remote_before_channel_queries(self):
+        from h05_stage import h05
+        from test_driver import FakeTransport
+
+        class Load:
+            enabled = False
+            def identify(self): return 'KORAD KEL103'
+            def input_state(self): return 'ON' if self.enabled else 'OFF'
+            def configure_h04p_cr(self, resistance): pass
+            def set_input(self, enabled): self.enabled = enabled
+            def measurements(self): return {'kel103_voltage_v': 1.0, 'kel103_current_a': 0.045}
+            def close(self): pass
+
+        class Scope:
+            def __init__(self, *args): pass
+            def configure(self): return {}
+            def arm(self): pass
+            def collect(self):
+                return {ch: [(t, float(start <= t < stop)) for t in range(10)]
+                        for ch, start, stop in ((1, 1, 8), (2, 2, 7), (3, 3, 6))}
+            def number(self, command): return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            raw, load = FakeTransport(), Load()
+            evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H05')
+            with patch('h05_stage.TDS3064B', Scope), patch('keithley2231a.device.time.sleep'), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                outcome = h05(raw, evidence, load)
+            self.assertEqual(outcome, 'PASS')
+            self.assert_driver_path(evidence, raw)
+            self.assertTrue(raw.closed)
+            self.assertFalse(load.enabled)
+            self.assertFalse(any(v['CHAN:OUTP'] for v in raw.values.values()))
+
+    def test_probe_uses_driver_remote_setup_without_changing_outputs(self):
+        from test_driver import FakeTransport
+
+        fake = FakeTransport()
+        fake.values[2]['CHAN:OUTP'] = 1.0
+        initial = {ch: values.copy() for ch, values in fake.values.items()}
+        output = io.StringIO()
+        with patch('keithley2231a.SerialTransport', return_value=fake), \
+                patch.object(sys, 'argv', ['probe.py', '--port', 'SIMULATED']), \
+                contextlib.redirect_stdout(output):
+            runpy.run_path(str(Path(__file__).resolve().parents[2] / 'examples/probe.py'),
+                           run_name='__main__')
+        self.assertNotIn('ERROR', output.getvalue())
+        self.assertEqual(fake.values, initial)
+        self.assertTrue(fake.closed)
+        self.assertNotIn('OUTP 0', fake.cmds)
+
+    def test_h03_scope_forbids_global_on(self):
+        from channel_stage import H03Scope
+        from test_driver import FakeTransport
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = FakeTransport()
+            guarded = H03Scope(raw, self.module().Evidence(Path(tmp) / 'scope.jsonl', 'H03'))
             with self.assertRaises(ValueError): guarded.write('OUTP 1')
-            self.assertEqual(fake.cmds, [])
+            self.assertEqual(raw.cmds, [])
 
     def test_h03_individual_on_requires_authorization_before_transmission(self):
-        from channel_stage import StageIO
+        from channel_stage import H03Scope
         from test_driver import FakeTransport
 
         with tempfile.TemporaryDirectory() as tmp:
             for authorized in (None, 1, 3):
                 with self.subTest(authorized=authorized):
                     fake = FakeTransport()
+                    # This test isolates the authorized ON step after Remote setup.
+                    fake.write('SYST:REM')
+                    fake.cmds.clear()
                     fake.active_ch = 3
                     evidence = self.module().Evidence(
                         Path(tmp) / f'gate_{authorized}.jsonl', 'H03')
-                    guarded = StageIO(fake, evidence, start_channel=3)
+                    guarded = H03Scope(fake, evidence, start_channel=3)
                     # Isolate the ON step of an otherwise approved plan.
-                    guarded.plan = ('CHAN:OUTP 1', 'SYST:ERR?')
                     guarded.selected = 3
                     guarded.authorized_channel = authorized
                     if authorized == 3:
@@ -77,14 +159,13 @@ class TestQualification(unittest.TestCase):
                             guarded.write('CHAN:OUTP 1')
                         self.assertEqual(fake.cmds, [])
                         self.assertEqual(fake.values[3]['CHAN:OUTP'], 0)
-                        self.assertEqual(guarded.index, 0)
 
     def test_h03_mistyped_gate_waits_for_valid_confirmation(self):
-        from channel_stage import _gate
+        from common import operator_gate
 
         with patch('builtins.input', side_effect=('mistyped confirmation', 'CONFIRM TEST')), \
                 contextlib.redirect_stdout(io.StringIO()):
-            _gate('CONFIRM TEST', 'Verify OFF')
+            operator_gate('CONFIRM TEST', 'Verify OFF')
 
     def test_h03_diagnostic_preflight_is_offline_and_restricts_scope(self):
         q = self.module()
@@ -119,31 +200,35 @@ class TestQualification(unittest.TestCase):
         load.close()
         self.assertTrue(fake.closed)
 
-    def test_h03_status_wire_trace_preserves_bytes_and_excludes_identity(self):
-        from channel_stage import StatusWireTrace
+    def test_driver_status_wire_trace_preserves_bytes_and_excludes_identity(self):
+        from types import SimpleNamespace
+        from keithley2231a import Keithley2231A, SerialTransport
 
         class SerialFake:
-            def write(self, data): return len(data)
-            def readline(self, size): return self.reply
+            in_waiting = 0
+            def write(self, data): self.command = data.decode().strip(); return len(data)
+            def flush(self): pass
+            def close(self): pass
+            def readline(self, size):
+                return (b'Keithley instruments, 2231A-30-3, PRIVATE-SERIAL, 1.04-0.01\r\n'
+                        if self.command == '*IDN?' else b'8\r\n')
 
         with tempfile.TemporaryDirectory() as tmp:
             evidence = self.module().Evidence(Path(tmp) / 'wire.jsonl', 'H03')
-            port = SerialFake()
-            wire = StatusWireTrace(port, evidence)
-            command = b'STAT:OPER:INST:ISUM3:COND?\r\n'
-            self.assertEqual(wire.write(command), len(command))
-            port.reply = b'8\r\n'
-            self.assertEqual(wire.readline(4097), b'8\r\n')
-            wire.write(b'*IDN?\r\n')
-            port.reply = b'Keithley instruments, 2231A-30-3, PRIVATE-SERIAL, 1.04-1.04\r\n'
-            self.assertEqual(wire.readline(4097), port.reply)
-            text = evidence.path.read_text()
-            self.assertNotIn('PRIVATE-SERIAL', text)
-            records = [json.loads(line) for line in text.splitlines()]
-            self.assertEqual([record['event'] for record in records],
-                             ['status_wire_write', 'status_wire_read'])
-            self.assertEqual(records[0]['tx_hex'], command.hex(' '))
+            with patch.dict(sys.modules, {'serial': SimpleNamespace(Serial=lambda **kw: SerialFake())}):
+                wire = SerialTransport('SIMULATED')
+            dev = Keithley2231A(wire, debug=True, debug_wire_trace=lambda record: evidence.add(**record))
+            dev.diagnostic_query('*IDN?')
+            self.assertEqual(dev.diagnostic_query('STAT:OPER:INST:ISUM3:COND?'), '8')
+            content = evidence.path.read_text()
+            self.assertNotIn('PRIVATE-SERIAL', content)
+            records = [json.loads(line) for line in content.splitlines()]
+            self.assertEqual([record['event'] for record in records], ['status_wire_write', 'status_wire_read'])
+            self.assertEqual(records[0]['tx_hex'], b'STAT:OPER:INST:ISUM3:COND?\r\n'.hex(' '))
             self.assertEqual(records[1]['rx_hex'], '38 0d 0a')
+            Keithley2231A(wire).output_states()
+            self.assertEqual(evidence.path.read_text(), content)
+            wire.close()
 
     def test_kel103_cr_setup_is_input_off_only_and_verified(self):
         from channel_stage import KEL103UDP
@@ -256,10 +341,10 @@ class TestQualification(unittest.TestCase):
         self.assertIn('CONFIRM H03 RESUME_CH3 INDEPENDENT ALL_OFF', output.getvalue())
         self.assertIn('questionable', output.getvalue().lower())
 
-    def test_h04_reviewed_matrix_pass_is_accepted_for_dependent_stages(self):
+    def test_reviewed_pass_and_requalification_are_distinct(self):
         q = self.module()
         self.assertTrue(q.stage_passed('**PASS (OFF-only; reviewed)**'))
-        self.assertTrue(q.stage_passed(q.stages()['H04'][-1]))
+        self.assertFalse(q.stage_passed('NOT_RUN (requalification; historical PASS)'))
 
     def test_h03_resume_requires_reviewed_prior_points_and_off_confirmation(self):
         q = self.module()
@@ -279,10 +364,19 @@ class TestQualification(unittest.TestCase):
             ]
             ch2_events.append({'test_id': 'H03', 'event': 'outcome',
                                'physical_off_confirmed': True})
+            for records in (ch1_events, ch2_events):
+                records.insert(0, {'test_id': 'H03', 'event': 'metadata',
+                                   'source_sha256': q.software_metadata()['source_sha256']})
             ch1_path.write_text('\n'.join(json.dumps(event) for event in ch1_events), encoding='utf-8')
             ch2_path.write_text('\n'.join(json.dumps(event) for event in ch2_events), encoding='utf-8')
             with contextlib.redirect_stdout(io.StringIO()):
                 q.validate_h03_checkpoint([ch1_path, ch2_path], 3)
+            source = ch1_events[0]['source_sha256']
+            ch1_events[0]['source_sha256'] = 'older-driver-source'
+            ch1_path.write_text('\n'.join(json.dumps(event) for event in ch1_events), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'current source'):
+                q.validate_h03_checkpoint([ch1_path, ch2_path], 3)
+            ch1_events[0]['source_sha256'] = source
             ch1_events.pop()
             ch2_events.pop()
             ch1_path.write_text('\n'.join(json.dumps(event) for event in ch1_events), encoding='utf-8')
@@ -396,6 +490,7 @@ class TestQualification(unittest.TestCase):
                 outcome = h03(fake, evidence, load)
             self.assertEqual(outcome, 'PASS', [line for line in evidence.path.read_text().splitlines()
                                                if 'stage_error' in line])
+            self.assert_driver_path(evidence, fake)
             self.assertTrue(fake.closed)
             self.assertTrue(load.closed)
             self.assertEqual(load.input, 'OFF')
@@ -554,7 +649,7 @@ class TestQualification(unittest.TestCase):
     def test_h02_profile_trace_and_stop_on_first_error(self):
         """Exercise the exact profile trace using simulated I/O only."""
         q = self.module()
-        from profile_stage import CheckedIO, command_plan, h02
+        from profile_stage import H02Scope, h02
         from test_driver import FakeTransport
         for bad in ('none', 'error170', 'timeout', 'cap_mismatch', 'initial_on', 'identity_change'):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as tmp:
@@ -589,7 +684,7 @@ class TestQualification(unittest.TestCase):
                 self.assertTrue(fake.closed)
                 self.assertFalse(any(cmd in ('OUTP 1', 'CHAN:OUTP 1', 'SYST:RWLOCK', '*CLS', '*RST') for cmd in fake.cmds))
                 if bad == 'none':
-                    self.assertEqual(tuple(fake.cmds), command_plan())
+                    self.assert_driver_path(evidence, fake)
                     self.assertEqual(fake.active_ch, 1)
                     for ch in (1, 2, 3):
                         self.assertEqual(fake.values[ch]['VOLT'], 1.)
@@ -604,10 +699,10 @@ class TestQualification(unittest.TestCase):
                 self.assertNotIn(', TEST,', evidence.path.read_text())
         with tempfile.TemporaryDirectory() as tmp:
             fake = FakeTransport()
-            io_guard = CheckedIO(fake, q.Evidence(Path(tmp) / 'events.jsonl', 'H02'))
+            io_guard = H02Scope(fake, q.Evidence(Path(tmp) / 'events.jsonl', 'H02'))
             with self.assertRaises(ValueError): io_guard.write('OUTP 1')
             self.assertEqual(fake.cmds, [])
-            self.assertEqual(io_guard.attempts, 1)
+            self.assertEqual(io_guard.commands, 1)
         with tempfile.TemporaryDirectory() as tmp:
             from keithley2231a import SafetyError
             fake = FakeTransport()
@@ -622,7 +717,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h04_offline_runner_stays_off_and_detects_power_only_tampering(self):
         q = self.module()
-        from profile_stage import H04CheckedIO, H04_MAXV_TOKEN, h04
+        from profile_stage import H04Scope, H04_MAXV_TOKEN, h04
         from test_driver import FakeTransport
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -640,6 +735,7 @@ class TestQualification(unittest.TestCase):
                 outcome = h04(fake, evidence)
             self.assertEqual(outcome, 'PASS')
             self.assertIn('Max Volt Set', output.getvalue())
+            self.assert_driver_path(evidence, fake)
             self.assertIn('4.01 V', output.getvalue())
             self.assertTrue(fake.closed)
             self.assertEqual(fake.values[3]['CURR'], .101)
@@ -670,7 +766,7 @@ class TestQualification(unittest.TestCase):
             self.assertTrue(all(record['scpi_sent'] is False for record in current_cases))
 
         with tempfile.TemporaryDirectory() as tmp:
-            io_guard = H04CheckedIO(FakeTransport(), q.Evidence(
+            io_guard = H04Scope(FakeTransport(), q.Evidence(
                 Path(tmp) / 'pause.jsonl', 'H04'))
             io_guard.started = 0.0
             with patch('profile_stage.time.monotonic', side_effect=(10.0, 310.0)), \
@@ -681,11 +777,12 @@ class TestQualification(unittest.TestCase):
             io_guard.cleanup = True
             fake = io_guard.transport
             with patch('profile_stage.time.monotonic', return_value=500.0):
+                io_guard.write('SYST:REM')
                 io_guard.write('OUTP 0')
             self.assertIn('OUTP 0', fake.cmds)
 
         with tempfile.TemporaryDirectory() as tmp:
-            io_guard = H04CheckedIO(FakeTransport(), q.Evidence(
+            io_guard = H04Scope(FakeTransport(), q.Evidence(
                 Path(tmp) / 'guard.jsonl', 'H04'))
             for command in ('OUTP 1', 'CHAN:OUTP 1', 'VOLT 30.00',
                             'SYST:RWLOCK', 'STAT:OPER:EVENT?'):
@@ -731,7 +828,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h04p_offline_runner_auto_measures_and_pauses_only_for_load_moves(self):
         q = self.module()
-        from powered_profile_stage import H04P_MAXV_TOKEN, PoweredProfileIO, h04_powered
+        from powered_profile_stage import H04P_MAXV_TOKEN, H04PoweredScope, h04_powered
         from test_driver import FakeTransport
 
         class LoadFake:
@@ -783,15 +880,18 @@ class TestQualification(unittest.TestCase):
                 return super().write(command)
             def query(self, command):
                 if command == 'SYST:ERR?' and self.pending_error:
+                    self.cmds.append(command)
                     response = self.pending_error
                     self.pending_error = None
                     return response
                 key = command.upper().removesuffix('?')
                 if key in ('MEAS:VOLT', 'MEAS:CURR', 'MEAS:POW'):
+                    self.cmds.append(command)
                     voltage, current, mode = self.metrics(self.active_ch)
                     return str({'MEAS:VOLT': voltage, 'MEAS:CURR': current,
                                 'MEAS:POW': voltage * current}[key])
                 if key.startswith(('STAT:OPER:INST:ISUM', 'STAT:QUES:INST:ISUM')) and key.endswith(':COND'):
+                    self.cmds.append(command)
                     channel = int(key.split('ISUM')[1].split(':')[0])
                     enabled = bool(self.values[channel]['CHAN:OUTP'])
                     voltage, current, mode = self.metrics(channel)
@@ -826,6 +926,7 @@ class TestQualification(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()):
                 result = h04_powered(fake, evidence, load)
             self.assertEqual(result, 'PASS', evidence.path.read_text())
+            self.assert_driver_path(evidence, fake)
             self.assertTrue(fake.closed)
             self.assertTrue(load.closed)
             self.assertEqual(load.input, 'OFF')
@@ -862,7 +963,7 @@ class TestQualification(unittest.TestCase):
             self.assertEqual([record['voltage_set_v'] for record in panel_clamps],
                              [4.5, 4.5, 4.5])
 
-            timed_io = PoweredProfileIO(FakeTransport(), q.Evidence(
+            timed_io = H04PoweredScope(FakeTransport(), q.Evidence(
                 Path(tmp) / 'pause.jsonl', 'H04P'))
             timed_io.started = 0.0
             with patch('powered_profile_stage.time.monotonic', side_effect=(10., 910.)), \
@@ -873,14 +974,9 @@ class TestQualification(unittest.TestCase):
     def test_h01_validates_off_identity_and_error_without_output_writes(self):
         q = self.module()
         from test_driver import FakeTransport
-        class ProbeFake(FakeTransport):
-            def query(self, command):
-                if command == 'INST:NSEL?': return '1'
-                if command == 'OUTP:ENABLE?': return '1'
-                return super().query(command)
         for bad in ('none', 'old170', 'new170', 'on', 'model', 'error', 'timeout'):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as tmp:
-                fake = ProbeFake()
+                fake = FakeTransport()
                 base = fake.query
                 error_reads = 0
                 def query(command):
@@ -892,23 +988,30 @@ class TestQualification(unittest.TestCase):
                     if bad == 'on' and command == 'STAT:OPER:INST:ISUM2:COND?': return '8'
                     if bad == 'model' and command == '*IDN?': return 'Other, MODEL, SECRET, fw'
                     if bad == 'error' and command == 'SYST:ERR?': return '-100,"Command error"'
-                    if bad == 'timeout' and command == 'SYST:VERS?': raise OSError('link lost')
+                    if bad == 'timeout' and command == 'SYST:VERS?':
+                        fake.cmds.append(command)
+                        raise OSError('link lost')
                     return base(command)
                 fake.query = query
                 evidence = q.Evidence(Path(tmp) / 'events.jsonl', 'H01')
                 with contextlib.redirect_stdout(io.StringIO()):
                     outcome = q.h01(fake, evidence)
-                self.assertEqual(outcome, 'PASS' if bad in ('none', 'old170') else 'ABORTED' if bad == 'timeout' else 'FAIL')
+                self.assertEqual(outcome, 'PASS' if bad == 'none' else 'ABORTED' if bad == 'timeout' else 'FAIL')
+                if bad == 'none': self.assert_driver_path(evidence, fake)
                 content = evidence.path.read_text()
                 self.assertNotIn('SECRET', content)
                 self.assertNotIn(', TEST,', content)
                 self.assertTrue(fake.closed)
-                self.assertFalse(any(cmd.startswith(('OUTP ', 'CHAN:OUTP ', 'VOLT ', 'CURR ', 'INST:NSEL ')) for cmd in fake.cmds))
+                self.assertFalse(any(cmd.startswith(('OUTP ', 'CHAN:OUTP ', 'VOLT ', 'CURR ')) for cmd in fake.cmds))
+                if bad == 'none':
+                    self.assertEqual(fake.active_ch, 1)
+                    snapshots = [json.loads(line) for line in content.splitlines()
+                                 if json.loads(line)['event'] == 'channel_snapshot']
+                    self.assertEqual([r['channel'] for r in snapshots], [1, 2, 3])
                 if bad == 'timeout':
-                    self.assertEqual(error_reads, 1)  # No follow-up query on the failed link.
+                    self.assertEqual(fake.cmds[-1], 'SYST:VERS?')  # No follow-up query.
                     self.assertIn('io_error', content)
                     self.assertIn('OSError', content)
-                if bad == 'old170': self.assertIn('preexisting_error', content)
 
     def test_evidence_redacts_before_serializing(self):
         q = self.module()
