@@ -711,6 +711,60 @@ class TestDevice(unittest.TestCase):
         self.assertTrue(dev.faulted)
         self.assertFalse(dev.armed)
 
+    def test_all_profile_application_failures_share_fault_cleanup(self):
+        """All topologies clear the profile and attempt only best-effort OFF."""
+        candidates = (
+            ('independent', profile(), None),
+            ('series', SeriesProfile('series', (2., 3.), 4.5, .3, 2., .1,
+                                     ChannelProfile(4., .5, 2., .3)), 'series'),
+            ('parallel', ParallelProfile('parallel', 3.0, .3, 2.0, .1,
+                                         ChannelProfile(4., .5, 1., .1)), 'parallel'),
+        )
+        for name, configured, wiring in candidates:
+            with self.subTest(wiring=name):
+                source = FakeTransport()
+                dev = Keithley2231A(source)
+
+                def fail_wiring():
+                    raise SafetyError('injected profile validation failure')
+
+                dev._check_wiring_mode = fail_wiring
+                with self.assertRaisesRegex(SafetyError, 'injected profile validation failure'):
+                    dev.apply_profile(configured, confirmed_wiring=wiring)
+                self.assertTrue(dev.faulted)
+                self.assertFalse(dev.armed)
+                self.assertIsNone(dev.profile)
+                self.assertEqual(source.cmds[-1], 'OUTP 0')
+                self.assertNotIn('OUTP 1', source.cmds)
+
+    def test_both_combined_modes_check_ch3_limit_integrity(self):
+        """Shared CH3 guard must detect one-step external changes in both modes."""
+        class SeriesTransport(FakeTransport):
+            def query(self, command):
+                if (command == 'VOLT:LIM?' and self.flags['OUTP:SER']
+                        and self.active_ch == 1):
+                    self.cmds.append(command)
+                    return '5.0'
+                return super().query(command)
+
+        candidates = (
+            ('series', SeriesTransport(),
+             SeriesProfile('series', (2., 3.), 4.5, .3, 2., .1,
+                           ChannelProfile(4., .5, 2., .3))),
+            ('parallel', FakeTransport(),
+             ParallelProfile('parallel', 3.0, .3, 2.0, .1,
+                             ChannelProfile(4., .5, 1., .1))),
+        )
+        for wiring, source, configured in candidates:
+            with self.subTest(wiring=wiring):
+                dev = Keithley2231A(source)
+                dev.apply_profile(configured, confirmed_wiring=wiring)
+                source.values[3]['VOLT:LIM'] -= .01
+                with self.assertRaisesRegex(SafetyError, 'CH3 hardware voltage limit changed'):
+                    dev.verify_profile()
+                self.assertTrue(dev.faulted)
+                self.assertFalse(dev.armed)
+
     def test_series_profile_fails_closed_when_combined_limit_readback_changes(self):
         class ChangedCombinedLimit(FakeTransport):
             def query(self, command):

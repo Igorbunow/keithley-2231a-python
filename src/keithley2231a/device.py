@@ -431,6 +431,30 @@ class Keithley2231A:
                 self._latch_fault()
                 raise
 
+    def _disable_combined_modes(self) -> None:
+        """Clear all combination modes in the instrument's established order.
+
+        Callers must already have confirmed that outputs are OFF. This does
+        not remove or verify any *physical* Series/Parallel connections.
+        """
+        self._write('OUTP:SER 0')
+        self._write('OUTP:PARALLEL 0')
+        self._write('OUTP:TRAC 0')
+
+    def _abort_profile_application(self) -> None:
+        """Common best-effort cleanup after any profile-application failure.
+
+        An OUTP 0 write alone cannot prove outputs are OFF. In particular,
+        an uncertain link blocks any follow-up I/O; never report confirmed OFF.
+        Preserve the original exception raised by the failed application.
+        """
+        self._profile = None
+        self._latch_fault()
+        try:
+            self._write('OUTP 0')
+        except Exception:
+            pass
+
     def apply_profile(self, profile: Profile, *, confirmed_wiring: str | None = None) -> None:
         """Arms profile with all outputs OFF. For series/parallel physical wires must
         be manually confirmed EVERY time, e.g. confirmed_wiring='series'.
@@ -469,9 +493,7 @@ class Keithley2231A:
                 if not self._off_confirmed():
                     self._trip('Output could not be switched OFF')
                 # When changing wiring, remove physical jumpers while outputs OFF.
-                self._write('OUTP:SER 0')
-                self._write('OUTP:PARALLEL 0')
-                self._write('OUTP:TRAC 0')
+                self._disable_combined_modes()
                 for ch, spec in enumerate(profile.channels, 1):
                     self._select(ch)
                     self._write('OUTP:TIM:STAT 0')
@@ -504,10 +526,7 @@ class Keithley2231A:
                     # context. Never arm on checks made before the transition.
                     self.verify_profile()
             except BaseException:
-                self._profile = None
-                self._latch_fault()
-                try: self._write('OUTP 0')
-                except Exception: pass
+                self._abort_profile_application()
                 raise
 
     def apply_series_profile(self, profile: SeriesProfile, *,
@@ -543,9 +562,7 @@ class Keithley2231A:
                     self._write('OUTP:PARALLEL 0')
                 if not self._off_confirmed():
                     self._trip('Output could not be switched OFF')
-                self._write('OUTP:SER 0')
-                self._write('OUTP:PARALLEL 0')
-                self._write('OUTP:TRAC 0')
+                self._disable_combined_modes()
 
                 for ch, voltage_limit in ((1, profile.channel_voltage_limits[0]),
                                           (2, profile.channel_voltage_limits[1])):
@@ -593,10 +610,7 @@ class Keithley2231A:
                 self._armed = True
                 self.verify_profile()
             except BaseException:
-                self._profile = None
-                self._latch_fault()
-                try: self._write('OUTP 0')
-                except Exception: pass
+                self._abort_profile_application()
                 raise
 
     def apply_parallel_profile(self, profile: ParallelProfile, *,
@@ -628,9 +642,7 @@ class Keithley2231A:
                     self._write('OUTP:PARALLEL 0')
                 if not self._off_confirmed():
                     self._trip('Output could not be switched OFF')
-                self._write('OUTP:SER 0')
-                self._write('OUTP:PARALLEL 0')
-                self._write('OUTP:TRAC 0')
+                self._disable_combined_modes()
                 for ch in (1, 2):
                     self._select(ch)
                     self._write('OUTP:TIM:STAT 0')
@@ -681,10 +693,7 @@ class Keithley2231A:
                 self._armed = True
                 self.verify_profile()
             except BaseException:
-                self._profile = None
-                self._latch_fault()
-                try: self._write('OUTP 0')
-                except Exception: pass
+                self._abort_profile_application()
                 raise
 
     def _check_combined_setpoints(self, expected=None):
@@ -727,15 +736,28 @@ class Keithley2231A:
         if active != wanted:
             raise SafetyError(f'expected wiring {wanted}, actual instrument mode {active}')
 
+    def _verify_combined_ch3(self) -> None:
+        """One CH3 integrity path shared by Series and Parallel profiles."""
+        self._select(3)
+        spec = self._profile.channel3
+        if (not self._bool(self._query('VOLT:LIM:STAT?')) or
+                abs(self._num('VOLT:LIM?') - spec.max_voltage) > .0049):
+            raise SafetyError('CH3 hardware voltage limit changed')
+        self._check_setpoints(3, spec)
+
+    def _verify_combined_outputs(self) -> None:
+        """One global output-state check for the two combined topologies."""
+        states = self._output_states()
+        if states != self._expected_outputs:
+            raise SafetyError(f'{self._profile.wiring.capitalize()} global output state mismatch: {states}')
+
     def verify_profile(self):
         with self._lock:
             self._require_ready()
             try:
                 self._check_wiring_mode()
                 if isinstance(self._profile, ParallelProfile):
-                    states = self._output_states()
-                    if states != self._expected_outputs:
-                        raise SafetyError(f'Parallel global output state mismatch: {states}')
+                    self._verify_combined_outputs()
                     self._check_combined_setpoints()
                     self._select(1)
                     limit_enabled = self._bool(self._query('VOLT:LIM:STAT?'))
@@ -744,27 +766,15 @@ class Keithley2231A:
                     if (limit_enabled and
                             abs(self._num('VOLT:LIM?') - self._profile.max_voltage) > .0049):
                         raise SafetyError('Parallel hardware voltage limit changed')
-                    self._select(3)
-                    spec = self._profile.channel3
-                    if (not self._bool(self._query('VOLT:LIM:STAT?')) or
-                            abs(self._num('VOLT:LIM?') - spec.max_voltage) > .0049):
-                        raise SafetyError('CH3 hardware voltage limit changed')
-                    self._check_setpoints(3, spec)
+                    self._verify_combined_ch3()
                     self._last_verify = time.monotonic()
                     return
                 if isinstance(self._profile, SeriesProfile):
-                    states = self._output_states()
-                    if states != self._expected_outputs:
-                        raise SafetyError(f'Series global output state mismatch: {states}')
+                    self._verify_combined_outputs()
                     self._check_combined_setpoints()
                     if abs(self._num('VOLT:LIM?') - sum(self._profile.channel_voltage_limits)) > .0049:
                         raise SafetyError('Series voltage-limit register changed')
-                    self._select(3)
-                    spec = self._profile.channel3
-                    if (not self._bool(self._query('VOLT:LIM:STAT?')) or
-                            abs(self._num('VOLT:LIM?') - spec.max_voltage) > .0049):
-                        raise SafetyError('CH3 hardware voltage limit changed')
-                    self._check_setpoints(3, spec)
+                    self._verify_combined_ch3()
                     self._last_verify = time.monotonic()
                     return
                 for ch, enabled in self._output_states().items():
