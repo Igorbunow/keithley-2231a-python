@@ -164,6 +164,19 @@ shorter active duration controls the pair. Individual timer/sequence APIs remain
 unavailable for tracked CH1/CH2. `combined_outputs()` uses global ON, including
 CH3: its wiring must also be safe. These tracking APIs are **SIM TESTED and HW OBSERVED within H08’s bounded scope**; the external DMM calibration and physical edge timing were not qualified.
 
+### External Series operation
+
+Series uses a dedicated `SeriesProfile`; install the external CH1− to CH2+ jumper
+with outputs OFF and confirm it when applying the profile. The pair has one combined
+voltage/current setpoint and is read through `read_channel(1)` with label `CH1+CH2`;
+`read_channel(2)` is rejected because firmware aliases its selection to CH1 in the
+observed mode. `combined_outputs(True, confirm_all_channels_safe=True)` uses global
+ON and may also energize CH3, so leave CH3 open or otherwise make it safe. In the
+observed firmware, Series `VOLT:LIM:STAT?` is disabled; the profile enforces its
+aggregate voltage cap in software and does not claim hardware OVP. The powered
+Series runner passed offline simulation only; H09 physical CV/CC qualification is
+pending.
+
 ## Installation and offline tests
 
 ```bash

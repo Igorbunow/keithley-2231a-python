@@ -98,9 +98,9 @@ Record `*IDN?`, SCPI version, selected channel readbacks, basic output states, s
 
 ## Stage 5 — Series/Parallel/Tracking
 
-**ONLY with no powered loads and after consulting the exact vendor terminal diagram.** Series and Parallel are externally wired: **SCPI commands never make internal power-terminal connections**.
+**Install or move external power wiring only with every output OFF.** The subsequent low-power Series qualification may energize the PSU only after its separate gated runner is approved. Series and Parallel are externally wired: **SCPI commands never make internal power-terminal connections**.
 
-1. With outputs OFF, physically install the external series jumpers according to the manual, check continuity and polarity. Validate aggregate U/I through a dummy load and a separate meter. Validate CH3 output remains as expected.
+1. H09 records OFF-only Series semantics and a powered pass for CV2/CR40, CC4/CR12, CV40/CR2000 and CC40/CR1600. At CC40 KEL103 read 36.990 V/0.0226 A/0.8359 W and DMM7510 read 36.989930 V; the operator confirmed CC on the panel. `read_channel(1).regulation` was `UNKNOWN` at both CC points because the OPER and QUES mode bits conflicted, so these display checks remain part of the qualified procedure. The runner checks >30 V, KEL103 V/R agreement and ≤1 W. The setup uses 20 V per-channel caps, a 40 V aggregate software cap and DMM7510 across CH1+ / CH2−; CH3 remains open at 0 V. Series combined VOLT:LIM is disabled in the observed firmware, so the aggregate cap is software-only. See [H09 preflight](H09_PREFLIGHT.ru.md) and [passing report](hardware_reports/2026-10-27T070018.826475Z_H09_qualification.md).
 2. Remove/rearrange jumpers **with all outputs OFF**, then configure parallel output, equal programmed voltages and appropriate current-sharing/wire sizing; check current distribution and total measurement.
 3. Tracking needs its own test: ratio of initial voltages, response to setpoint changes and the documented timer interaction.
 4. Record SCPI readbacks and actual terminal measurements separately: manual may describe combined mode in terms of *readings*, not electronic rewiring.

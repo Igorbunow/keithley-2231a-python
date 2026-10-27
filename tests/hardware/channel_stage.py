@@ -71,9 +71,12 @@ class KEL103UDP:
                                ':MEAS:VOLT?', ':MEAS:CURR?', ':MEAS:POW?'))
     WRITE_COMMANDS = frozenset((':FUNC CR', ':INP ON', ':INP OFF',
                                 ':RES 5OHM', ':RES 11OHM', ':RES 12OHM', ':RES 22OHM',
-                                ':RES 40OHM', ':RES 47OHM', ':RES 56OHM'))
+                                ':RES 40OHM', ':RES 47OHM', ':RES 56OHM',
+                                ':RES 1600OHM', ':RES 2000OHM'))
     H04P_RESISTANCES = (5.0, 11.0, 12.0, 22.0, 47.0, 56.0)
-    VERIFIED_RESISTANCES = (5.0, 11.0, 12.0, 22.0, 40.0, 47.0, 56.0)
+    H09_RESISTANCES = (12.0, 40.0, 1600.0, 2000.0)
+    VERIFIED_RESISTANCES = (5.0, 11.0, 12.0, 22.0, 40.0, 47.0, 56.0,
+                            1600.0, 2000.0)
 
     def __init__(self, host, port=18190, timeout=1.5, sock=None, evidence=None):
         self.host = str(ipaddress.IPv4Address(host))
@@ -192,6 +195,24 @@ class KEL103UDP:
         """Select one bounded H04-Powered resistance while INPUT is confirmed OFF."""
         if resistance_ohm not in self.H04P_RESISTANCES:
             raise ValueError('H04-Powered CR value is not allow-listed')
+        if self.input_state() != 'OFF':
+            raise SafetyError('KEL103 INPUT must be OFF before changing CR settings')
+        self.write(':FUNC CR')
+        if self.query(':FUNC?').upper() != 'CR':
+            raise SafetyError('KEL103 did not enter CR mode')
+        self.write(f':RES {resistance_ohm:g}OHM')
+        if self.query(':FUNC?').upper() != 'CR':
+            raise SafetyError('KEL103 left CR mode while setting resistance')
+        actual = self._quantity(self.query(':RES?'), 'OHM')
+        if abs(actual - resistance_ohm) > 0.001:
+            raise SafetyError(f'KEL103 CR readback mismatch: {actual} Ω')
+        self.verified_resistance = resistance_ohm
+        return actual
+
+    def configure_h09_cr(self, resistance_ohm):
+        """Select one reviewed H09 resistance while KEL103 INPUT is OFF."""
+        if resistance_ohm not in self.H09_RESISTANCES:
+            raise ValueError('H09 CR value is not allow-listed')
         if self.input_state() != 'OFF':
             raise SafetyError('KEL103 INPUT must be OFF before changing CR settings')
         self.write(':FUNC CR')

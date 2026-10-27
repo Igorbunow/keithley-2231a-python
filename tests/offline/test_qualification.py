@@ -96,6 +96,151 @@ class TestQualification(unittest.TestCase):
                 for command in ('OUTP 1', 'CHAN:OUTP 1', 'VOLT 60', 'OUTP:PARALLEL 1'):
                     with self.assertRaises(ValueError): scope._validate(command, False)
 
+    def test_h09_powered_preflight_is_explicit_and_global_on_is_gated(self):
+        import h09_powered_stage
+        from test_driver import FakeTransport
+        from keithley2231a import SafetyError
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            h09_powered_stage.preflight('/dev/ttyUSB3', load_transport='serial')
+        card = output.getvalue()
+        for detail in ('CH1− с CH2+', 'INPUT + к CH1+', 'INPUT − к CH2−', 'CH3', '2.00 V', '0.250 A',
+                       'INPUT OFF', 'Series', '30.0–40.5 V', 'V/R', '0.015 A',
+                       'оператор должен отдельно подтвердить индикатор CC',
+                       h09_powered_stage.approval_token()):
+            self.assertIn(detail, card)
+        self.assertNotIn('37.8–40.0 V', card)
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H09')
+            scope = h09_powered_stage.H09PoweredScope(FakeTransport(), evidence)
+            with self.assertRaises(SafetyError): scope._validate('OUTP 1', False)
+            with self.assertRaises(SafetyError): scope._validate('OUTP:SER 1', False)
+            scope.powered_gate = True
+            scope._validate('OUTP 1', False)
+            scope._validate('OUTP:SER 1', False)
+            with self.assertRaises(ValueError): scope._validate('CHAN:OUTP 1', False)
+            with self.assertRaises(SafetyError): scope._validate('OUTP:PARALLEL 1', False)
+
+    def test_h09_powered_runner_reuses_driver_for_cv_cc_and_restores_all_off(self):
+        import h09_powered_stage
+        from test_driver import FakeTransport
+
+        class SeriesSource(FakeTransport):
+            def __init__(self):
+                super().__init__()
+                # Model a previous stopped H09 run that left Series selected, outputs OFF.
+                self.flags['OUTP:SER'] = 1.
+                self.cc40_voltage_reads = 0
+
+            def write(self, command):
+                if command == 'OUTP:SER 1':
+                    super().write(command)
+                    self.values[1]['VOLT:LIM'] = (self.values[1]['VOLT:LIM'] +
+                                                  self.values[2]['VOLT:LIM'])
+                    self.values[1]['VOLT:LIM:STAT'] = 0.
+                    return
+                if command == 'OUTP:SER 0' and self.flags['OUTP:SER']:
+                    super().write(command)
+                    self.values[1]['VOLT:LIM:STAT'] = 1.
+                    return
+                super().write(command)
+
+            def query(self, command):
+                if command == 'STAT:OPER:INST:ISUM1:COND?':
+                    self.cmds.append(command)
+                    cc = ((self.values[1]['VOLT'] >= 4.0 and self.values[1]['CURR'] >= .1)
+                          or (self.values[1]['VOLT'] >= 40.0 and
+                              self.values[1]['CURR'] <= .024))
+                    return ('10' if cc else '9') \
+                        if self.flags['OUTP:STAT:ALL'] else '0'
+                if command == 'MEAS:CURR?' and self.active_ch == 1:
+                    self.cmds.append(command)
+                    if self.values[1]['VOLT'] >= 40.0:
+                        return '.024' if self.values[1]['CURR'] <= .024 else '.020'
+                    return '.25' if self.values[1]['VOLT'] >= 4.0 else '.05'
+                if command == 'MEAS:VOLT?' and self.active_ch == 1 and self.values[1]['VOLT'] >= 40.0:
+                    self.cmds.append(command)
+                    if self.values[1]['CURR'] <= .024:
+                        self.cc40_voltage_reads += 1
+                        return str((32.4013, 32.6813, 33.1285, 33.1334, 33.1471)[
+                            min(self.cc40_voltage_reads - 1, 4)])
+                    return '38.4' if self.values[1]['CURR'] <= .024 else '40.0'
+                if command == 'MEAS:VOLT?' and self.active_ch == 1 and self.values[1]['VOLT'] >= 4.0:
+                    self.cmds.append(command)
+                    return '3.0'
+                if command == 'MEAS:CURR?' and self.active_ch == 3:
+                    self.cmds.append(command)
+                    return '0'
+                return super().query(command)
+
+        class Load:
+            port = '/dev/ttyACM0'
+            live = True
+            def __init__(self, meter):
+                self.meter = meter
+                self.state, self.resistance, self.closed = 'OFF', None, False
+            def identify(self): return 'KORAD,KEL103,TEST,3.30'
+            def input_state(self): return self.state
+            def configure_cr(self, resistance): self.resistance = resistance; return resistance
+            def configure_h09_cr(self, resistance): return self.configure_cr(resistance)
+            def set_input(self, enabled):
+                self.state = 'ON' if enabled else 'OFF'
+                if enabled:
+                    self.meter.voltage = {40.0: 2.0, 12.0: 3.0,
+                                          2000.0: 40.0, 1600.0: 33.148}[self.resistance]
+            def measurements(self):
+                voltage = {40.0: 2.0, 12.0: 3.0,
+                           2000.0: 40.0, 1600.0: 33.148}[self.resistance]
+                current = .0202 if self.resistance == 1600.0 else voltage / self.resistance
+                return {'kel103_voltage_v': voltage, 'kel103_current_a': current,
+                        'kel103_power_w': voltage * current}
+            def close(self): self.closed = True
+
+        class Meter:
+            live = True
+            def __init__(self): self.voltage, self.closed, self.range_v = 0., False, None
+            def configure_voltage(self, range_v=10): self.range_v = range_v
+            def measure(self): return {'voltage_v': self.voltage}
+            def close(self): self.closed = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H09')
+            source, meter = SeriesSource(), Meter()
+            load = Load(meter)
+            observed = []
+            def gate(token, prompt, adapter=None):
+                observed.append(token)
+                meter.voltage = {
+                    'CONFIRM H09 DISPLAY PSU=CV KEL=CR INPUT=ON': 2.0,
+                    'CONFIRM H09 DISPLAY PSU=CC KEL=CR INPUT=ON': 3.0,
+                    'CONFIRM H09 DISPLAY PSU=CV40 KEL=CR INPUT=ON': 40.0,
+                    'CONFIRM H09 DISPLAY PSU=CC40 KEL=CR INPUT=ON': 33.148,
+                }.get(token, meter.voltage)
+            with patch.object(h09_powered_stage, 'operator_gate', side_effect=gate), \
+                 patch.object(h09_powered_stage.time, 'sleep'):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    result = h09_powered_stage.h09_powered(source, evidence, load, meter)
+            self.assertEqual(result, 'PASS', evidence.path.read_text()[-1600:])
+            self.assertEqual(observed, ['CONFIRM H09 DISPLAY PSU=CV KEL=CR INPUT=ON',
+                                        'CONFIRM H09 DISPLAY PSU=CC KEL=CR INPUT=ON',
+                                        'CONFIRM H09 DISPLAY PSU=CV40 KEL=CR INPUT=ON',
+                                        'CONFIRM H09 DISPLAY PSU=CC40 KEL=CR INPUT=ON',
+                                        h09_powered_stage.FINAL_TOKEN])
+            self.assertEqual(source.flags['OUTP:SER'], 0.)
+            self.assertEqual(source.flags['OUTP:STAT:ALL'], 0.)
+            self.assertEqual(load.state, 'OFF')
+            self.assertTrue(source.closed and load.closed and meter.closed)
+            self.assertEqual(len([r for r in map(json.loads, evidence.path.read_text().splitlines())
+                                  if r['event'] == 'series_powered_measurement']), 4)
+            self.assertEqual(meter.range_v, 100)
+            self.assertGreaterEqual(source.cc40_voltage_reads, 4)
+            samples = [r for r in map(json.loads, evidence.path.read_text().splitlines())
+                       if r['event'] == 'series_measurement_sample' and r['mode'] == 'CC'
+                       and r['resistance_ohm'] == 1600.0]
+            self.assertFalse(samples[0]['cross_consistent'])
+            self.assertTrue(samples[-1]['cross_consistent'])
+            self.assertGreaterEqual(samples[-1]['consecutive_stable_pairs'], 2)
+            self.assert_driver_path(evidence, source)
+
     def test_dmm7510_scpi_voltage_and_identity_evidence_are_isolated(self):
         from dmm7510 import DMM7510
 
@@ -145,6 +290,35 @@ class TestQualification(unittest.TestCase):
                     DMM7510(io, evidence).configure_voltage()
                 if fault != 'rear': self.assertNotIn('*RST', io.cmds)
                 if fault == 'tsp': self.assertEqual(io.cmds, ['*IDN?', '*LANG?'])
+
+    def test_dmm7510_uses_100v_range_for_high_voltage_readback(self):
+        from dmm7510 import DMM7510
+
+        class MeterIO:
+            def __init__(self): self.commands, self.range_v = [], 10.
+            def write(self, command):
+                self.commands.append(command)
+                if command.startswith(':SENS:VOLT:RANG '):
+                    self.range_v = float(command.rsplit(' ', 1)[1])
+            def query(self, command):
+                self.commands.append(command)
+                return {'*IDN?': 'KEITHLEY INSTRUMENTS,MODEL DMM7510,TEST,1.7.5',
+                        '*LANG?': 'SCPI', ':SYST:ERR?': '0,"No error"',
+                        ':ROUT:TERM?': 'FRON', ':SENS:FUNC?': '"VOLT:DC"',
+                        ':SENS:VOLT:RANG?': str(self.range_v),
+                        ':SENS:VOLT:NPLC?': '1', ':READ?': '39.2'}[command]
+            def close(self): pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H09')
+            io = MeterIO()
+            meter = DMM7510(io, evidence)
+            meter.configure_voltage(range_v=100)
+            self.assertIn(':SENS:VOLT:RANG 100', io.commands)
+            self.assertEqual(meter.measure(), {'voltage_v': 39.2})
+            configuration = [json.loads(line) for line in evidence.path.read_text().splitlines()
+                             if json.loads(line)['event'] == 'dmm7510_configuration']
+            self.assertEqual(configuration[-1]['range_v'], 100)
 
     def test_h08_tracking_dmm_gates_timer_and_failures(self):
         import h08_stage
@@ -825,6 +999,7 @@ class TestQualification(unittest.TestCase):
                 if self.command == '*IDN?':
                     return b'Keithley instruments, 2231A-30-3, PRIVATE-SERIAL, 1.04-0.01\r\n'
                 if self.command == 'INST:NSEL?': return f'{self.selected}\r\n'.encode()
+                if self.command == 'OUTP:SER?': return b'0\r\n'
                 if self.command == 'CHAN:OUTP?': return b'0\r\n'
                 return b'8\r\n'
 
@@ -878,6 +1053,15 @@ class TestQualification(unittest.TestCase):
         load = KEL103UDP('192.168.22.106', sock=unconfigured)
         with self.assertRaises(Exception): load.set_input(True)
         self.assertEqual(unconfigured.sent, [])
+
+        high_voltage = DatagramFake((b'OFF', b'CR', b'CR', b'2000.000OHM'))
+        load = KEL103UDP('192.168.22.106', sock=high_voltage)
+        self.assertEqual(load.configure_h09_cr(2000.0), 2000.0)
+        self.assertEqual(high_voltage.sent, [b':INP?\n', b':FUNC CR\n', b':FUNC?\n',
+                                             b':RES 2000OHM\n', b':FUNC?\n', b':RES?\n'])
+        before = list(high_voltage.sent)
+        with self.assertRaises(ValueError): load.configure_h09_cr(100.0)
+        self.assertEqual(high_voltage.sent, before)
 
     def test_kel103_serial_uses_bounded_lf_protocol_and_latches_link_errors(self):
         from channel_stage import KEL103Serial

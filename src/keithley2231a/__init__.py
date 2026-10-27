@@ -4,13 +4,13 @@ Safety restrictions protect the API, not against other controllers, firmware bug
 or rewiring. Use external interlocks for hazardous applications.
 """
 from .transport import SerialTransport, TcpTransport, TransportError
-from .profile import Profile, ChannelProfile, PowerStep, LimitsError, ProfileError
+from .profile import Profile, SeriesProfile, ChannelProfile, PowerStep, LimitsError, ProfileError
 from .device import Keithley2231A, InstrumentError, SafetyError, Reading
 from .monitor import Acquisition, ChannelStats, RollingStats
 from .sweep import voltage_sweep, SweepPoint
 from .bench import BenchCoordinator, BenchAction, BenchStep, BenchCapture, Meter
 
-__all__ = ["SerialTransport", "TcpTransport", "TransportError", "Profile",
+__all__ = ["SerialTransport", "TcpTransport", "TransportError", "Profile", "SeriesProfile",
            "ChannelProfile", "PowerStep", "LimitsError", "ProfileError", "Keithley2231A",
            "InstrumentError", "SafetyError", "Reading", "Acquisition",
            "ChannelStats", "RollingStats", "voltage_sweep", "SweepPoint",

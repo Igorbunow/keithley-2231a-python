@@ -86,7 +86,7 @@ class Profile:
             raise ProfileError("profile name required")
         if not isinstance(self.lock_front_panel, bool):
             raise ProfileError("lock_front_panel must be bool")
-        if self.wiring not in ("independent", "series", "parallel", "tracking"):
+        if self.wiring not in ("independent", "parallel", "tracking"):
             raise ProfileError("invalid wiring mode")
         if not isinstance(self.verify_every_s, (int, float)) or isinstance(self.verify_every_s, bool) or not math.isfinite(self.verify_every_s) or self.verify_every_s <= 0:
             raise ProfileError("verify_every_s must be > 0")
@@ -133,3 +133,72 @@ class Profile:
             ChannelProfile(30.0, 3.0, 0.0, 0.1),
             ChannelProfile(5.0, 3.0, 0.0, 0.1),
         ), lock_front_panel=lock_front_panel)
+
+
+@dataclass(frozen=True)
+class SeriesProfile:
+    """Safety contract for externally wired CH1+CH2 series output.
+
+    ``max_voltage`` and ``initial_voltage`` describe the combined terminal voltage
+    controlled through CH1. ``channel_voltage_limits`` are the independent
+    per-channel Max Volt Set values loaded before entering Series. Firmware has
+    been observed to disable ``VOLT:LIM:STAT`` in Series, so ``max_voltage`` is a
+    software-only cap. The shared current is bounded by the lower current rating
+    of the two series channels. CH3 remains an independent output in the profile.
+    """
+    name: str
+    channel_voltage_limits: tuple[float, float]
+    max_voltage: float
+    max_current: float
+    initial_voltage: float
+    initial_current: float
+    channel3: ChannelProfile
+    lock_front_panel: bool = False
+    verify_every_s: float = 5.0
+    wiring: str = "series"
+    access: str = "control"
+
+    def __post_init__(self):
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ProfileError("profile name required")
+        if (not isinstance(self.channel_voltage_limits, tuple) or
+                len(self.channel_voltage_limits) != 2):
+            raise ProfileError("channel_voltage_limits must be a tuple for CH1 and CH2")
+        for ch, limit in enumerate(self.channel_voltage_limits, 1):
+            if (not isinstance(limit, (int, float)) or isinstance(limit, bool) or
+                    not math.isfinite(limit) or not (0 < limit <= 30) or
+                    abs(limit / .01 - round(limit / .01)) > 1e-6):
+                raise LimitsError(f"CH{ch}: invalid series channel voltage limit")
+        values = (self.max_voltage, self.max_current,
+                  self.initial_voltage, self.initial_current)
+        if any(not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v)
+               for v in values):
+            raise ProfileError("series setpoints and caps must be finite numbers")
+        if not (0 < self.max_voltage <= min(60, sum(self.channel_voltage_limits))):
+            raise LimitsError("max_voltage exceeds combined channel limits")
+        if not (0 < self.max_current <= 3):
+            raise LimitsError("series max_current must be in (0, 3]")
+        if not (0 <= self.initial_voltage <= self.max_voltage):
+            raise LimitsError("initial_voltage exceeds series software cap")
+        if not (0 <= self.initial_current <= self.max_current):
+            raise LimitsError("initial_current exceeds series software cap")
+        for label, value, step in (
+                ("max_voltage", self.max_voltage, .01),
+                ("initial_voltage", self.initial_voltage, .01),
+                ("max_current", self.max_current, .001),
+                ("initial_current", self.initial_current, .001)):
+            if abs(value / step - round(value / step)) > 1e-6:
+                raise ProfileError(f"{label} resolution {step}")
+        if not isinstance(self.channel3, ChannelProfile):
+            raise ProfileError("channel3 must be a ChannelProfile")
+        self.channel3.validate(3)
+        if self.wiring != "series":
+            raise ProfileError("SeriesProfile wiring is fixed to series")
+        if self.access != "control":
+            raise ProfileError("SeriesProfile requires guarded control access")
+        if type(self.lock_front_panel) is not bool:
+            raise ProfileError("lock_front_panel must be bool")
+        if (not isinstance(self.verify_every_s, (int, float)) or
+                isinstance(self.verify_every_s, bool) or
+                not math.isfinite(self.verify_every_s) or self.verify_every_s <= 0):
+            raise ProfileError("verify_every_s must be > 0")

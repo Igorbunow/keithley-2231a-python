@@ -22,6 +22,7 @@ class DMM7510:
     def __init__(self, transport, evidence):
         self.transport, self.evidence = transport, evidence
         self.live, self.configured = True, False
+        self.range_v = None
         self._scpi_ready = False
 
     def _check_error(self, context):
@@ -47,8 +48,10 @@ class DMM7510:
             self.live, self.configured = False, False
             raise
 
-    def configure_voltage(self):
-        """Identify before resetting; set and verify a deterministic 10 V DC range."""
+    def configure_voltage(self, range_v=10):
+        """Identify before reset; select and verify a supported 10 V or 100 V range."""
+        if type(range_v) is not int or range_v not in (10, 100):
+            raise ValueError('DMM7510 DC voltage range must be 10 or 100 V')
         try:
             identity = self._transfer('*IDN?', query=True)
             parts = [part.strip() for part in identity.split(',')]
@@ -65,17 +68,19 @@ class DMM7510:
             self._check_error('SCPI command-set verification')
             if self._transfer(':ROUT:TERM?', query=True).strip().upper() not in ('FRON', 'FRONT'):
                 raise ValueError('Select DMM7510 front terminals before H08')
-            for command in ('*RST', ':SENS:FUNC "VOLT:DC"', ':SENS:VOLT:RANG 10',
+            for command in ('*RST', ':SENS:FUNC "VOLT:DC"',
+                            f':SENS:VOLT:RANG {range_v}',
                             ':SENS:VOLT:INP AUTO', ':SENS:VOLT:NPLC 1',
                             ':SENS:VOLT:AZER ON', ':SENS:VOLT:AVER OFF'):
                 self._transfer(command, query=False)
             if (self._transfer(':SENS:FUNC?', query=True).strip().strip('"') != 'VOLT:DC'
-                    or float(self._transfer(':SENS:VOLT:RANG?', query=True)) != 10
+                    or float(self._transfer(':SENS:VOLT:RANG?', query=True)) != range_v
                     or float(self._transfer(':SENS:VOLT:NPLC?', query=True)) != 1):
                 raise ValueError('DMM7510 DC voltage configuration readback mismatch')
             self.evidence.add('dmm7510_configuration', firmware=parts[3],
-                              function='DC voltage', range_v=10, nplc=1,
+                              function='DC voltage', range_v=range_v, nplc=1,
                               terminals='front', outcome='PASS')
+            self.range_v = range_v
             self.configured = True
         except BaseException:
             self.live, self.configured = False, False
@@ -87,7 +92,7 @@ class DMM7510:
             raise RuntimeError('DMM7510 voltage session is not ready')
         try:
             value = float(self._transfer(':READ?', query=True))
-            if not math.isfinite(value) or abs(value) > 10:
+            if not math.isfinite(value) or self.range_v is None or abs(value) > self.range_v:
                 raise ValueError('Invalid/overrange DMM7510 voltage')
             return {'voltage_v': value}
         except BaseException:

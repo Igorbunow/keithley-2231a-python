@@ -31,7 +31,7 @@ class StageAdapter:
     SHUTDOWN_RESERVE = 128
     MAX_SECONDS = 300
     _CLEANUP_QUERY = re.compile(
-        r'^(?:\*IDN\?|SYST:ERR\?|INST:NSEL\?|CHAN:OUTP\?|'
+        r'^(?:\*IDN\?|SYST:ERR\?|OUTP:SER\?|INST:NSEL\?|CHAN:OUTP\?|'
         r'STAT:OPER:INST:ISUM[123]:COND\?)$')
     _CLEANUP_WRITE = re.compile(r'^(?:SYST:(?:REM|LOC)|OUTP 0|CHAN:OUTP 0|INST:NSEL [123])$')
 
@@ -52,6 +52,10 @@ class StageAdapter:
         finally: self.started += time.monotonic() - started
 
     def _validate(self, command, query):
+        # The core driver's startup/shutdown logic must distinguish a Series
+        # alias before treating CH1/CH2 as independently selectable outputs.
+        if query and command == 'OUTP:SER?':
+            return
         pattern = getattr(self, '_QUERY' if query else '_WRITE', None)
         allowed = pattern.fullmatch(command) if pattern is not None else command in (
             self.READS if query else self.WRITES)
@@ -60,6 +64,7 @@ class StageAdapter:
     def _after_write(self, command):
         if command.startswith('INST:NSEL '): self.selected = int(command[-1])
         elif command == 'OUTP 0': self.outputs = {ch: False for ch in (1, 2, 3)}
+        elif command == 'OUTP 1': self.outputs = {ch: True for ch in (1, 2, 3)}
         elif command.startswith('CHAN:OUTP '): self.outputs[self.selected] = command.endswith('1')
 
     def _transfer(self, command, query):

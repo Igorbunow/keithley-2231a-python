@@ -149,7 +149,7 @@ def verify_serial_adapter(port, adapter, available_ports=None):
 
 def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_channel=1,
               load_transport='udp', load_serial_port='/dev/ttyACM0', diagnose_status=False,
-              load_connected=False, recall=False, meter_host='192.168.22.112'):
+              load_connected=False, recall=False, meter_host='192.168.22.112', powered=False):
     """Print a human-readable card; never contact hardware."""
     if test_id == 'H06' and recall:
         from h06_recall import preflight as recall_preflight
@@ -158,9 +158,19 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         return
     row = stages()[test_id]
     if test_id == 'H09':
-        print('[H09] Series — первая OFF-подгруппа')
-        from h09_stage import preflight as h09_preflight
-        h09_preflight(port)
+        if powered:
+            if load_transport != 'serial':
+                print('H09 powered preflight requires --load-transport serial; no hardware accessed.')
+                return
+            print('[H09-Powered] Series — CV/CC с внешней нагрузкой и DMM7510')
+            from h09_powered_stage import preflight as h09_preflight
+            h09_preflight(port, args_meter_host=meter_host,
+                          load_transport=load_transport,
+                          load_serial_port=load_serial_port)
+        else:
+            print('[H09] Series — OFF-подгруппа')
+            from h09_stage import preflight as h09_preflight
+            h09_preflight(port)
         return
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
     if test_id == 'H08':
@@ -624,6 +634,8 @@ def main(argv=None):
                         help='H03 CH3 only: wire trace, delayed and channel-selection status snapshots')
     parser.add_argument('--recall', action='store_true',
                         help='H06 only: separately gated Output Recall mains cycles, all terminals empty')
+    parser.add_argument('--powered', action='store_true',
+                        help='H09 only: separately gated low-power Series CV/CC qualification')
     parser.add_argument('--prior-evidence', type=Path, action='append',
                         help='H03 evidence log; repeat once per completed-channel log when resuming')
     mode = parser.add_mutually_exclusive_group()
@@ -633,6 +645,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.recall and args.test_id != 'H06':
         parser.error('--recall requires H06')
+    if args.powered and args.test_id != 'H09':
+        parser.error('--powered requires H09')
     if args.load_connected and (args.test_id != 'H03' or args.start_channel != 1):
         parser.error('--load-connected requires H03 start channel 1')
     if args.diagnose_status and (args.test_id != 'H03' or args.start_channel != 3):
@@ -652,7 +666,8 @@ def main(argv=None):
     if args.test_id is None: parser.error('preflight/run requires one test ID')
     preflight(args.test_id, args.port, args.load_host, args.load_port,
               args.start_channel, args.load_transport, args.load_serial_port,
-              args.diagnose_status, args.load_connected, args.recall, args.meter_host)
+              args.diagnose_status, args.load_connected, args.recall, args.meter_host,
+              args.powered)
     if args.test_id == 'H03' and args.start_channel > 1:
         if args.prior_evidence is None:
             parser.error('--prior-evidence is required when resuming H03; repeat for each prior channel log')
@@ -665,6 +680,10 @@ def main(argv=None):
         return 0
     if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
+        return 2
+    if args.test_id == 'H09' and args.powered and (
+            args.load_transport != 'serial' or args.load_serial_port != '/dev/ttyACM0'):
+        print('BLOCKED: H09 powered requires the reviewed KEL103 USB port /dev/ttyACM0; no ports opened.')
         return 2
     if args.test_id in ('H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07') and not stage_passed(stages()['H01'][-1]):
         print('BLOCKED: требуется рассмотренный PASS H01; порт не открыт.')
@@ -690,8 +709,14 @@ def main(argv=None):
         if any(not stage_passed(stages()[stage][-1]) for stage in required):
             print('BLOCKED: H09 requires reviewed PASS H01–H08; port not opened.')
             return 2
-        from h09_stage import TOKEN as token, FINAL_TOKEN as final_token, h09
-        runner = h09
+        if args.powered:
+            from h09_powered_stage import (FINAL_TOKEN as final_token,
+                                           approval_token, h09_powered)
+            token = approval_token(args.meter_host, args.load_serial_port)
+            runner = h09_powered
+        else:
+            from h09_stage import TOKEN as token, FINAL_TOKEN as final_token, h09
+            runner = h09
     if args.test_id == 'H08':
         required = ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07')
         if any(not stage_passed(stages()[stage][-1]) for stage in required):
@@ -767,13 +792,19 @@ def main(argv=None):
     evidence = Evidence(ROOT / f'reports/hardware/{now}_{args.test_id}/events.jsonl', args.test_id)
     evidence.add('metadata', **software_metadata(), port=args.port, baud=9600, framing='8N1',
                  adapter=adapter,
-                 topology=('tracking CH1/CH2; DMM on one channel at a time; no jumpers; CH3 disconnected'
+                 topology=('external Series: jumper CH1− to CH2+; aggregate load and DMM across CH1+/CH2−; CH3 open'
+                           if args.test_id == 'H09' and args.powered else
+                           'tracking CH1/CH2; DMM on one channel at a time; no jumpers; CH3 disconnected'
                            if args.test_id == 'H08' else
                            'independent; CH1/CH2/CH3 negative terminals tied to scope common'
                            if args.test_id == 'H05' else 'independent; no jumpers; no DUT'),
-                 subgroup=('series_off_diagnostic' if args.test_id == 'H09' else
+                 subgroup=(('series_powered_cv_cc' if args.powered else 'series_off_diagnostic')
+                           if args.test_id == 'H09' else
                            'output_recall' if args.recall else None),
-                 load=('disconnected; KEL103 INPUT OFF; scope disconnected; no jumpers'
+                 load=('KORAD KEL103; USB serial /dev/ttyACM0; 115200 8N1; CR 40/12 Ω; '
+                       'input OFF between points'
+                       if args.test_id == 'H09' and args.powered else
+                       'disconnected; KEL103 INPUT OFF; scope disconnected; no jumpers'
                        if args.recall else
                        f'KORAD KEL103; UDP port {args.load_port}; input OFF'
                        if args.test_id in ('H03', 'H04P') and args.load_transport == 'udp' else
@@ -781,7 +812,10 @@ def main(argv=None):
                        '115200 8N1; USB link previously HW OBSERVED on H03; input OFF'
                        if args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07')
                        else 'disconnected; input OFF'),
-                 proposed_caps=('H09 OFF only: V-set 1/1.5/2 V, I-set 0.100/0.200/0.300 A; '
+                 proposed_caps=('H09 powered: Series total soft cap 4.00 V, current cap 0.300 A; '
+                                'CV 2.00 V/0.100 A CR40; CC 4.00 V/0.250 A CR12; CH3=0 V/open'
+                                if args.test_id == 'H09' and args.powered else
+                                'H09 OFF only: V-set 1/1.5/2 V, I-set 0.100/0.200/0.300 A; '
                                 'V-cap 2/3/4 V, software I-cap 0.300/0.400/0.500 A; ON forbidden'
                                 if args.test_id == 'H09' else
                                 'H08 V-cap 2/3/4 V, I-cap 0.300/0.400/0.500 A; '
@@ -814,7 +848,8 @@ def main(argv=None):
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
                  independent_meter=({'model': 'DMM7510', 'host': args.meter_host, 'port': 5025,
                                      'function': 'DCV 10 V, NPLC 1, front terminals'}
-                                    if args.test_id == 'H08' else None))
+                                    if args.test_id == 'H08' or (args.test_id == 'H09' and args.powered)
+                                    else None))
     evidence.add('approval', token=token)
     if args.diagnose_status:
         evidence.add('diagnostic_scope', channel=3, wire_trace='status commands only',
@@ -826,8 +861,10 @@ def main(argv=None):
                      prior_evidence=[path.name for path in args.prior_evidence])
     load, meter, transport = None, None, None
     try:
-        if args.test_id == 'H08': meter = open_meter(args.meter_host, evidence)
-        if args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07') and not args.recall:
+        if args.test_id == 'H08' or (args.test_id == 'H09' and args.powered):
+            meter = open_meter(args.meter_host, evidence)
+        if (args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07') or
+                (args.test_id == 'H09' and args.powered)) and not args.recall:
             from channel_stage import KEL103Serial, KEL103UDP
             load = (KEL103UDP(args.load_host, args.load_port, evidence=evidence)
                     if args.load_transport == 'udp' else
@@ -847,6 +884,8 @@ def main(argv=None):
         return open_transport(args.port)
 
     outcome = (runner(transport, evidence, meter) if args.test_id == 'H08' else
+               runner(transport, evidence, load, meter) if args.test_id == 'H09' and args.powered else
+               runner(transport, evidence) if args.test_id == 'H09' else
                runner(transport, evidence, reopen_recall_transport) if args.recall else
                runner(transport, evidence, load, args.start_channel,
                       diagnose_status=args.diagnose_status,

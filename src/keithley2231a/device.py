@@ -12,7 +12,7 @@ import re
 import threading
 import time
 from typing import Callable, Iterable
-from .profile import Profile, LimitsError, ProfileError
+from .profile import Profile, SeriesProfile, ChannelProfile, LimitsError, ProfileError
 from .transport import Transport, TransportError
 
 class InstrumentError(RuntimeError):
@@ -56,6 +56,9 @@ class Reading:
     regulation_source: str | None = None
 
 class Keithley2231A:
+    _OUTPUT_OFF_TIMEOUT_S = 1.0
+    _OUTPUT_POLL_INTERVAL_S = 0.05
+
     def __init__(self, transport: Transport, *, expected_serial: str | None = None,
                  debug: bool = False, debug_bypass_profile: bool = False,
                  debug_trace: Callable[[dict], None] | None = None,
@@ -89,7 +92,7 @@ class Keithley2231A:
         self._selected_channel = None
         self._expected_serial = expected_serial
         self._lock = threading.RLock()
-        self._profile: Profile | None = None
+        self._profile: Profile | SeriesProfile | None = None
         self._armed = False
         self._faulted = False
         self._last_verify = 0.0
@@ -348,6 +351,12 @@ class Keithley2231A:
         firmware while a channel regulates in CC. CHAN:OUTP? is the documented
         output-state query for the currently selected channel.
         """
+        if isinstance(self._profile, SeriesProfile):
+            enabled = self._bool(self._query('OUTP:STAT:ALL?'))
+            return {ch: enabled for ch in (1, 2, 3)}
+        if self._profile is None and self._bool(self._query('OUTP:SER?')):
+            enabled = self._bool(self._query('OUTP:STAT:ALL?'))
+            return {ch: enabled for ch in (1, 2, 3)}
         selected_value = self._num('INST:NSEL?')
         if selected_value != int(selected_value) or int(selected_value) not in (1, 2, 3):
             raise InstrumentError('Invalid selected-channel response')
@@ -397,7 +406,10 @@ class Keithley2231A:
         be manually confirmed EVERY time, e.g. confirmed_wiring='series'.
         Always replaces an existing profile only after reconfiguring from outputs OFF.
         """
-        if not isinstance(profile, Profile): raise ProfileError('expected Profile')
+        if isinstance(profile, SeriesProfile):
+            self.apply_series_profile(profile, confirmed_wiring=confirmed_wiring)
+            return
+        if not isinstance(profile, Profile): raise ProfileError('expected Profile or SeriesProfile')
         if profile.wiring in ('series', 'parallel') and confirmed_wiring != profile.wiring:
             raise SafetyError('Confirm physically installed CH1/CH2 wiring explicitly')
         with self._lock:
@@ -459,6 +471,106 @@ class Keithley2231A:
                 except Exception: pass
                 raise
 
+    def apply_series_profile(self, profile: SeriesProfile, *,
+                             confirmed_wiring: str | None = None) -> None:
+        """Configure an external CH1−/CH2+ series pair with a combined soft cap.
+
+        Series mode replaces separate CH1/CH2 meter contexts and firmware has
+        been observed to disable the combined voltage-limit register. The API
+        therefore enforces ``max_voltage`` in software and never claims an
+        active hardware voltage limiter. CH1 setpoint is the total voltage;
+        current is shared by the series pair. Global ON also enables CH3.
+        """
+        if not isinstance(profile, SeriesProfile):
+            raise ProfileError('expected SeriesProfile')
+        if confirmed_wiring != 'series':
+            raise SafetyError('Confirm physical CH1− to CH2+ series wiring explicitly')
+        with self._lock:
+            if self._armed:
+                raise SafetyError('Active profile immutable. Call emergency_off() before replacing it')
+            self._armed = False
+            self._faulted = False
+            self._profile = None
+            self._expected_setpoints = {
+                1: (profile.initial_voltage, profile.initial_current),
+                3: (profile.channel3.initial_voltage, profile.channel3.initial_current),
+            }
+            self._expected_outputs = {ch: False for ch in (1, 2, 3)}
+            try:
+                self.remote(lock_panel=False)
+                self.identity()
+                if not self._off_confirmed():
+                    self._trip('Output could not be switched OFF')
+                self._write('OUTP:SER 0')
+                self._write('OUTP:PARALLEL 0')
+                self._write('OUTP:TRAC 0')
+
+                for ch, voltage_limit in ((1, profile.channel_voltage_limits[0]),
+                                          (2, profile.channel_voltage_limits[1])):
+                    self._select(ch)
+                    self._write('OUTP:TIM:STAT 0')
+                    if self._bool(self._query('OUTP:TIM:STAT?')):
+                        raise SafetyError(f'CH{ch}: inherited timer remains enabled')
+                    self._write('VOLT 0')
+                    self._write(f'VOLT:LIM {voltage_limit:.2f}')
+                    self._write('VOLT:LIM:STAT 1')
+                    if (not self._bool(self._query('VOLT:LIM:STAT?')) or
+                            abs(self._num('VOLT:LIM?') - voltage_limit) > .0049):
+                        raise SafetyError(f'CH{ch}: independent voltage limit setup failed')
+                    self._write(f'CURR {profile.initial_current:.3f}')
+
+                ch3 = profile.channel3
+                self._select(3)
+                self._write('OUTP:TIM:STAT 0')
+                if self._bool(self._query('OUTP:TIM:STAT?')):
+                    raise SafetyError('CH3: inherited timer remains enabled')
+                self._write('VOLT 0')
+                self._write(f'VOLT:LIM {ch3.max_voltage:.2f}')
+                self._write('VOLT:LIM:STAT 1')
+                if (not self._bool(self._query('VOLT:LIM:STAT?')) or
+                        abs(self._num('VOLT:LIM?') - ch3.max_voltage) > .0049):
+                    raise SafetyError('CH3: hardware voltage limit setup failed')
+                self._write(f'CURR {ch3.initial_current:.3f}')
+                self._write(f'VOLT {ch3.initial_voltage:.2f}')
+                self._check_setpoints(3, ch3)
+
+                self._profile = profile
+                self._select(1)
+                self._write('OUTP:SER 1')
+                self._check_wiring_mode()
+                self._write(f'CURR {profile.initial_current:.3f}')
+                self._write(f'VOLT {profile.initial_voltage:.2f}')
+                self._check_series_setpoints((profile.initial_voltage, profile.initial_current))
+                if abs(self._num('VOLT:LIM?') - sum(profile.channel_voltage_limits)) > .0049:
+                    raise SafetyError('Series voltage-limit register does not match channel-limit sum')
+                if any(self._output_states().values()):
+                    raise SafetyError('Unexpected output ON while applying SeriesProfile')
+                if profile.lock_front_panel:
+                    self.remote(lock_panel=True)
+                self._last_verify = time.monotonic()
+                self._armed = True
+                self.verify_profile()
+            except BaseException:
+                self._profile = None
+                self._armed = False
+                self._faulted = True
+                try: self._write('OUTP 0')
+                except Exception: pass
+                raise
+
+    def _check_series_setpoints(self, expected=None):
+        profile = self._profile
+        if not isinstance(profile, SeriesProfile):
+            raise SafetyError('SeriesProfile is not active')
+        self._select(1)
+        voltage = self._num('VOLT?')
+        current = self._num('CURR?')
+        wanted = expected if expected is not None else self._expected_setpoints[1]
+        if (voltage < 0 or voltage > profile.max_voltage + .011 or
+                current < 0 or current > profile.max_current + .002 or
+                abs(voltage - wanted[0]) > .0049 or abs(current - wanted[1]) > .00049):
+            raise SafetyError(f'Series setpoint mismatch: V={voltage}, I={current}, expected={wanted}')
+
     def _check_setpoints(self, ch: int, spec, expected=None):
         self._select(ch)
         v = self._num('VOLT?'); i = self._num('CURR?')
@@ -486,6 +598,21 @@ class Keithley2231A:
             self._require_ready()
             try:
                 self._check_wiring_mode()
+                if isinstance(self._profile, SeriesProfile):
+                    states = self._output_states()
+                    if states != self._expected_outputs:
+                        raise SafetyError(f'Series global output state mismatch: {states}')
+                    self._check_series_setpoints()
+                    if abs(self._num('VOLT:LIM?') - sum(self._profile.channel_voltage_limits)) > .0049:
+                        raise SafetyError('Series voltage-limit register changed')
+                    self._select(3)
+                    spec = self._profile.channel3
+                    if (not self._bool(self._query('VOLT:LIM:STAT?')) or
+                            abs(self._num('VOLT:LIM?') - spec.max_voltage) > .0049):
+                        raise SafetyError('CH3 hardware voltage limit changed')
+                    self._check_setpoints(3, spec)
+                    self._last_verify = time.monotonic()
+                    return
                 for ch, enabled in self._output_states().items():
                     if enabled and not self._expected_outputs[ch]:
                         raise SafetyError(f'CH{ch}: unexpected output ON')
@@ -506,6 +633,14 @@ class Keithley2231A:
             self._require_ready(); self._check_channel(ch)
             if self._profile.access == 'power_only':
                 raise SafetyError('power_only: voltage/current setpoints are frozen')
+            if isinstance(self._profile, SeriesProfile):
+                if ch == 2:
+                    raise SafetyError('Series CH2 has no independent setpoint; change combined output through CH1')
+                spec = (self._profile.channel3 if ch == 3 else None)
+                voltage_cap = self._profile.max_voltage if ch == 1 else spec.max_voltage
+                current_cap = self._profile.max_current if ch == 1 else spec.max_current
+                self._set_profiled_channel(ch, voltage, current, voltage_cap, current_cap)
+                return
             if self._profile.wiring != 'independent':
                 raise SafetyError('Use set_tracking_voltage() for tracking voltage; '
                                   'other combined setpoint changes require a fresh profile at OFF')
@@ -536,6 +671,29 @@ class Keithley2231A:
                 self._expected_setpoints[ch] = expected
             except Exception as exc:
                 self._trip(f'Setting CH{ch} failed: {exc}')
+
+    def _set_profiled_channel(self, ch, voltage, current, voltage_cap, current_cap):
+        for val, cap, label, step in ((voltage, voltage_cap, 'voltage', .01),
+                                      (current, current_cap, 'current', .001)):
+            if val is not None and (not isinstance(val, (int, float)) or isinstance(val, bool)
+                    or not math.isfinite(val) or val < 0 or val > cap
+                    or abs(val / step - round(val / step)) > 1e-6):
+                raise LimitsError(f'{label}={val} exceeds profile cap {cap} or resolution {step}')
+        self.verify_profile()
+        try:
+            self._select(ch)
+            if current is not None: self._write(f'CURR {current:.3f}')
+            if voltage is not None: self._write(f'VOLT {voltage:.2f}')
+            old_v, old_i = self._expected_setpoints[ch]
+            expected = (old_v if voltage is None else voltage,
+                        old_i if current is None else current)
+            if ch == 1:
+                self._check_series_setpoints(expected)
+            else:
+                self._check_setpoints(ch, self._profile.channel3, expected)
+            self._expected_setpoints[ch] = expected
+        except Exception as exc:
+            self._trip(f'Setting CH{ch} failed: {exc}')
 
     def set_tracking_voltage(self, ch: int, voltage: float) -> None:
         """Adjust CH1 or CH2, preserving the profile's initial voltage ratio.
@@ -603,17 +761,30 @@ class Keithley2231A:
                 raise SafetyError('power_only: combined output control is unavailable')
             if self._profile.wiring == 'independent':
                 raise SafetyError('Use output(channel, on/off) for independent wiring')
-            if enabled and self._profile.wiring in ('series', 'parallel'):
-                raise SafetyError('Combined setpoint semantics require H09/H10 qualification before enabling')
+            if enabled and self._profile.wiring == 'parallel':
+                raise SafetyError('Combined current semantics require H10 qualification before enabling')
             if enabled and not confirm_all_channels_safe:
                 raise SafetyError('Global OUTP 1 may turn on CH3. Confirm ALL connected loads.')
             if enabled: self.verify_profile()
             try:
                 self._write(f'OUTP {1 if enabled else 0}')
-                if self._bool(self._query('OUTP:STAT:ALL?')) != bool(enabled):
-                    raise SafetyError('Global output state mismatch')
-                if any(state != enabled for state in self._output_states().values()):
-                    raise SafetyError('Per-channel output state mismatch')
+                deadline = time.monotonic() + (0.0 if enabled else self._OUTPUT_OFF_TIMEOUT_S)
+                while True:
+                    global_state = self._bool(self._query('OUTP:STAT:ALL?'))
+                    if global_state == enabled:
+                        break
+                    if enabled or time.monotonic() >= deadline:
+                        raise SafetyError('Global output state mismatch')
+                    time.sleep(min(self._OUTPUT_POLL_INTERVAL_S,
+                                   max(0.0, deadline - time.monotonic())))
+                while True:
+                    states = self._output_states()
+                    if all(state == enabled for state in states.values()):
+                        break
+                    if enabled or time.monotonic() >= deadline:
+                        raise SafetyError('Per-channel output state mismatch')
+                    time.sleep(min(self._OUTPUT_POLL_INTERVAL_S,
+                                   max(0.0, deadline - time.monotonic())))
                 self._expected_outputs = {ch: enabled for ch in (1, 2, 3)}
             except Exception as exc:
                 self._trip(f'Global output operation failed: {exc}')
@@ -749,7 +920,13 @@ class Keithley2231A:
             self._require_ready(); self._check_channel(ch)
             if self._profile.wiring in ('series', 'parallel') and ch == 2:
                 raise SafetyError('Combined CH2 metering is replaced by CH1+CH2; request channel 1')
-            if (not with_regulation and self._profile.channels[ch-1].expected_regulation != 'auto'):
+            if isinstance(self._profile, SeriesProfile):
+                spec = (self._profile.channel3 if ch == 3 else
+                        ChannelProfile(self._profile.max_voltage, self._profile.max_current,
+                                       self._profile.initial_voltage, self._profile.initial_current))
+            else:
+                spec = self._profile.channels[ch - 1]
+            if (not with_regulation and spec.expected_regulation != 'auto'):
                 raise SafetyError('Regulation checks required by profile cannot be disabled')
             try:
                 if self._profile.verify_every_s and time.monotonic() - self._last_verify >= self._profile.verify_every_s:
@@ -793,16 +970,19 @@ class Keithley2231A:
                 if not enabled:
                     mode = 'OFF'
                     regulation_source = None
-                spec = self._profile.channels[ch - 1]
-                combined = self._profile.wiring in ('series', 'parallel') and ch == 1
+                combined = isinstance(self._profile, SeriesProfile) and ch == 1
+                if not isinstance(self._profile, SeriesProfile):
+                    spec = self._profile.channels[ch - 1]
                 if self._profile.wiring in ('series', 'parallel') and ch == 2:
                     raise SafetyError('CH2 metering is replaced by combined CH1+CH2; query CH1')
                 if combined:
-                    other = self._profile.channels[1]
-                    # In combine mode manual says CH1 metering is total V (series)
-                    # or total I (parallel), NOT a separate channel measurement.
-                    v_cap = spec.max_voltage + other.max_voltage if self._profile.wiring == 'series' else min(spec.max_voltage, other.max_voltage)
-                    i_cap = min(spec.max_current, other.max_current) if self._profile.wiring == 'series' else spec.max_current + other.max_current
+                    v_cap = self._profile.max_voltage
+                    i_cap = self._profile.max_current
+                elif not isinstance(self._profile, SeriesProfile) and self._profile.wiring == 'parallel' and ch == 1:
+                    v_cap = min(self._profile.channels[0].max_voltage,
+                                self._profile.channels[1].max_voltage)
+                    i_cap = (self._profile.channels[0].max_current +
+                             self._profile.channels[1].max_current)
                 else:
                     v_cap, i_cap = spec.max_voltage, spec.max_current
                 if enabled and spec.trip_on_measurement:
@@ -819,8 +999,8 @@ class Keithley2231A:
                                current_a=amps, power_w=volts * amps,
                                regulation=mode, enabled=enabled,
                                label="CH1+CH2" if combined else f"CH{ch}",
-                               voltage_set_v=None if combined else voltage_set,
-                               current_limit_set_a=None if combined else current_set,
+                               voltage_set_v=voltage_set,
+                               current_limit_set_a=current_set,
                                operation_status_mask=operation_mask,
                                questionable_status_mask=questionable_mask,
                                regulation_source=regulation_source)

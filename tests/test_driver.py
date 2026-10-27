@@ -1,8 +1,8 @@
 import math
 import unittest
 from dataclasses import replace
-from keithley2231a import (Profile, ChannelProfile, InstrumentError, LimitsError, SafetyError,
-                          Keithley2231A, Acquisition, ChannelStats, Reading)
+from keithley2231a import (Profile, ProfileError, ChannelProfile, InstrumentError, LimitsError, SafetyError,
+                          SeriesProfile, Keithley2231A, Acquisition, ChannelStats, Reading)
 
 class FakeTransport:
     """Stateful minimal SCPI emulator; validates command sequences, no hardware."""
@@ -104,6 +104,30 @@ class TestProfile(unittest.TestCase):
         with self.assertRaises(Exception): ChannelProfile(float('nan'), .2).validate(1)
         with self.assertRaises(Exception): ChannelProfile(3.33, .2, .001, .1).validate(1)
 
+    def test_series_profile_models_total_setpoint_and_soft_cap(self):
+        series = SeriesProfile('series', (2., 3.), 4.5, .3, 2.5, .1,
+                               ChannelProfile(4., .5, 2., .3))
+        self.assertEqual(series.wiring, 'series')
+        self.assertEqual(series.max_voltage, 4.5)
+        with self.assertRaises(ProfileError):
+            SeriesProfile('spoofed mode', (2., 3.), 4.5, .3, 2., .1,
+                          ChannelProfile(4., .5, 0., .1), wiring='parallel')
+        with self.assertRaises(ProfileError):
+            SeriesProfile('spoofed access', (2., 3.), 4.5, .3, 2., .1,
+                          ChannelProfile(4., .5, 0., .1), access='power_only')
+        for kwargs in (
+                {'max_voltage': 5.1},
+                {'max_voltage': 5.0, 'initial_voltage': 5.01},
+                {'max_current': 0.0},
+                {'channel_voltage_limits': (31., 3.)},
+                {'initial_voltage': 2.501},):
+            values = dict(name='invalid', channel_voltage_limits=(2., 3.),
+                          max_voltage=5., max_current=.3, initial_voltage=2.5,
+                          initial_current=.1, channel3=ChannelProfile(4., .5, 2., .3))
+            values.update(kwargs)
+            with self.assertRaises((ValueError, TypeError)):
+                SeriesProfile(**values)
+
     def test_json(self):
         p = Profile.from_json('examples/safe_3ch.json')
         self.assertEqual(p.channels[2].max_voltage, 3.3)
@@ -125,7 +149,7 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(dev.output_states(), {1: False, 2: True, 3: False})
         self.assertEqual(fake.values[2]['CHAN:OUTP'], 1.0)
         self.assertFalse(dev.armed)
-        self.assertEqual(fake.cmds, ['*IDN?', 'SYST:REM', 'INST:NSEL?',
+        self.assertEqual(fake.cmds, ['*IDN?', 'SYST:REM', 'OUTP:SER?', 'INST:NSEL?',
                                    'INST:NSEL 1', 'INST:NSEL?', 'CHAN:OUTP?',
                                    'INST:NSEL 2', 'INST:NSEL?', 'CHAN:OUTP?',
                                    'INST:NSEL 3', 'INST:NSEL?', 'CHAN:OUTP?',
@@ -495,34 +519,81 @@ class TestDevice(unittest.TestCase):
                 self.assertIn('OUTP 0', fake.cmds)
 
     def test_combined_physical_wiring_confirmation(self):
-        self.dev.emergency_off()
-        with self.assertRaises(SafetyError): self.dev.apply_profile(profile('series'))
-        self.dev.apply_profile(profile('series'), confirmed_wiring='series')
-        with self.assertRaises(SafetyError): self.dev.combined_outputs(True)
-        with self.assertRaises(SafetyError): self.dev.read_channel(2)
-        r = self.dev.read_channel(1)
-        self.assertEqual(r.label,'CH1+CH2')
-        self.assertIsNone(r.voltage_set_v)
-        self.assertIsNone(r.current_limit_set_a)
+        class SeriesSource(FakeTransport):
+            def write(self, command):
+                if command == 'INST:NSEL 2' and self.flags['OUTP:SER']:
+                    self.cmds.append(command)
+                    self.active_ch = 1
+                    return
+                if command == 'OUTP:SER 1':
+                    super().write(command)
+                    self.values[1]['VOLT:LIM'] = self.values[1]['VOLT:LIM'] + self.values[2]['VOLT:LIM']
+                    self.values[1]['VOLT:LIM:STAT'] = 0.
+                    return
+                if command == 'OUTP:SER 0' and self.flags['OUTP:SER']:
+                    combined_voltage = self.values[1]['VOLT']
+                    super().write(command)
+                    for ch in (1, 2):
+                        self.values[ch]['VOLT'] = combined_voltage / 2
+                        self.values[ch]['VOLT:LIM:STAT'] = 1.
+                    return
+                if command == 'VOLT:LIM:STAT 1' and self.flags['OUTP:SER']:
+                    self.cmds.append(command)
+                    self.values[1]['VOLT:LIM:STAT'] = 0.
+                    return
+                super().write(command)
 
-    def test_combined_mode_cannot_arm_with_aliased_selection_or_changed_limits(self):
-        for fault in ('selection', 'limit_state', 'limit_value'):
-            with self.subTest(fault=fault):
-                class CombinedSource(FakeTransport):
-                    def query(self, command):
-                        value = super().query(command)
-                        if self.flags['OUTP:SER']:
-                            if fault == 'selection' and command == 'INST:NSEL?': return '1'
-                            if fault == 'limit_state' and command == 'VOLT:LIM:STAT?': return '0'
-                            if fault == 'limit_value' and command == 'VOLT:LIM?': return '5'
-                        return value
-                source = CombinedSource()
-                dev = Keithley2231A(source)
-                with self.assertRaises(SafetyError):
-                    dev.apply_profile(profile('series'), confirmed_wiring='series')
-                self.assertFalse(dev.armed)
-                self.assertTrue(dev.faulted)
-                self.assertNotIn('OUTP 1', source.cmds)
+            def query(self, command):
+                if command == 'VOLT:LIM?' and self.flags['OUTP:SER'] and self.active_ch == 1:
+                    self.cmds.append(command)
+                    return str(self.values[1]['VOLT:LIM'])
+                if command == 'VOLT:LIM:STAT?' and self.flags['OUTP:SER'] and self.active_ch == 1:
+                    self.cmds.append(command)
+                    return '0'
+                return super().query(command)
+
+        source = SeriesSource()
+        dev = Keithley2231A(source)
+        series = SeriesProfile('safe series', (2., 3.), 4.5, .3, 2., .1,
+                               ChannelProfile(4., .5, 2., .3))
+        with self.assertRaises(SafetyError): dev.apply_profile(series)
+        dev.apply_profile(series, confirmed_wiring='series')
+        self.assertTrue(dev.armed)
+        self.assertEqual(dev.output_states(), {1: False, 2: False, 3: False})
+        with self.assertRaises(SafetyError): dev.combined_outputs(True)
+        dev.combined_outputs(True, confirm_all_channels_safe=True)
+        reading = dev.read_channel(1)
+        self.assertEqual(reading.label, 'CH1+CH2')
+        self.assertEqual(reading.voltage_set_v, 2.)
+        self.assertEqual(reading.current_limit_set_a, .1)
+        with self.assertRaises(SafetyError): dev.read_channel(2)
+        self.assertEqual(dev.read_channel(3).label, 'CH3')
+        before = list(source.cmds)
+        with self.assertRaises(LimitsError): dev.set_channel(1, voltage=4.51)
+        with self.assertRaises(SafetyError): dev.set_channel(2, voltage=1.)
+        self.assertEqual(source.cmds, before)
+        dev.set_channel(1, voltage=2.5, current=.2)
+        self.assertEqual(dev.read_channel(1).voltage_set_v, 2.5)
+        dev.emergency_off()
+        self.assertEqual(source.flags['OUTP:STAT:ALL'], 0.)
+        self.assertFalse(dev.armed)
+
+    def test_series_profile_fails_closed_when_combined_limit_readback_changes(self):
+        class ChangedCombinedLimit(FakeTransport):
+            def query(self, command):
+                value = super().query(command)
+                if self.flags['OUTP:SER'] and self.active_ch == 1 and command == 'VOLT:LIM?':
+                    return '4.99'
+                return value
+        source = ChangedCombinedLimit()
+        dev = Keithley2231A(source)
+        series = SeriesProfile('safe series', (2., 3.), 4.5, .3, 2., .1,
+                               ChannelProfile(4., .5, 2., .3))
+        with self.assertRaises(SafetyError):
+            dev.apply_profile(series, confirmed_wiring='series')
+        self.assertFalse(dev.armed)
+        self.assertTrue(dev.faulted)
+        self.assertNotIn('OUTP 1', source.cmds)
 
     def test_output_states_refuses_a_channel_selection_alias(self):
         class AliasedSource(FakeTransport):
@@ -652,13 +723,36 @@ class TestDevice(unittest.TestCase):
         self.assertTrue(all(values['OUTP:TIM:STAT'] == 0 for values in self.fake.values.values()))
 
     def test_combined_enable_is_blocked_pending_setpoint_qualification(self):
-        for mode in ('series', 'parallel'):
-            with self.subTest(mode=mode):
-                self.dev.emergency_off()
-                self.dev.apply_profile(profile(mode), confirmed_wiring=mode)
-                with self.assertRaises(SafetyError):
-                    self.dev.combined_outputs(True, confirm_all_channels_safe=True)
-                self.assertFalse(self.fake.values[3]['CHAN:OUTP'])
+        self.dev.emergency_off()
+        self.dev.apply_profile(profile('parallel'), confirmed_wiring='parallel')
+        with self.assertRaises(SafetyError):
+            self.dev.combined_outputs(True, confirm_all_channels_safe=True)
+        self.assertFalse(self.fake.values[3]['CHAN:OUTP'])
+
+    def test_combined_output_off_waits_for_delayed_instrument_status(self):
+        class DelayedOff(FakeTransport):
+            stale_off_reads = 0
+
+            def write(self, command):
+                was_on = self.flags['OUTP:STAT:ALL']
+                super().write(command)
+                if command == 'OUTP 0' and was_on:
+                    self.stale_off_reads = 2
+
+            def query(self, command):
+                if command == 'OUTP:STAT:ALL?' and self.stale_off_reads:
+                    self.cmds.append(command)
+                    self.stale_off_reads -= 1
+                    return '1'
+                return super().query(command)
+
+        source = DelayedOff()
+        dev = Keithley2231A(source)
+        dev.apply_profile(profile('tracking'))
+        dev.combined_outputs(True, confirm_all_channels_safe=True)
+        dev.combined_outputs(False)
+        self.assertEqual(dev.output_states(), {1: False, 2: False, 3: False})
+        self.assertFalse(dev.faulted)
 
     def test_close_safely_disarms(self):
         self.dev.output(1, True)
