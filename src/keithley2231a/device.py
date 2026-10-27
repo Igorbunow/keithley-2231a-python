@@ -92,10 +92,15 @@ class Keithley2231A:
         self._selected_channel = None
         self._expected_serial = expected_serial
         self._lock = threading.RLock()
+        # Separate lifecycle lock: stop() must not wait on a stalled SCPI lock.
+        self._monitor_control_lock = threading.Lock()
         self._profile: Profile | SeriesProfile | ParallelProfile | None = None
         self._armed = False
         self._faulted = False
         self._last_verify = 0.0
+        self._profile_monitor_thread: threading.Thread | None = None
+        self._profile_monitor_stop: threading.Event | None = None
+        self._profile_monitor_error: str | None = None
         self._idn = None
         self._instrument_key = None
         self._sequencing = False
@@ -112,6 +117,8 @@ class Keithley2231A:
         connection, including an unverified automatic output-off attempt.
         """
         self._faulted, self._armed = True, False
+        if self._profile_monitor_stop is not None:
+            self._profile_monitor_stop.set()
         if link_uncertain:
             self._link_uncertain = True
 
@@ -255,6 +262,90 @@ class Keithley2231A:
     def armed(self) -> bool: return self._armed
     @property
     def faulted(self) -> bool: return self._faulted
+
+    @property
+    def profile_monitor_running(self) -> bool:
+        """True while the opt-in worker is alive, including while stopping."""
+        with self._monitor_control_lock:
+            thread = self._profile_monitor_thread
+            return bool(thread is not None and thread.is_alive())
+
+    @property
+    def profile_monitor_error(self) -> str | None:
+        """Last monitor-detected failure; does not include external API faults."""
+        with self._lock:
+            return self._profile_monitor_error
+
+    def _require_monitor_stopped(self) -> None:
+        thread = self._profile_monitor_thread
+        if thread is not None and thread.is_alive():
+            raise SafetyError('Stop and join the profile monitor before replacing a profile')
+
+    def start_profile_monitor(self, *, interval_s: float | None = None) -> None:
+        """Explicitly start best-effort periodic integrity polling.
+
+        Checks are serialized with all other driver SCPI calls. A failed check
+        latches a fault and uses verify_profile()'s existing shutdown path;
+        this is NOT an independent hardware watchdog. The interval is a minimum
+        delay between completed checks, not a guaranteed detection deadline.
+        """
+        with self._monitor_control_lock, self._lock:
+            self._require_ready()
+            self._require_monitor_stopped()
+            interval = self._profile.verify_every_s if interval_s is None else interval_s
+            if (isinstance(interval, bool) or not isinstance(interval, (int, float)) or
+                    not math.isfinite(interval) or interval < 0.1):
+                raise ValueError('profile monitor interval_s must be >= 0.1 seconds')
+            # Verify before reporting that monitoring is active; do not let an
+            # already-invalid profile wait through one polling interval.
+            self.verify_profile()
+            stop = threading.Event()
+            worker = threading.Thread(target=self._profile_monitor_loop,
+                                      args=(stop, float(interval)),
+                                      name='Keithley2231A-profile-monitor', daemon=True)
+            self._profile_monitor_stop = stop
+            self._profile_monitor_error = None
+            self._profile_monitor_thread = worker
+            worker.start()
+
+    def _profile_monitor_loop(self, stop: threading.Event, interval_s: float) -> None:
+        try:
+            while not stop.wait(interval_s):
+                try:
+                    with self._lock:
+                        if stop.is_set():
+                            break
+                        self.verify_profile()
+                except Exception as exc:
+                    with self._lock:
+                        self._profile_monitor_error = f'{type(exc).__name__}: {exc}'
+                    break
+        finally:
+            stop.set()
+
+    def stop_profile_monitor(self, *, timeout_s: float = 5.0) -> None:
+        """Request monitor shutdown and join without holding the SCPI lock.
+
+        A blocked transport query cannot be killed by Python. If the monitor
+        cannot stop by the timeout, raise; do not report it as stopped or close
+        the transport while a worker may still be using it.
+        """
+        if (isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or
+                not math.isfinite(timeout_s) or timeout_s < 0):
+            raise ValueError('timeout_s must be a finite non-negative number')
+        # Do not acquire the SCPI lock here: its owner may be stuck in I/O.
+        # Signal before joining so a stalled worker can be diagnosed by timeout.
+        with self._monitor_control_lock:
+            thread = self._profile_monitor_thread
+            stop = self._profile_monitor_stop
+            if stop is not None:
+                stop.set()
+        if thread is not None and thread.is_alive():
+            if thread is threading.current_thread():
+                raise SafetyError('Monitor thread cannot join itself')
+            thread.join(timeout_s)
+            if thread.is_alive():
+                raise SafetyError('Profile monitor did not stop; output state not established')
 
     def _dispatch_scpi(self, command: str, *, query: bool):
         """Single guarded adapter dispatch for writes and queries.
@@ -419,6 +510,8 @@ class Keithley2231A:
     def emergency_off(self) -> None:
         """Available even when faulted; command delivery not guaranteed if link is dead."""
         with self._lock:
+            if self._profile_monitor_stop is not None:
+                self._profile_monitor_stop.set()
             self._armed = False
             try:
                 # A previous run may have returned the instrument to Local.
@@ -481,6 +574,7 @@ class Keithley2231A:
         with self._lock:
             if self._armed:
                 raise SafetyError('Active profile immutable. Call emergency_off() before replacing it')
+            self._require_monitor_stopped()
             previous_parallel = isinstance(self._profile, ParallelProfile)
             self._armed = False
             self._faulted = False
@@ -554,6 +648,7 @@ class Keithley2231A:
         with self._lock:
             if self._armed:
                 raise SafetyError('Active profile immutable. Call emergency_off() before replacing it')
+            self._require_monitor_stopped()
             self._armed = False
             self._faulted = False
             self._profile = None
@@ -631,6 +726,7 @@ class Keithley2231A:
         with self._lock:
             if self._armed:
                 raise SafetyError('Active profile immutable. Call emergency_off() before replacing it')
+            self._require_monitor_stopped()
             self._armed, self._faulted, self._profile = False, False, None
             self._expected_setpoints = {
                 1: (profile.initial_voltage, profile.initial_current),
@@ -1236,7 +1332,8 @@ class Keithley2231A:
             self._write('SYST:BEEP')
 
     def close(self, *, return_local: bool = True):
-        """Attempts OFF even if profile faulted; exceptions on lost link propagate."""
+        """Stop the monitor, then attempt OFF; lost-link exceptions propagate."""
+        self.stop_profile_monitor()
         with self._lock:
             try: self.emergency_off()
             finally:

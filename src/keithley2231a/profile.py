@@ -68,7 +68,8 @@ class Profile:
     wiring: str = "independent"  # independent or tracking
     # Separate from combining: Tracking has voltage ratios based on initial setpoints.
     lock_front_panel: bool = True
-    # seconds > 0; periodic verification during monitoring
+    # Polling threshold in read_channel(); also the optional monitor interval.
+    # Does NOT start autonomous checks until start_profile_monitor() is called.
     verify_every_s: float = 5.0
     # control: full guarded APIs; power_only: only OFF/ON of preset outputs.
     access: str = "control"

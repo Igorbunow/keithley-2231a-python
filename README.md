@@ -13,7 +13,7 @@ Provides SCPI over USB–TTL UART, optional transparent TCP–UART bridges, immu
 
 - **Three independent channels:** CH1/CH2: 0–30 V, 0–3 A; CH3: 0–5 V, 0–3 A. 195 W nameplate combined output rating.
 - **Series / parallel / tracking:** API support, with explicit physical-wiring confirmation for Series/Parallel. **SCPI does NOT insert external series/parallel jumpers or switch the output terminals internally.** Connections must be installed and inspected **while outputs are off**. The 2231A combined modes also change metering semantics; read the vendor manual.
-- **Conservative profiles:** per-channel V/I bounds, hardware voltage limit setting, output-off-first profile arming, optional CV/CC expectation and periodic integrity checks.
+- **Conservative profiles:** per-channel V/I bounds, hardware voltage limit setting, output-off-first profile arming, optional CV/CC expectation and explicit opt-in integrity polling.
 - **Full-rated-range profile:** `Profile.unrestricted()` allows all **rated** V/I settings, without extra user-specific reduced caps; it is **not** a raw SCPI bypass or permission to exceed instrument ratings.
 - **Power-only profile:** output levels and topology are frozen; operators may switch power on/off. Fixed `power_sequence` enables channels in order and disables in reverse. No arbitrary channel toggles when a sequence is specified.
 - **Measurement and automation:** per-channel CSV logs, min/max/mean/population σ, Ah/Wh integration; guarded voltage sweeps with optional DMM callback; optional external readings via an observer callback.
@@ -106,6 +106,47 @@ This behavior is SIM TESTED; real-hardware requalification is pending.
 H01–H05 use this mechanism and shared checks in `tests/hardware/common.py`.
 Historical hardware reports apply to their recorded source versions; the changed
 path requires H01/H02/H03/H04/H04P replay before H05 proceeds.
+
+## R3.2 — Profile integrity monitoring (software-only; SIM TESTED)
+
+`verify_profile()` is a synchronous integrity check. `Profile.verify_every_s`
+(default 5 seconds) is **not an autonomous timer**: it controls opportunistic
+checks when `read_channel()` is called, and supplies the default interval for
+an explicitly started monitor. Without `start_profile_monitor()`, there is no
+independent periodic check while the application is idle.
+
+```python
+# With a validated, armed profile and operator-approved wiring:
+psu.start_profile_monitor()  # opt-in; uses profile.verify_every_s
+try:
+    # Application operations; these share the SCPI lock with the monitor.
+    ...
+finally:
+    psu.stop_profile_monitor()  # request stop and join; no I/O
+
+print(psu.profile_monitor_running, psu.profile_monitor_error)
+# Any monitor-detected fault also latches psu.faulted and disarms the profile.
+```
+
+`start_profile_monitor(interval_s=...)` accepts an explicit interval of at least
+0.1 seconds and runs an initial `verify_profile()` synchronously before starting
+a daemon worker. The worker waits for the interval **after each completed check**;
+slow SCPI traffic or other operations can delay it. There is no guaranteed
+polling deadline, no automatic reconnect, and no recovery/re-arm after a fault.
+All monitor checks use the existing verification, guarded SCPI dispatcher, and
+fault/shutdown path. `profile_monitor_error` contains the monitor's failure
+message (if any); `profile_monitor_running` reports whether an opt-in worker is
+currently active. Stopping is explicit; `emergency_off()` also requests a stop,
+and `close()` joins the worker before closing the transport. A failed join raises
+instead of claiming the worker stopped. Stop/join does **not** establish that
+outputs are OFF. Before applying a new profile, stop/join the old monitor.
+
+On a valid link, a mismatch triggers an attempted output shutdown and readback.
+After an uncertain transport reply, **no** further SCPI commands are sent on
+that connection, and output state must be regarded as **UNKNOWN**. Software
+monitoring is no substitute for independent OVP/OCP, an external interlock, or
+physical shutdown when communications fail. Monitor behavior on this revision
+has **not** been verified on physical hardware.
 
 ## CH3 status workaround and limitations
 
