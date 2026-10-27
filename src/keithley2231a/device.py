@@ -755,76 +755,75 @@ class Keithley2231A:
             except Exception as exc:
                 self._trip(f'Profile integrity check failed: {exc}')
 
+    @staticmethod
+    def _validate_setpoint_request(ch: int, voltage: float | None, current: float | None,
+                                   voltage_cap: float, current_cap: float) -> None:
+        """Reject invalid or out-of-profile setpoints before any SCPI I/O."""
+        for value, cap, label, step in (
+                (voltage, voltage_cap, 'voltage', .01),
+                (current, current_cap, 'current', .001)):
+            if value is None:
+                continue
+            if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                    or not math.isfinite(value) or value < 0 or value > cap
+                    or abs(value / step - round(value / step)) > 1e-6):
+                raise LimitsError(f'CH{ch}: {label}={value} exceeds limit {cap} '
+                                  f'or resolution {step}')
+
     def set_channel(self, ch: int, *, voltage: float | None = None,
                     current: float | None = None):
+        """One guarded programming path for independent and combined outputs.
+
+        CH1 represents the aggregate output in Series/Parallel; CH3 is always
+        an individual channel. In Tracking, use set_tracking_voltage().
+        """
         with self._lock:
-            self._require_ready(); self._check_channel(ch)
+            self._require_ready()
+            self._check_channel(ch)
             if self._profile.access == 'power_only':
                 raise SafetyError('power_only: voltage/current setpoints are frozen')
-            if isinstance(self._profile, (SeriesProfile, ParallelProfile)):
+            combined = isinstance(self._profile, (SeriesProfile, ParallelProfile))
+            if combined:
                 if ch == 2:
                     raise SafetyError(f'{self._profile.wiring.capitalize()} CH2 has no independent '
                                       'setpoint; change combined output through CH1')
                 spec = self._profile.channel3 if ch == 3 else None
                 voltage_cap = self._profile.max_voltage if ch == 1 else spec.max_voltage
                 current_cap = self._profile.max_current if ch == 1 else spec.max_current
-                self._set_profiled_channel(ch, voltage, current, voltage_cap, current_cap)
-                return
-            if self._profile.wiring != 'independent':
-                raise SafetyError('Use set_tracking_voltage() for tracking voltage; '
-                                  'other combined setpoint changes require a fresh profile at OFF')
-            spec = self._profile.channels[ch - 1]
-            for val, cap, label, step in ((voltage, spec.max_voltage, 'voltage', .01),
-                                          (current, spec.max_current, 'current', .001)):
-                if val is not None:
-                    if not isinstance(val, (int, float)) or isinstance(val, bool) or not math.isfinite(val):
-                        raise LimitsError(f'{label}: must be finite number')
-                    if val < 0 or val > cap or abs(val/step - round(val/step)) > 1e-6:
-                        raise LimitsError(f'CH{ch}: {label}={val} exceeds limit {cap} or resolution {step}')
-            # Verify hardware controls before writing; protects against external adjustments.
+            else:
+                if self._profile.wiring != 'independent':
+                    raise SafetyError('Use set_tracking_voltage() for tracking voltage; '
+                                      'other combined setpoint changes require a fresh profile at OFF')
+                spec = self._profile.channels[ch - 1]
+                voltage_cap, current_cap = spec.max_voltage, spec.max_current
+
+            self._validate_setpoint_request(ch, voltage, current, voltage_cap, current_cap)
+            # An external front-panel edit must be detected before any setpoint write.
             self.verify_profile()
             try:
                 self._select(ch)
-                # Current first, then voltage; both are bounded by profile.
-                if current is not None: self._write(f'CURR {current:.3f}')
-                if voltage is not None: self._write(f'VOLT {voltage:.2f}')
+                # Current first, then voltage; preserve the qualified SCPI order.
+                if current is not None:
+                    self._write(f'CURR {current:.3f}')
+                if voltage is not None:
+                    self._write(f'VOLT {voltage:.2f}')
                 old_v, old_i = self._expected_setpoints[ch]
                 expected = (old_v if voltage is None else voltage,
                             old_i if current is None else current)
-                self._check_setpoints(ch, spec, expected)
-                self._select(ch)
-                if voltage is not None and abs(self._num('VOLT?') - voltage) > .011:
-                    raise SafetyError('Voltage set command was not applied')
-                if current is not None and abs(self._num('CURR?') - current) > .002:
-                    raise SafetyError('Current set command was not applied')
+                if combined and ch == 1:
+                    self._check_combined_setpoints(expected)
+                else:
+                    self._check_setpoints(ch, spec, expected)
+                if not combined:
+                    # Preserve the independent-channel post-write confirmation.
+                    self._select(ch)
+                    if voltage is not None and abs(self._num('VOLT?') - voltage) > .011:
+                        raise SafetyError('Voltage set command was not applied')
+                    if current is not None and abs(self._num('CURR?') - current) > .002:
+                        raise SafetyError('Current set command was not applied')
                 self._expected_setpoints[ch] = expected
             except Exception as exc:
                 self._trip(f'Setting CH{ch} failed: {exc}')
-
-    def _set_profiled_channel(self, ch, voltage, current, voltage_cap, current_cap):
-        for val, cap, label, step in ((voltage, voltage_cap, 'voltage', .01),
-                                      (current, current_cap, 'current', .001)):
-            if val is not None and (not isinstance(val, (int, float)) or isinstance(val, bool)
-                    or not math.isfinite(val) or val < 0 or val > cap
-                    or abs(val / step - round(val / step)) > 1e-6):
-                raise LimitsError(f'{label}={val} exceeds profile cap {cap} or resolution {step}')
-        self.verify_profile()
-        try:
-            self._select(ch)
-            if current is not None: self._write(f'CURR {current:.3f}')
-            if voltage is not None: self._write(f'VOLT {voltage:.2f}')
-            old_v, old_i = self._expected_setpoints[ch]
-            expected = (old_v if voltage is None else voltage,
-                        old_i if current is None else current)
-            if ch == 1 and isinstance(self._profile, (SeriesProfile, ParallelProfile)):
-                self._check_combined_setpoints(expected)
-            elif ch == 3 and isinstance(self._profile, (SeriesProfile, ParallelProfile)):
-                self._check_setpoints(ch, self._profile.channel3, expected)
-            else:
-                raise SafetyError('Combined channel addressing is invalid')
-            self._expected_setpoints[ch] = expected
-        except Exception as exc:
-            self._trip(f'Setting CH{ch} failed: {exc}')
 
     def set_tracking_voltage(self, ch: int, voltage: float) -> None:
         """Adjust CH1 or CH2, preserving the profile's initial voltage ratio.

@@ -290,6 +290,47 @@ class TestDevice(unittest.TestCase):
         with self.assertRaises(LimitsError): self.dev.set_channel(1, voltage=3.31)
         self.assertEqual(len(self.fake.cmds), before)
 
+    def test_set_channel_uses_shared_validation_before_io(self):
+        for ch, kwargs in (
+                (1, {'voltage': True}),
+                (1, {'current': float('nan')}),
+                (2, {'voltage': 5.001}),
+                (3, {'current': .1001}),
+                (3, {'voltage': -0.01}),
+                (3, {'voltage': float('inf')})):
+            with self.subTest(channel=ch, kwargs=kwargs):
+                before = list(self.fake.cmds)
+                with self.assertRaises(LimitsError):
+                    self.dev.set_channel(ch, **kwargs)
+                self.assertEqual(self.fake.cmds, before)
+                self.assertTrue(self.dev.armed)
+
+        before = len(self.fake.cmds)
+        self.dev.set_channel(1, voltage=2.5, current=.15)
+        commands = self.fake.cmds[before:]
+        self.assertLess(commands.index('CURR 0.150'), commands.index('VOLT 2.50'))
+        self.assertTrue(self.dev.armed)
+        self.dev.verify_profile()
+
+    def test_set_channel_detects_readback_change_and_trips(self):
+        class BadReadback(FakeTransport):
+            corrupt = False
+            def query(self, command):
+                response = super().query(command)
+                if self.corrupt and command == 'VOLT?' and self.active_ch == 3:
+                    return str(float(response) + .01)
+                return response
+
+        fake = BadReadback()
+        dev = Keithley2231A(fake)
+        dev.apply_profile(profile())
+        fake.corrupt = True
+        with self.assertRaises(SafetyError):
+            dev.set_channel(3, voltage=2.0, current=.08)
+        self.assertFalse(dev.armed)
+        self.assertTrue(dev.faulted)
+        self.assertIn('OUTP 0', fake.cmds)
+
     def test_on_off_and_profile_lock(self):
         self.dev.output(1, True)
         self.assertTrue(self.fake.values[1]['CHAN:OUTP'])
@@ -573,6 +614,12 @@ class TestDevice(unittest.TestCase):
         with self.assertRaises(SafetyError): dev.set_channel(2, voltage=1.)
         self.assertEqual(source.cmds, before)
         dev.set_channel(1, voltage=2.5, current=.2)
+        before = list(source.cmds)
+        with self.assertRaises(LimitsError):
+            dev.set_channel(3, voltage=4.01)
+        self.assertEqual(source.cmds, before)
+        dev.set_channel(3, voltage=2.5, current=.4)
+        self.assertEqual(source.values[3]['VOLT'], 2.5)
         self.assertEqual(dev.read_channel(1).voltage_set_v, 2.5)
         dev.emergency_off()
         self.assertEqual(source.flags['OUTP:STAT:ALL'], 0.)
@@ -768,6 +815,12 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(dev.read_channel(1, with_regulation=False).label, 'CH1+CH2')
         with self.assertRaises(SafetyError): dev.read_channel(2)
         dev.set_channel(1, voltage=2.5, current=.2)
+        before = list(fake.cmds)
+        with self.assertRaises(LimitsError):
+            dev.set_channel(3, current=.501)
+        self.assertEqual(fake.cmds, before)
+        dev.set_channel(3, voltage=2.0, current=.2)
+        self.assertEqual(fake.values[3]['VOLT'], 2.0)
         with self.assertRaises(SafetyError): dev.set_channel(2, voltage=2.5)
         dev.combined_outputs(True, confirm_all_channels_safe=True)
         self.assertEqual(dev.output_states(), {1: True, 2: True, 3: True})
