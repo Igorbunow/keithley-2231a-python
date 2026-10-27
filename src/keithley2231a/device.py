@@ -554,7 +554,7 @@ class Keithley2231A:
                 self._check_wiring_mode()
                 self._write(f'CURR {profile.initial_current:.3f}')
                 self._write(f'VOLT {profile.initial_voltage:.2f}')
-                self._check_series_setpoints((profile.initial_voltage, profile.initial_current))
+                self._check_combined_setpoints((profile.initial_voltage, profile.initial_current))
                 if abs(self._num('VOLT:LIM?') - sum(profile.channel_voltage_limits)) > .0049:
                     raise SafetyError('Series voltage-limit register does not match channel-limit sum')
                 if any(self._output_states().values()):
@@ -641,7 +641,7 @@ class Keithley2231A:
                 self._check_wiring_mode()
                 self._write(f'CURR {profile.initial_current:.3f}')
                 self._write(f'VOLT {profile.initial_voltage:.2f}')
-                self._check_parallel_setpoints((profile.initial_voltage, profile.initial_current))
+                self._check_combined_setpoints((profile.initial_voltage, profile.initial_current))
                 self._parallel_limit_enabled = self._bool(self._query('VOLT:LIM:STAT?'))
                 if (self._parallel_limit_enabled and
                         abs(self._num('VOLT:LIM?') - profile.max_voltage) > .0049):
@@ -661,30 +661,23 @@ class Keithley2231A:
                 except Exception: pass
                 raise
 
-    def _check_parallel_setpoints(self, expected=None):
+    def _check_combined_setpoints(self, expected=None):
+        """Validate CH1 aggregate setpoints for Series or Parallel via one path.
+
+        The instrument presents CH1 as the aggregate output in both modes.
+        Preserve the independently verified SCPI command order and tolerances.
+        """
         profile = self._profile
-        if not isinstance(profile, ParallelProfile):
-            raise SafetyError('ParallelProfile is not active')
+        if not isinstance(profile, (SeriesProfile, ParallelProfile)):
+            raise SafetyError('Combined profile is not active')
         self._select(1)
         voltage, current = self._num('VOLT?'), self._num('CURR?')
         wanted = expected if expected is not None else self._expected_setpoints[1]
         if (voltage < 0 or voltage > profile.max_voltage + .011 or
                 current < 0 or current > profile.max_current + .002 or
                 abs(voltage - wanted[0]) > .0049 or abs(current - wanted[1]) > .00049):
-            raise SafetyError(f'Parallel setpoint mismatch: V={voltage}, I={current}, expected={wanted}')
-
-    def _check_series_setpoints(self, expected=None):
-        profile = self._profile
-        if not isinstance(profile, SeriesProfile):
-            raise SafetyError('SeriesProfile is not active')
-        self._select(1)
-        voltage = self._num('VOLT?')
-        current = self._num('CURR?')
-        wanted = expected if expected is not None else self._expected_setpoints[1]
-        if (voltage < 0 or voltage > profile.max_voltage + .011 or
-                current < 0 or current > profile.max_current + .002 or
-                abs(voltage - wanted[0]) > .0049 or abs(current - wanted[1]) > .00049):
-            raise SafetyError(f'Series setpoint mismatch: V={voltage}, I={current}, expected={wanted}')
+            raise SafetyError(f'{profile.wiring.capitalize()} setpoint mismatch: '
+                              f'V={voltage}, I={current}, expected={wanted}')
 
     def _check_setpoints(self, ch: int, spec, expected=None):
         self._select(ch)
@@ -717,7 +710,7 @@ class Keithley2231A:
                     states = self._output_states()
                     if states != self._expected_outputs:
                         raise SafetyError(f'Parallel global output state mismatch: {states}')
-                    self._check_parallel_setpoints()
+                    self._check_combined_setpoints()
                     self._select(1)
                     limit_enabled = self._bool(self._query('VOLT:LIM:STAT?'))
                     if limit_enabled != self._parallel_limit_enabled:
@@ -737,7 +730,7 @@ class Keithley2231A:
                     states = self._output_states()
                     if states != self._expected_outputs:
                         raise SafetyError(f'Series global output state mismatch: {states}')
-                    self._check_series_setpoints()
+                    self._check_combined_setpoints()
                     if abs(self._num('VOLT:LIM?') - sum(self._profile.channel_voltage_limits)) > .0049:
                         raise SafetyError('Series voltage-limit register changed')
                     self._select(3)
@@ -768,18 +761,11 @@ class Keithley2231A:
             self._require_ready(); self._check_channel(ch)
             if self._profile.access == 'power_only':
                 raise SafetyError('power_only: voltage/current setpoints are frozen')
-            if isinstance(self._profile, ParallelProfile):
+            if isinstance(self._profile, (SeriesProfile, ParallelProfile)):
                 if ch == 2:
-                    raise SafetyError('Parallel CH2 has no independent setpoint; change combined output through CH1')
+                    raise SafetyError(f'{self._profile.wiring.capitalize()} CH2 has no independent '
+                                      'setpoint; change combined output through CH1')
                 spec = self._profile.channel3 if ch == 3 else None
-                voltage_cap = self._profile.max_voltage if ch == 1 else spec.max_voltage
-                current_cap = self._profile.max_current if ch == 1 else spec.max_current
-                self._set_profiled_channel(ch, voltage, current, voltage_cap, current_cap)
-                return
-            if isinstance(self._profile, SeriesProfile):
-                if ch == 2:
-                    raise SafetyError('Series CH2 has no independent setpoint; change combined output through CH1')
-                spec = (self._profile.channel3 if ch == 3 else None)
                 voltage_cap = self._profile.max_voltage if ch == 1 else spec.max_voltage
                 current_cap = self._profile.max_current if ch == 1 else spec.max_current
                 self._set_profiled_channel(ch, voltage, current, voltage_cap, current_cap)
@@ -830,10 +816,8 @@ class Keithley2231A:
             old_v, old_i = self._expected_setpoints[ch]
             expected = (old_v if voltage is None else voltage,
                         old_i if current is None else current)
-            if ch == 1 and isinstance(self._profile, SeriesProfile):
-                self._check_series_setpoints(expected)
-            elif ch == 1 and isinstance(self._profile, ParallelProfile):
-                self._check_parallel_setpoints(expected)
+            if ch == 1 and isinstance(self._profile, (SeriesProfile, ParallelProfile)):
+                self._check_combined_setpoints(expected)
             elif ch == 3 and isinstance(self._profile, (SeriesProfile, ParallelProfile)):
                 self._check_setpoints(ch, self._profile.channel3, expected)
             else:

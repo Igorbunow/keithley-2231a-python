@@ -577,6 +577,12 @@ class TestDevice(unittest.TestCase):
         dev.emergency_off()
         self.assertEqual(source.flags['OUTP:STAT:ALL'], 0.)
         self.assertFalse(dev.armed)
+        # A single changed aggregate step must trip for Series, as in Parallel.
+        dev.apply_profile(series, confirmed_wiring='series')
+        source.values[1]['VOLT'] += .01
+        with self.assertRaises(SafetyError): dev.verify_profile()
+        self.assertTrue(dev.faulted)
+        self.assertFalse(dev.armed)
 
     def test_series_profile_fails_closed_when_combined_limit_readback_changes(self):
         class ChangedCombinedLimit(FakeTransport):
@@ -769,6 +775,12 @@ class TestDevice(unittest.TestCase):
         dev.combined_outputs(False)
         self.assertEqual(dev.output_states(), {1: False, 2: False, 3: False})
         dev.emergency_off()
+        # Both combined modes use the same aggregate setpoint integrity guard.
+        dev.apply_profile(p, confirmed_wiring='parallel')
+        fake.values[1]['CURR'] += .001
+        with self.assertRaises(SafetyError): dev.verify_profile()
+        self.assertTrue(dev.faulted)
+        self.assertFalse(dev.armed)
 
     def test_parallel_profile_sets_aggregate_current_only_after_parallel_mode(self):
         class ParallelCurrentTransport(FakeTransport):
