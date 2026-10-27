@@ -551,6 +551,21 @@ class Keithley2231A:
                 self._latch_fault()
                 raise
 
+    def _exit_parallel_if_active(self) -> None:
+        """Require verified global OFF before clearing an inherited Parallel mode.
+
+        A new driver session may find Parallel active even without an in-memory
+        profile. Query the instrument, not the previous Python profile. This
+        guard runs before any channel-specific setup in every topology path.
+        It does not establish that external jumper wires have been removed.
+        """
+        if not self._bool(self._query('OUTP:PARALLEL?')):
+            return
+        self._write('OUTP 0')
+        if self._bool(self._query('OUTP:STAT:ALL?')):
+            raise SafetyError('Parallel output could not be switched OFF before mode change')
+        self._write('OUTP:PARALLEL 0')
+
     def _disable_combined_modes(self) -> None:
         """Clear all combination modes in the instrument's established order.
 
@@ -602,7 +617,6 @@ class Keithley2231A:
             if self._armed:
                 raise SafetyError('Active profile immutable. Call emergency_off() before replacing it')
             self._require_monitor_stopped()
-            previous_parallel = isinstance(self._profile, ParallelProfile)
             self._armed = False
             self._faulted = False
             self._profile = None
@@ -613,11 +627,7 @@ class Keithley2231A:
             try:
                 self.remote(lock_panel=False)
                 self.identity()
-                if previous_parallel:
-                    self._write('OUTP 0')
-                    if self._bool(self._query('OUTP:STAT:ALL?')):
-                        self._trip('Parallel output could not be switched OFF')
-                    self._write('OUTP:PARALLEL 0')
+                self._exit_parallel_if_active()
                 if not self._off_confirmed():
                     self._trip('Output could not be switched OFF')
                 # Operator must have confirmed the physical Series/Parallel
@@ -687,9 +697,7 @@ class Keithley2231A:
             try:
                 self.remote(lock_panel=False)
                 self.identity()
-                if self._bool(self._query('OUTP:PARALLEL?')):
-                    self._write('OUTP 0')
-                    self._write('OUTP:PARALLEL 0')
+                self._exit_parallel_if_active()
                 if not self._off_confirmed():
                     self._trip('Output could not be switched OFF')
                 self._disable_combined_modes()
@@ -763,14 +771,9 @@ class Keithley2231A:
             try:
                 self.remote(lock_panel=False)
                 self.identity()
-                # A prior process may have left the instrument in combined
-                # Parallel mode; verify global OFF before restoring independent
-                # channel addressing.
-                if self._bool(self._query('OUTP:PARALLEL?')):
-                    self._write('OUTP 0')
-                    if self._bool(self._query('OUTP:STAT:ALL?')):
-                        self._trip('Parallel output could not be switched OFF')
-                    self._write('OUTP:PARALLEL 0')
+                # Check the actual instrument mode, including a previous
+                # process/session with no matching Python profile.
+                self._exit_parallel_if_active()
                 if not self._off_confirmed():
                     self._trip('Output could not be switched OFF')
                 self._disable_combined_modes()
@@ -1257,7 +1260,11 @@ class Keithley2231A:
 
                     operation_mode = decode_regulation(operation_mask)
                     questionable_mode = decode_regulation(questionable_mask)
-                    if ('UNKNOWN' in (operation_mode, questionable_mode) or
+                    # OPER bit 2 is CAL (calibration in progress) in the
+                    # reference status model. Never certify CV/CC from a
+                    # calibrating channel, even if its other bits agree.
+                    if (operation_mask & 4 or
+                            'UNKNOWN' in (operation_mode, questionable_mode) or
                             (operation_mode is not None and questionable_mode is not None
                              and operation_mode != questionable_mode)):
                         mode = 'UNKNOWN'

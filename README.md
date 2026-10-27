@@ -173,6 +173,34 @@ transport/session before re-arming. A software test cannot establish that a
 physical load has been isolated. The new parser/fault cases are SIM TESTED;
 no R3.3 hardware qualification has been performed.
 
+## R3.4 — Topology and regulation evidence (SIM TESTED)
+
+Before clearing an *inherited* Parallel mode, every profile application route
+(Independent/Tracking, Series and Parallel) now queries the instrument's actual
+`OUTP:PARALLEL?` state, sends `OUTP 0` when necessary and requires an OFF reply
+from `OUTP:STAT:ALL?` **before** `OUTP:PARALLEL 0`. This also applies to a fresh
+Python session with no remembered previous profile. If OFF is not confirmed,
+configuration stops; no channel setpoints or topology-disable commands follow.
+The existing profile-failure handler may attempt best-effort global OFF, but its
+write alone is *not* verified shutdown. This is a software command-order guard;
+it cannot verify physical jumper wiring or guarantee OFF after communication loss.
+
+The [Keithley reference manual](https://download.tek.com/manual/077100401_Referencemanual.pdf)
+(§3, Combine Off, p. 3-8) requires removal of physical interconnections when
+leaving a combined setup; the operator's `confirmed_wiring` declaration still
+requires a real inspection before any command sequence. The manual's status
+model (§5, pp. 5-29–5-30) identifies OPER bit 2 as `CAL`, not a regulation
+state. When this bit is set for an enabled channel, the reader preserves raw
+registers and returns `regulation='UNKNOWN'` / `regulation_source=None`, even
+if CV/CC bits otherwise agree. Conflicting OPER/QUES modes also remain UNKNOWN.
+
+`VOLT:LIM:STAT?` is an instrument register, **not proof of independent
+hardware OVP**. Prior H09/H10 evidence reports combined-mode limitations, but
+this R3.4 change has no new physical measurements: Series/Parallel voltage
+caps remain explicitly *software enforced*, and the previous firmware-specific
+observations are not extended to other firmware or untested operating points.
+The R3.4 tests are fully offline; target hardware re-qualification remains R3.5.
+
 ## CH3 status workaround and limitations
 
 CH3 remains available through the normal profile, `set_channel(3, ...)`,
