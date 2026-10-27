@@ -489,3 +489,12 @@ replies were `0, "No error"`; final physical OFF was confirmed. PSU `*IDN?` firm
 fields varied between `1.04-0.01` and `1.04-1.04`; no firmware pin was added. DMM7510
 reported firmware 1.7.18a. Host polling is not physical edge timing, and this test
 does not certify DMM calibration. See the [successful report](hardware_reports/2026-10-26T213656.668407Z_H08_qualification.md).
+
+## H10 OFF diagnostic — 2026-10-27
+
+H10 OFF diagnostics are **PARTIAL (HW OBSERVED)**; powered Parallel remains NOT_RUN.
+The instrument aliases CH2 to CH1 while Parallel is set. On exit CH2's setpoints
+changed, and voltage-limit enable became 0 on both channels. The runner reapplied
+and read back the independent safe profile; all three outputs were OFF. 431 PSU
+error queries were clean. See [H10 evidence](hardware_reports/2026-10-27T074024.558437Z_H10_qualification.md)
+and [preflight](H10_PREFLIGHT.ru.md).

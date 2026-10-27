@@ -25,76 +25,77 @@ class TestQualification(unittest.TestCase):
         import qualification
         return qualification
 
-    def test_h09_off_diagnostic_never_energizes_and_stops_on_error(self):
+    def test_combined_off_diagnostic_never_energizes_and_stops_on_error(self):
         from test_driver import FakeTransport
         import importlib.util
-        self.assertIsNotNone(importlib.util.find_spec('h09_stage'), 'H09 OFF runner is missing')
-        import h09_stage
-        for fault in (None, 'alias', 'changed_after', 'recovery', 'queue', 'io', 'mode'):
-            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
-                class Source(FakeTransport):
-                    error_returned = False
-                    series_off_count = 0
-                    def write(self, command):
-                        super().write(command)
-                        if command == 'OUTP:SER 0':
-                            self.series_off_count += 1
-                        if fault in ('alias', 'changed_after'):
-                            if self.flags['OUTP:SER'] and command == 'INST:NSEL 2':
-                                self.active_ch = 1
-                        if (fault in ('changed_after', 'recovery') and
-                                command == 'OUTP:SER 0' and self.series_off_count >= 2):
-                                self.values[1]['VOLT:LIM:STAT'] = 0.
-                        if fault == 'recovery' and self.series_off_count >= 3:
-                            self.values[1]['VOLT:LIM:STAT'] = 0.
-                    def query(self, command):
-                        if self.flags['OUTP:SER']:
-                            if fault == 'io' and command == 'VOLT?':
-                                self.cmds.append(command)
-                                raise OSError('series query link lost')
-                            if fault == 'queue' and command == 'SYST:ERR?' and not self.error_returned:
-                                self.error_returned = True
-                                self.cmds.append(command)
-                                return '170,"Invalid command"'
-                            if fault == 'mode' and command == 'OUTP:SER?':
-                                self.cmds.append(command)
-                                return '0'
+        self.assertIsNotNone(importlib.util.find_spec('combined_off_stage'), 'Shared combined OFF runner is missing')
+        import combined_off_stage
+        for test_id, mode in (('H09', 'SER'), ('H10', 'PARALLEL')):
+            for fault in (None, 'alias', 'changed_after', 'recovery', 'queue', 'io', 'mode'):
+                with self.subTest(test_id=test_id, fault=fault), tempfile.TemporaryDirectory() as tmp:
+                    class Source(FakeTransport):
+                        error_returned = False
+                        mode_off_count = 0
+                        def write(self, command):
+                            super().write(command)
+                            if command == f'OUTP:{mode} 0':
+                                self.mode_off_count += 1
                             if fault in ('alias', 'changed_after'):
-                                if command == 'VOLT:LIM?':
+                                if self.flags[f'OUTP:{mode}'] and command == 'INST:NSEL 2':
+                                    self.active_ch = 1
+                            if (fault in ('changed_after', 'recovery') and
+                                    command == f'OUTP:{mode} 0' and self.mode_off_count >= 2):
+                                    self.values[1]['VOLT:LIM:STAT'] = 0.
+                            if fault == 'recovery' and self.mode_off_count >= 3:
+                                self.values[1]['VOLT:LIM:STAT'] = 0.
+                        def query(self, command):
+                            if self.flags[f'OUTP:{mode}']:
+                                if fault == 'io' and command == 'VOLT?':
                                     self.cmds.append(command)
-                                    return '5'
-                                if command == 'VOLT:LIM:STAT?':
+                                    raise OSError('combined query link lost')
+                                if fault == 'queue' and command == 'SYST:ERR?' and not self.error_returned:
+                                    self.error_returned = True
+                                    self.cmds.append(command)
+                                    return '170,"Invalid command"'
+                                if fault == 'mode' and command == f'OUTP:{mode}?':
                                     self.cmds.append(command)
                                     return '0'
-                        if fault == 'recovery' and self.series_off_count >= 3 and command == 'VOLT:LIM:STAT?':
-                            self.cmds.append(command)
-                            return '0'
-                        return super().query(command)
-                source = Source()
-                evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H09')
-                with contextlib.redirect_stdout(io.StringIO()):
-                    result = h09_stage.h09(source, evidence)
-                self.assertEqual(result, 'PARTIAL' if fault in (None, 'alias', 'changed_after') else
-                                 'ABORTED' if fault == 'io' else 'FAIL', evidence.path.read_text()[-1200:])
-                self.assertNotIn('OUTP 1', source.cmds)
-                self.assertNotIn('CHAN:OUTP 1', source.cmds)
-                self.assertTrue(source.closed)
-                self.assert_driver_path(evidence, source)
-                if fault in (None, 'alias', 'changed_after'):
-                    self.assertEqual(source.flags['OUTP:SER'], 0)
-                    records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
-                    self.assertEqual(len([r for r in records if r['event'] == 'series_off_snapshot']), 4)
-                    if fault == 'alias':
-                        combined = next(r for r in records if r.get('phase') == 'series_off')
-                        self.assertEqual(combined['channels']['2']['INST:NSEL?'], 1.)
-                        self.assertEqual(combined['channels']['2']['VOLT:LIM:STAT?'], 0.)
-                    restored = next(r for r in records if r.get('phase') == 'independent_after_restoration')
-                    self.assertEqual(restored['channels']['1']['VOLT?'], 1.)
-                    self.assertEqual(restored['channels']['2']['VOLT?'], 1.5)
-                    self.assertEqual(restored['channels']['1']['VOLT:LIM:STAT?'], 1.)
-                scope = h09_stage.H09Scope(source, evidence)
-                for command in ('OUTP 1', 'CHAN:OUTP 1', 'VOLT 60', 'OUTP:PARALLEL 1'):
-                    with self.assertRaises(ValueError): scope._validate(command, False)
+                                if fault in ('alias', 'changed_after'):
+                                    if command == 'VOLT:LIM?':
+                                        self.cmds.append(command)
+                                        return '5'
+                                    if command == 'VOLT:LIM:STAT?':
+                                        self.cmds.append(command)
+                                        return '0'
+                            if fault == 'recovery' and self.mode_off_count >= 3 and command == 'VOLT:LIM:STAT?':
+                                self.cmds.append(command)
+                                return '0'
+                            return super().query(command)
+                    source = Source()
+                    evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', test_id)
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        result = combined_off_stage.run_combined_off(source, evidence, test_id)
+                    self.assertEqual(result, 'PARTIAL' if fault in (None, 'alias', 'changed_after') else
+                                     'ABORTED' if fault == 'io' else 'FAIL', evidence.path.read_text()[-1200:])
+                    self.assertNotIn('OUTP 1', source.cmds)
+                    self.assertNotIn('CHAN:OUTP 1', source.cmds)
+                    self.assertTrue(source.closed)
+                    self.assert_driver_path(evidence, source)
+                    if fault in (None, 'alias', 'changed_after'):
+                        self.assertEqual(source.flags[f'OUTP:{mode}'], 0)
+                        records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+                        self.assertEqual(len([r for r in records if r['event'] == f'{mode.lower()}_off_snapshot']), 4)
+                        if fault == 'alias':
+                            combined = next(r for r in records if r.get('phase') == f'{mode.lower()}_off')
+                            self.assertEqual(combined['channels']['2']['INST:NSEL?'], 1.)
+                            self.assertEqual(combined['channels']['2']['VOLT:LIM:STAT?'], 0.)
+                        restored = next(r for r in records if r.get('phase') == 'independent_after_restoration')
+                        self.assertEqual(restored['channels']['1']['VOLT?'], 1.)
+                        self.assertEqual(restored['channels']['2']['VOLT?'], 1.5)
+                        self.assertEqual(restored['channels']['1']['VOLT:LIM:STAT?'], 1.)
+                    scope = combined_off_stage.CombinedOffScope(source, evidence, mode)
+                    for command in ('OUTP 1', 'CHAN:OUTP 1', 'VOLT 60', ('OUTP:PARALLEL 1' if mode == 'SER' else 'OUTP:SER 1')):
+                        with self.assertRaises(ValueError): scope._validate(command, False)
 
     def test_h09_powered_preflight_is_explicit_and_global_on_is_gated(self):
         import h09_powered_stage
@@ -426,7 +427,8 @@ class TestQualification(unittest.TestCase):
                      ['preflight', 'H06', '--recall'], ['run', 'H06', '--recall'],
                      ['preflight', 'H07'], ['run', 'H07'],
                      ['preflight', 'H08'], ['run', 'H08'],
-                     ['preflight', 'H09'], ['run', 'H09'], ['abort'], ['report']):
+                     ['preflight', 'H09'], ['run', 'H09'],
+                     ['preflight', 'H10'], ['run', 'H10'], ['abort'], ['report']):
             with self.subTest(args=args), patch.object(q, 'open_transport', side_effect=AssertionError('port opened')), \
                     patch.object(q, 'open_meter', side_effect=AssertionError('meter opened')):
                 with contextlib.redirect_stdout(io.StringIO()):
@@ -453,6 +455,7 @@ class TestQualification(unittest.TestCase):
 
         q = self.module()
         self.assertTrue(q.stage_passed(q.stages()['H06'][-1]))
+        self.assertTrue(q.stage_passed(q.stages()['H09'][-1]))
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             q.preflight('H07', '/dev/ttyUSB3', load_transport='serial')

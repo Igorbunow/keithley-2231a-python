@@ -157,6 +157,10 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         recall_preflight(port)
         return
     row = stages()[test_id]
+    if test_id == 'H10':
+        from combined_off_stage import preflight as combined_preflight
+        combined_preflight(port, test_id)
+        return
     if test_id == 'H09':
         if powered:
             if load_transport != 'serial':
@@ -169,7 +173,7 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
                           load_serial_port=load_serial_port)
         else:
             print('[H09] Series — OFF-подгруппа')
-            from h09_stage import preflight as h09_preflight
+            from combined_off_stage import preflight as h09_preflight
             h09_preflight(port)
         return
     print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
@@ -678,7 +682,7 @@ def main(argv=None):
     if args.command == 'preflight' or not args.execute:
         print('DRY RUN: порт не открыт, SCPI не отправлены.')
         return 0
-    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09'):
+    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09', 'H10'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
     if args.test_id == 'H09' and args.powered and (
@@ -704,10 +708,13 @@ def main(argv=None):
         print('BLOCKED: требуется рассмотренный PASS H06; порт не открыт.')
         return 2
     token, final_token, runner = TOKEN, FINAL_TOKEN, h01
-    if args.test_id == 'H09':
+    if args.test_id in ('H09', 'H10'):
         required = ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08')
         if any(not stage_passed(stages()[stage][-1]) for stage in required):
-            print('BLOCKED: H09 requires reviewed PASS H01–H08; port not opened.')
+            print(f'BLOCKED: {args.test_id} requires reviewed PASS H01–H08; port not opened.')
+            return 2
+        if args.test_id == 'H10' and not stage_passed(stages()['H09'][-1]):
+            print('BLOCKED: H10 requires reviewed PASS H09; port not opened.')
             return 2
         if args.powered:
             from h09_powered_stage import (FINAL_TOKEN as final_token,
@@ -715,8 +722,10 @@ def main(argv=None):
             token = approval_token(args.meter_host, args.load_serial_port)
             runner = h09_powered
         else:
-            from h09_stage import TOKEN as token, FINAL_TOKEN as final_token, h09
-            runner = h09
+            from functools import partial
+            from combined_off_stage import tokens, run_combined_off
+            token, final_token = tokens(args.test_id)
+            runner = partial(run_combined_off, test_id=args.test_id)
     if args.test_id == 'H08':
         required = ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07')
         if any(not stage_passed(stages()[stage][-1]) for stage in required):
@@ -800,6 +809,7 @@ def main(argv=None):
                            if args.test_id == 'H05' else 'independent; no jumpers; no DUT'),
                  subgroup=(('series_powered_cv_cc' if args.powered else 'series_off_diagnostic')
                            if args.test_id == 'H09' else
+                           'parallel_off_diagnostic' if args.test_id == 'H10' else
                            'output_recall' if args.recall else None),
                  load=('KORAD KEL103; USB serial /dev/ttyACM0; 115200 8N1; CR 40/12 Ω; '
                        'input OFF between points'
@@ -815,9 +825,9 @@ def main(argv=None):
                  proposed_caps=('H09 powered: Series total soft cap 4.00 V, current cap 0.300 A; '
                                 'CV 2.00 V/0.100 A CR40; CC 4.00 V/0.250 A CR12; CH3=0 V/open'
                                 if args.test_id == 'H09' and args.powered else
-                                'H09 OFF only: V-set 1/1.5/2 V, I-set 0.100/0.200/0.300 A; '
+                                f'{args.test_id} OFF only: V-set 1/1.5/2 V, I-set 0.100/0.200/0.300 A; '
                                 'V-cap 2/3/4 V, software I-cap 0.300/0.400/0.500 A; ON forbidden'
-                                if args.test_id == 'H09' else
+                                if args.test_id in ('H09', 'H10') else
                                 'H08 V-cap 2/3/4 V, I-cap 0.300/0.400/0.500 A; '
                                 'I-set 0.100/0.200/0.300 A; CH1 1..1.4 V, CH2 1..2.8 V, CH3 0.5 V'
                                 if args.test_id == 'H08' else
@@ -885,7 +895,7 @@ def main(argv=None):
 
     outcome = (runner(transport, evidence, meter) if args.test_id == 'H08' else
                runner(transport, evidence, load, meter) if args.test_id == 'H09' and args.powered else
-               runner(transport, evidence) if args.test_id == 'H09' else
+               runner(transport, evidence) if args.test_id in ('H09', 'H10') else
                runner(transport, evidence, reopen_recall_transport) if args.recall else
                runner(transport, evidence, load, args.start_channel,
                       diagnose_status=args.diagnose_status,
