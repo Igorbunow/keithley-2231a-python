@@ -70,13 +70,14 @@ class KEL103UDP:
     READ_COMMANDS = frozenset(('*IDN?', ':INP?', ':FUNC?', ':RES?',
                                ':MEAS:VOLT?', ':MEAS:CURR?', ':MEAS:POW?'))
     WRITE_COMMANDS = frozenset((':FUNC CR', ':INP ON', ':INP OFF',
-                                ':RES 5OHM', ':RES 11OHM', ':RES 12OHM', ':RES 22OHM',
+                                ':RES 0.5OHM', ':RES 5OHM', ':RES 11OHM', ':RES 12OHM', ':RES 22OHM',
                                 ':RES 30OHM', ':RES 40OHM', ':RES 47OHM', ':RES 56OHM',
                                 ':RES 1600OHM', ':RES 2000OHM'))
     H04P_RESISTANCES = (5.0, 11.0, 12.0, 22.0, 47.0, 56.0)
     H09_RESISTANCES = (12.0, 40.0, 1600.0, 2000.0)
     H10_RESISTANCES = (5.0, 30.0)
-    VERIFIED_RESISTANCES = (5.0, 11.0, 12.0, 22.0, 30.0, 40.0, 47.0, 56.0,
+    H10_HIGH_CURRENT_RESISTANCES = (0.5,)
+    VERIFIED_RESISTANCES = (0.5, 5.0, 11.0, 12.0, 22.0, 30.0, 40.0, 47.0, 56.0,
                             1600.0, 2000.0)
 
     def __init__(self, host, port=18190, timeout=1.5, sock=None, evidence=None):
@@ -244,6 +245,24 @@ class KEL103UDP:
         if abs(actual - resistance_ohm) > .001:
             raise SafetyError(f'KEL103 CR readback mismatch: {actual} Ω')
         self.verified_resistance = resistance_ohm
+        return actual
+
+    def configure_h10_high_current_cr(self, resistance_ohm):
+        """Select the separately gated H10 0.50 Ω high-current load point."""
+        if resistance_ohm not in self.H10_HIGH_CURRENT_RESISTANCES:
+            raise ValueError('H10 high-current CR value is not allow-listed')
+        if self.input_state() != 'OFF':
+            raise SafetyError('KEL103 INPUT must be OFF before changing CR settings')
+        self.write(':FUNC CR')
+        if self.query(':FUNC?').upper() != 'CR':
+            raise SafetyError('KEL103 did not enter CR mode')
+        self.write(f':RES {resistance_ohm:g}OHM')
+        if self.query(':FUNC?').upper() != 'CR':
+            raise SafetyError('KEL103 left CR mode while setting CR')
+        actual = self._quantity(self.query(':RES?'), 'OHM')
+        if abs(actual - resistance_ohm) > .001:
+            raise SafetyError(f'KEL103 CR readback mismatch: {actual} Ω')
+        self.verified_resistance = actual
         return actual
 
     def set_input(self, enabled):

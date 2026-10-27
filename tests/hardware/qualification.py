@@ -149,7 +149,8 @@ def verify_serial_adapter(port, adapter, available_ports=None):
 
 def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_channel=1,
               load_transport='udp', load_serial_port='/dev/ttyACM0', diagnose_status=False,
-              load_connected=False, recall=False, meter_host='192.168.22.112', powered=False):
+              load_connected=False, recall=False, meter_host='192.168.22.112', powered=False,
+              high_current=False):
     """Print a human-readable card; never contact hardware."""
     if test_id == 'H06' and recall:
         from h06_recall import preflight as recall_preflight
@@ -158,10 +159,13 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         return
     row = stages()[test_id]
     if test_id == 'H10':
-        if powered:
+        if powered or high_current:
             from h10_powered_stage import preflight as h10_preflight
-            print('[H10-Powered] Parallel — CV/CC с ограниченной мощностью и внешними измерителями')
-            h10_preflight(port, meter_host, load_serial_port, load_transport)
+            print('[H10-High-Current] Parallel — отдельная gated-точка 4 A / 8 W'
+                  if high_current else
+                  '[H10-Powered] Parallel — low-power CV/CC с внешними измерителями')
+            h10_preflight(port, meter_host, load_serial_port, load_transport,
+                          high_current=high_current)
             return
         from combined_off_stage import preflight as combined_preflight
         combined_preflight(port, test_id)
@@ -645,6 +649,8 @@ def main(argv=None):
                         help='H06 only: separately gated Output Recall mains cycles, all terminals empty')
     parser.add_argument('--powered', action='store_true',
                         help='H09/H10 only: separately gated low-power combined-mode qualification')
+    parser.add_argument('--high-current', action='store_true',
+                        help='H10 only: separately gated 4 A / 8 W Parallel point')
     parser.add_argument('--prior-evidence', type=Path, action='append',
                         help='H03 evidence log; repeat once per completed-channel log when resuming')
     mode = parser.add_mutually_exclusive_group()
@@ -656,6 +662,10 @@ def main(argv=None):
         parser.error('--recall requires H06')
     if args.powered and args.test_id not in ('H09', 'H10'):
         parser.error('--powered requires H09 or H10')
+    if args.high_current and args.test_id != 'H10':
+        parser.error('--high-current requires H10')
+    if args.high_current and args.powered:
+        parser.error('--high-current and --powered are separate H10 runs')
     if args.load_connected and (args.test_id != 'H03' or args.start_channel != 1):
         parser.error('--load-connected requires H03 start channel 1')
     if args.diagnose_status and (args.test_id != 'H03' or args.start_channel != 3):
@@ -676,7 +686,7 @@ def main(argv=None):
     preflight(args.test_id, args.port, args.load_host, args.load_port,
               args.start_channel, args.load_transport, args.load_serial_port,
               args.diagnose_status, args.load_connected, args.recall, args.meter_host,
-              args.powered)
+              args.powered, args.high_current)
     if args.test_id == 'H03' and args.start_channel > 1:
         if args.prior_evidence is None:
             parser.error('--prior-evidence is required when resuming H03; repeat for each prior channel log')
@@ -690,7 +700,7 @@ def main(argv=None):
     if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09', 'H10'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
-    if args.test_id in ('H09', 'H10') and args.powered and (
+    if args.test_id in ('H09', 'H10') and (args.powered or args.high_current) and (
             args.load_transport != 'serial' or args.load_serial_port != '/dev/ttyACM0'):
         print(f'BLOCKED: {args.test_id} powered requires the reviewed KEL103 USB port '
               '/dev/ttyACM0; no ports opened.')
@@ -723,10 +733,15 @@ def main(argv=None):
             if not stage_passed(stages()['H09'][-1]):
                 print('BLOCKED: H10 requires reviewed PASS H09; port not opened.')
                 return 2
-            if args.powered and not stages()['H10'][-1].startswith('**PARTIAL (HW OBSERVED'):
+            if (args.powered or args.high_current) and not stages()['H10'][-1].startswith('**PARTIAL (HW OBSERVED'):
                 print('BLOCKED: H10 powered requires the reviewed OFF diagnostic; port not opened.')
                 return 2
-        if args.powered:
+        if args.high_current:
+            from h10_powered_stage import (FINAL_TOKEN as final_token,
+                                           high_current_approval_token, h10_high_current)
+            token = high_current_approval_token(args.meter_host, args.load_serial_port)
+            runner = h10_high_current
+        elif args.powered:
             if args.test_id == 'H09':
                 from h09_powered_stage import (FINAL_TOKEN as final_token,
                                                approval_token, h09_powered)
@@ -818,19 +833,23 @@ def main(argv=None):
     evidence.add('metadata', **software_metadata(), port=args.port, baud=9600, framing='8N1',
                  adapter=adapter,
                  topology=('external Parallel: CH1+↔CH2+ and CH1−↔CH2−; KEL103 and DMM7510 across pair; CH3 open'
-                           if args.test_id == 'H10' and args.powered else
+                           if args.test_id == 'H10' and (args.powered or args.high_current) else
                            'external Series: jumper CH1− to CH2+; aggregate load and DMM across CH1+/CH2−; CH3 open'
                            if args.test_id == 'H09' and args.powered else
                            'tracking CH1/CH2; DMM on one channel at a time; no jumpers; CH3 disconnected'
                            if args.test_id == 'H08' else
                            'independent; CH1/CH2/CH3 negative terminals tied to scope common'
                            if args.test_id == 'H05' else 'independent; no jumpers; no DUT'),
-                 subgroup=(('series_powered_cv_cc' if args.test_id == 'H09' else
+                 subgroup=('parallel_high_current_cc' if args.high_current else
+                           ('series_powered_cv_cc' if args.test_id == 'H09' else
                             'parallel_powered_cv_cc') if args.powered else
                            'series_off_diagnostic' if args.test_id == 'H09' else
                            'parallel_off_diagnostic' if args.test_id == 'H10' else
                            'output_recall' if args.recall else None),
-                 load=('KORAD KEL103; USB serial /dev/ttyACM0; 115200 8N1; CR 40/12 Ω; '
+                 load=('KORAD KEL103; USB serial /dev/ttyACM0; 115200 8N1; CR 0.50 Ω; '
+                       'input OFF before/after the single point'
+                       if args.test_id == 'H10' and args.high_current else
+                       'KORAD KEL103; USB serial /dev/ttyACM0; 115200 8N1; CR 40/12 Ω; '
                        'input OFF between points'
                        if args.test_id == 'H09' and args.powered else
                        'KORAD KEL103; USB serial /dev/ttyACM0; 115200 8N1; CR 30/5 Ω; '
@@ -847,6 +866,9 @@ def main(argv=None):
                  proposed_caps=('H09 powered: Series total soft cap 4.00 V, current cap 0.300 A; '
                                 'CV 2.00 V/0.100 A CR40; CC 4.00 V/0.250 A CR12; CH3=0 V/open'
                                 if args.test_id == 'H09' and args.powered else
+                                'H10 high-current: Parallel soft caps 4.00 V / 4.500 A aggregate; '
+                                'CC 3.00 V / 4.000 A CR0.50; CH3=0 V/open; <=10 W'
+                                if args.test_id == 'H10' and args.high_current else
                                 'H10 powered: Parallel soft caps 4.00 V / 0.500 A aggregate; '
                                 'CV 3.00 V / 0.100 A CR30; CC 3.00 V / 0.300 A CR5; CH3=0 V/open; <=1 W'
                                 if args.test_id == 'H10' and args.powered else
@@ -883,7 +905,7 @@ def main(argv=None):
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
                  independent_meter=({'model': 'DMM7510', 'host': args.meter_host, 'port': 5025,
                                      'function': 'DCV 10 V, NPLC 1, front terminals'}
-                                    if args.test_id == 'H08' or (args.test_id in ('H09', 'H10') and args.powered)
+                                    if args.test_id == 'H08' or (args.test_id in ('H09', 'H10') and (args.powered or args.high_current))
                                     else None))
     evidence.add('approval', token=token)
     if args.diagnose_status:
@@ -896,10 +918,10 @@ def main(argv=None):
                      prior_evidence=[path.name for path in args.prior_evidence])
     load, meter, transport = None, None, None
     try:
-        if args.test_id == 'H08' or (args.test_id in ('H09', 'H10') and args.powered):
+        if args.test_id == 'H08' or (args.test_id in ('H09', 'H10') and (args.powered or args.high_current)):
             meter = open_meter(args.meter_host, evidence)
         if (args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07') or
-                (args.test_id in ('H09', 'H10') and args.powered)) and not args.recall:
+                (args.test_id in ('H09', 'H10') and (args.powered or args.high_current))) and not args.recall:
             from channel_stage import KEL103Serial, KEL103UDP
             load = (KEL103UDP(args.load_host, args.load_port, evidence=evidence)
                     if args.load_transport == 'udp' else
@@ -919,7 +941,7 @@ def main(argv=None):
         return open_transport(args.port)
 
     outcome = (runner(transport, evidence, meter) if args.test_id == 'H08' else
-               runner(transport, evidence, load, meter) if args.test_id in ('H09', 'H10') and args.powered else
+               runner(transport, evidence, load, meter) if args.test_id in ('H09', 'H10') and (args.powered or args.high_current) else
                runner(transport, evidence) if args.test_id in ('H09', 'H10') else
                runner(transport, evidence, reopen_recall_transport) if args.recall else
                runner(transport, evidence, load, args.start_channel,

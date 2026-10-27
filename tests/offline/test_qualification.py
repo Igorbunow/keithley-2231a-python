@@ -137,9 +137,12 @@ class TestQualification(unittest.TestCase):
             with self.assertRaises(SafetyError): scope._validate('OUTP 1', False)
             with self.assertRaises(SafetyError): scope._validate('OUTP:SER 1', False)
             with self.assertRaises(ValueError): scope._validate('VOLT 5.00', False)
+            with self.assertRaises(SafetyError): scope._validate('CURR 4.000', False)
             scope.powered_gate = True
             scope._validate('OUTP 1', False)
             scope._validate('OUTP:PARALLEL 1', False)
+            scope.high_current_gate = True
+            scope._validate('CURR 4.000', False)
 
     def test_h10_powered_runner_uses_shared_driver_and_checks_cv_cc(self):
         import h10_powered_stage
@@ -230,6 +233,123 @@ class TestQualification(unittest.TestCase):
             self.assertTrue(source.closed and load.closed and meter.closed)
             self.assertEqual(len([r for r in map(json.loads, evidence.path.read_text().splitlines())
                                   if r['event'] == 'parallel_measurement_sample']), 8)
+            self.assert_driver_path(evidence, source)
+
+    def test_h10_high_current_preflight_is_separately_gated_and_read_only(self):
+        q = self.module()
+        output = io.StringIO()
+        with patch.object(q, 'open_transport', side_effect=AssertionError('PSU port opened')):
+            try:
+                with contextlib.redirect_stdout(output):
+                    result = q.main(['preflight', 'H10', '--high-current', '--port', '/dev/ttyUSB3',
+                                     '--load-transport', 'serial', '--load-serial-port', '/dev/ttyACM0',
+                                     '--meter-host', '192.168.22.112'])
+            except SystemExit as exc:
+                self.fail(f'H10 high-current preflight was not accepted: {exc}')
+        card = output.getvalue()
+        self.assertEqual(result, 0)
+        self.assertIn('CR 0.50 Ω', card)
+        self.assertIn('4.00 A', card)
+        self.assertIn('8 W', card)
+        self.assertIn('AWG 10', card)
+        self.assertIn('DMM7510', card)
+        self.assertIn('DRY RUN: порт не открыт', card)
+
+    def test_h10_high_current_runner_requires_4a_cc_measurement_and_final_off(self):
+        import h10_powered_stage
+        from test_driver import FakeTransport
+
+        self.assertTrue(hasattr(h10_powered_stage, 'h10_high_current'),
+                        'H10 high-current path is missing')
+
+        class ParallelSource(FakeTransport):
+            def __init__(self):
+                super().__init__()
+                self.load = None
+
+            def write(self, command):
+                super().write(command)
+                if command in ('OUTP:PARALLEL 1', 'OUTP:PARALLEL 0'):
+                    self.values[1]['VOLT:LIM:STAT'] = 0.
+                    self.values[2]['VOLT:LIM:STAT'] = 0.
+
+            def actual_pair(self):
+                if not self.flags['OUTP:STAT:ALL'] or self.load is None or self.load.state != 'ON':
+                    return 0., 0.
+                voltage = min(self.values[1]['VOLT'],
+                              self.values[1]['CURR'] * self.load.resistance)
+                return voltage, voltage / self.load.resistance
+
+            def query(self, command):
+                if command == 'MEAS:VOLT?' and self.active_ch == 1:
+                    self.cmds.append(command)
+                    return str(self.actual_pair()[0])
+                if command == 'MEAS:CURR?' and self.active_ch == 1:
+                    self.cmds.append(command)
+                    return str(self.actual_pair()[1])
+                if command == 'MEAS:VOLT?' and self.active_ch == 3:
+                    self.cmds.append(command)
+                    return '0'
+                if command == 'MEAS:CURR?' and self.active_ch == 3:
+                    self.cmds.append(command)
+                    return '0'
+                if command == 'STAT:OPER:INST:ISUM1:COND?':
+                    self.cmds.append(command)
+                    voltage, _ = self.actual_pair()
+                    return ('10' if voltage + .001 < self.values[1]['VOLT'] else '9') \
+                        if self.flags['OUTP:STAT:ALL'] else '0'
+                return super().query(command)
+
+        class Load:
+            port = '/dev/ttyACM0'
+            live = True
+            def __init__(self, source):
+                self.source, self.state, self.resistance, self.closed = source, 'OFF', None, False
+                source.load = self
+            def input_state(self): return self.state
+            def configure_h10_high_current_cr(self, resistance):
+                self.resistance = resistance
+                return resistance
+            def set_input(self, enabled): self.state = 'ON' if enabled else 'OFF'
+            def measurements(self):
+                voltage, current = self.source.actual_pair()
+                return {'kel103_voltage_v': voltage, 'kel103_current_a': current,
+                        'kel103_power_w': voltage * current}
+            def close(self): self.closed = True
+
+        class Meter:
+            live = True
+            def __init__(self, source): self.source, self.closed = source, False
+            def configure_voltage(self, range_v=10): pass
+            def measure(self): return {'voltage_v': self.source.actual_pair()[0]}
+            def close(self): self.closed = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H10')
+            source = ParallelSource()
+            load, meter = Load(source), Meter(source)
+            observed = []
+            def gate(token, prompt, adapter=None): observed.append(token)
+            with patch.object(h10_powered_stage, 'operator_gate', side_effect=gate), \
+                 patch.object(h10_powered_stage.time, 'sleep'):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    outcome = h10_powered_stage.h10_high_current(source, evidence, load, meter)
+            self.assertEqual(outcome, 'PASS', '\n'.join(
+                line for line in evidence.path.read_text().splitlines()
+                if 'stage_error' in line or 'query_outcome' in line))
+            self.assertEqual(observed, ['CONFIRM H10 DISPLAY PSU=CC4A KEL=CR INPUT=ON',
+                                        h10_powered_stage.FINAL_TOKEN])
+            self.assertEqual(source.flags['OUTP:PARALLEL'], 0.)
+            self.assertEqual(source.flags['OUTP:STAT:ALL'], 0.)
+            self.assertEqual(load.state, 'OFF')
+            self.assertTrue(source.closed and load.closed and meter.closed)
+            records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
+            samples = [r for r in records if r['event'] == 'parallel_measurement_sample']
+            self.assertEqual(len(samples), 4)
+            self.assertTrue(all(r['point'] == 'CC4A' and r['resistance_ohm'] == .5
+                                and 3.9 <= r['kel_current_a'] <= 4.1
+                                and 7.0 <= r['kel_power_w'] <= 9.0 for r in samples))
+            self.assertIn('CURR 4.000', source.cmds)
             self.assert_driver_path(evidence, source)
 
     def test_h09_powered_runner_reuses_driver_for_cv_cc_and_restores_all_off(self):
@@ -1206,6 +1326,38 @@ class TestQualification(unittest.TestCase):
         with self.assertRaisesRegex(OSError, 'link uncertain'):
             load.query(':INP?')
         self.assertEqual(failed.sent, [b':INP?\n'])
+
+    def test_kel103_high_current_cr_requires_input_off_and_is_verified_before_enable(self):
+        from channel_stage import KEL103Serial
+        from keithley2231a import SafetyError
+
+        class SerialFake:
+            def __init__(self, replies): self.sent, self.replies = [], list(replies)
+            @property
+            def in_waiting(self): return 0
+            def write(self, payload): self.sent.append(payload); return len(payload)
+            def flush(self): pass
+            def readline(self, size): return self.replies.pop(0)
+            def close(self): pass
+
+        fake = SerialFake((b'OFF\n', b'CR\n', b'CR\n', b'0.500OHM\n',
+                           b'OFF\n', b'ON\n'))
+        load = KEL103Serial('/dev/ttyACM0', serial_port=fake)
+        self.assertTrue(hasattr(load, 'configure_h10_high_current_cr'),
+                        'KEL103 high-current CR setup is missing')
+        self.assertEqual(load.configure_h10_high_current_cr(.5), .5)
+        load.set_input(True)
+        self.assertEqual(fake.sent, [b':INP?\n', b':FUNC CR\n', b':FUNC?\n',
+                                     b':RES 0.5OHM\n', b':FUNC?\n', b':RES?\n',
+                                     b':INP?\n', b':INP ON\n', b':INP?\n'])
+        before = list(fake.sent)
+        with self.assertRaises(ValueError): load.configure_h10_high_current_cr(.4)
+        self.assertEqual(fake.sent, before)
+
+        active = SerialFake((b'ON\n',))
+        load = KEL103Serial('/dev/ttyACM0', serial_port=active)
+        with self.assertRaises(SafetyError): load.configure_h10_high_current_cr(.5)
+        self.assertEqual(active.sent, [b':INP?\n'])
 
     def test_kel103_serial_refuses_wrong_usb_device_before_open(self):
         from channel_stage import KEL103Serial
