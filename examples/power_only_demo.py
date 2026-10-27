@@ -13,7 +13,7 @@ if not args.run: parser.error('Refusing to power outputs without --run')
 if args.seconds < 0: parser.error('--seconds must be nonnegative')
 profile=Profile.from_json(Path(__file__).with_name('power_only.json'))
 with Keithley2231A(SerialTransport(args.port, timeout=3)) as psu:
-    psu.apply_profile(profile)  # Forces ALL channels OFF
+    psu.apply_profile(profile, confirmed_wiring='independent')  # Forces ALL channels OFF
     print('Inspect your wiring and outputs: example profile is NOT universally safe.')
     psu.power_on()
     try: time.sleep(args.seconds)

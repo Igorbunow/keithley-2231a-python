@@ -138,7 +138,7 @@ def h06(transport, evidence, load):
                 raise SafetyError('H06 requires independent output mode')
         evidence.add('output_recall_preflight', state='OFF',
                      source='operator panel confirmation', power_cycle_test='NOT_RUN')
-        dev.apply_profile(_profile())
+        dev.apply_profile(_profile(), confirmed_wiring='independent')
         dev.verify_profile()
         evidence.add('profile', name='H06 output timer qualification',
                      channels={str(ch): {'voltage_v': CHANNELS[ch][2],

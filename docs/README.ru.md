@@ -185,12 +185,24 @@ python examples/probe.py --port /dev/ttyUSB1
 from keithley2231a import Keithley2231A, SerialTransport, Profile
 
 with Keithley2231A(SerialTransport('/dev/ttyUSB1')) as psu:
-    psu.apply_profile(Profile.from_json('examples/safe_3ch.json'))
+    psu.apply_profile(Profile.from_json('examples/safe_3ch.json'),
+                      confirmed_wiring='independent')
     psu.verify_profile()
     psu.set_channel(1, voltage=1.2, current=0.1)
     # После проверки подключений на стенде:
     # psu.output(1, True)
 ```
+
+**Обязательное подтверждение физической схемы:** перед применением профиля
+Independent или Tracking вручную проверьте отсутствие **внешних** перемычек
+Series/Parallel между CH1 и CH2, затем передайте
+`confirmed_wiring='independent'`. Для Series/Parallel после осмотра
+соответствующих внешних соединений при всех выходах OFF передавайте
+`confirmed_wiring='series'` или `'parallel'`. Это только заявление оператора:
+библиотека не может физически определить наличие перемычек. Без правильного
+подтверждения SCPI-команды **не отправляются**. При возвращении из Series
+или Parallel обе перемычки должны быть сняты вручную — отключение режима
+командой SCPI не удаляет проводники.
 
 **ВНИМАНИЕ:** `apply_profile()` всегда сначала отключает **все** выходы и перенастраивает источник. Не запускай его во время питания работающего устройства!
 
@@ -229,7 +241,7 @@ CV/CC до 0,3 А/1 Вт и точка CC 4,00 А / CR0,50 Ω / около 8 В�
 ```python
 profile = Profile.unrestricted()
 # CH1 и CH2: максимум 30 В и 3 А; CH3: 5 В и 3 А
-# psu.apply_profile(profile)
+# psu.apply_profile(profile, confirmed_wiring='independent')
 # psu.set_channel(1, voltage=12, current=1.5)
 ```
 
@@ -250,7 +262,7 @@ profile = Profile(
     access='power_only',
     power_sequence=(PowerStep(1, 0.0), PowerStep(2, 0.5)),
 )
-# psu.apply_profile(profile)  # сначала все OFF
+# psu.apply_profile(profile, confirmed_wiring='independent')  # сначала все OFF
 # psu.power_on()              # CH1, затем через 0,5 с CH2
 # psu.power_off()             # CH2, затем через 0,5 с CH1
 ```

@@ -105,7 +105,7 @@ def tracking_profile(ratio):
 
 def _arm(dev, ratio):
     if dev.armed: dev.emergency_off()
-    dev.apply_profile(tracking_profile(ratio))
+    dev.apply_profile(tracking_profile(ratio), confirmed_wiring='independent')
     dev.verify_profile()
     require_outputs(dev)
 
@@ -291,7 +291,7 @@ def h08(transport, evidence, meter):
         # Restore through the ordinary profile path, keeping every output OFF.
         dev.apply_profile(Profile('H08 safe independent exit', (
             ChannelProfile(2, .3, 1, .1), ChannelProfile(3, .4, 1.5, .2),
-            ChannelProfile(4, .5, .5, .3)), lock_front_panel=False))
+            ChannelProfile(4, .5, .5, .3)), lock_front_panel=False), confirmed_wiring='independent')
         require_outputs(dev)
         _require_meter_off(meter)
         token = 'CONFIRM H08 DISCONNECT CH2 ALL_OFF DMM=DISCONNECTED'

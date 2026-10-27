@@ -10,7 +10,7 @@ a=p.parse_args()
 if not a.run: p.error('Refusing to enable outputs without explicit --run')
 profile=Profile.from_json(Path(__file__).with_name('safe_3ch.json'))
 with Keithley2231A(SerialTransport(a.port)) as dev:
-    dev.apply_profile(profile)  # Off-first, NO automatic power-on
+    dev.apply_profile(profile, confirmed_wiring='independent')  # Off-first, NO automatic power-on
     dev.set_channel(1,voltage=1.0,current=.1)
     dev.set_channel(2,voltage=1.0,current=.1)
     dev.set_channel(3,voltage=1.0,current=.05)

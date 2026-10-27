@@ -130,7 +130,7 @@ def h02(transport, evidence):
             if io.commands != before: raise ValueError('unarmed output request reached transport')
             evidence.add('case', channel=ch, check='unarmed ON rejected before SCPI', outcome='PASS')
         evidence.add('phase', name='apply_profile')
-        dev.apply_profile(guarded_profile())
+        dev.apply_profile(guarded_profile(), confirmed_wiring='independent')
         if dev.instrument_key != instrument_key or not dev.armed or dev.faulted:
             raise ValueError('profile identity/armed/fault state mismatch')
         evidence.add('phase', name='verify_profile')
@@ -177,7 +177,7 @@ def h02(transport, evidence):
         # A panel edit is external tampering by design. Disarm and reapply the
         # profile through its normal sequence before testing software limits.
         dev.emergency_off()
-        dev.apply_profile(guarded_profile())
+        dev.apply_profile(guarded_profile(), confirmed_wiring='independent')
         dev.verify_profile()
         _snapshot(dev, io, evidence, final=True)
         evidence.add('case', check='panel test followed by profile reapplication',
@@ -446,7 +446,7 @@ def h04(transport, evidence):
 
         rated = Profile.unrestricted(name='H04 rated caps, zero output setpoint',
                                      lock_front_panel=False)
-        dev.apply_profile(rated)
+        dev.apply_profile(rated, confirmed_wiring='independent')
         dev.verify_profile()
         if dev.instrument_key != instrument_key or not dev.armed or dev.faulted:
             raise SafetyError('unrestricted profile identity/arm state mismatch')
@@ -463,7 +463,7 @@ def h04(transport, evidence):
                          voltage_cap_v=cap, **values)
         before = io.commands
         try:
-            dev.apply_profile(guarded_profile())
+            dev.apply_profile(guarded_profile(), confirmed_wiring='independent')
         except SafetyError:
             pass
         else:
@@ -478,13 +478,13 @@ def h04(transport, evidence):
             ChannelProfile(3., .3, 2., .2),
             ChannelProfile(4., .4, 3., .3),
         ), lock_front_panel=False, access='control')
-        dev.apply_profile(limited)
+        dev.apply_profile(limited, confirmed_wiring='independent')
         _h04_max_voltage_panel_gate(io, dev, evidence)
         dev.emergency_off()
 
         fixed = Profile('H04 power_only', tuple(ChannelProfile(4., .5, 1., .1)
                        for _ in (1, 2, 3)), lock_front_panel=False, access='power_only')
-        dev.apply_profile(fixed)
+        dev.apply_profile(fixed, confirmed_wiring='independent')
         dev.verify_profile()
         before = io.commands
         for action in (lambda: dev.set_channel(1, voltage=1.01),
@@ -522,7 +522,7 @@ def h04(transport, evidence):
 
         # Re-arm the reduced profile while OFF, then test an exact setpoint
         # edit that remains inside both profile caps and hardware ratings.
-        dev.apply_profile(fixed)
+        dev.apply_profile(fixed, confirmed_wiring='independent')
         dev.verify_profile()
         dev.diagnostic_write('INST:NSEL 3')
         dev.diagnostic_write('CURR 0.101')

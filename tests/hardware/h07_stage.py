@@ -151,7 +151,7 @@ def h07(transport, evidence, load):
         profile = Profile('H07 monitoring qualification', tuple(
             ChannelProfile(*CHANNELS[ch]) for ch in (1, 2, 3)),
             wiring='independent', lock_front_panel=False, verify_every_s=5.0)
-        dev.apply_profile(profile)
+        dev.apply_profile(profile, confirmed_wiring='independent')
         dev.verify_profile()
         evidence.add('profile', **asdict(profile))
         token = 'CONFIRM H07 CONNECT CH1 ALL_OFF LOAD=OFF'

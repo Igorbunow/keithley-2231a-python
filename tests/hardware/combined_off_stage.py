@@ -116,7 +116,7 @@ def run_combined_off(transport, evidence, test_id='H09'):
         safe_profile = Profile(f'{test_id} OFF diagnostic restore', (
             ChannelProfile(2, .3, 1, .1), ChannelProfile(3, .4, 1.5, .2),
             ChannelProfile(4, .5, 2, .3)), lock_front_panel=False)
-        dev.apply_profile(safe_profile)
+        dev.apply_profile(safe_profile, confirmed_wiring='independent')
         before = _snapshot(dev, evidence, 'independent_before', False, mode)
         dev.emergency_off()
         # Only OFF diagnostics bypass the active profile's independent mode guard.
@@ -138,7 +138,7 @@ def run_combined_off(transport, evidence, test_id='H09'):
             # Combined-mode firmware may rewrite individual settings on exit.
             # Restore the bounded profile before returning control to the operator.
             dev.emergency_off()
-            dev.apply_profile(safe_profile)
+            dev.apply_profile(safe_profile, confirmed_wiring='independent')
             evidence.add('independent_profile_restored', expected={
                 str(ch): {'VOLT?': spec.initial_voltage, 'CURR?': spec.initial_current,
                           'VOLT:LIM?': spec.max_voltage, 'VOLT:LIM:STAT?': 1.0}

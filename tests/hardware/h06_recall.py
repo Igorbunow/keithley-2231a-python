@@ -125,7 +125,7 @@ def recall(transport, evidence, reopen):
             expected = before if mode == 'ON' else '000'
             io = dev.debug_transport
             io.observing, io.allowed_on = False, set()
-            dev.apply_profile(_profile())
+            dev.apply_profile(_profile(), confirmed_wiring='independent')
             require_outputs(dev)
             dev.diagnostic_write('SYST:LOC')
             token = (f'CONFIRM H06 RECALL CASE={case} RECALL={mode} '

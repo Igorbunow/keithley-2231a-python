@@ -317,7 +317,7 @@ def h04_powered(transport, evidence, load):
             raise SafetyError('independent wiring required for H04-Powered')
         if load.input_state() != 'OFF':
             raise SafetyError('KEL103 INPUT must remain OFF during maximum voltage check')
-        dev.apply_profile(_profile(access='control'))
+        dev.apply_profile(_profile(access='control'), confirmed_wiring='independent')
         dev.verify_profile()
         _remote_max_voltage_scpi_probe(dev, io, evidence)
         _max_voltage_panel_gate(io, dev, evidence)
@@ -346,7 +346,7 @@ def h04_powered(transport, evidence, load):
                              from_channel=previous, to_channel=channel)
 
             control = _profile(access='control')
-            dev.apply_profile(control)
+            dev.apply_profile(control, confirmed_wiring='independent')
             dev.verify_profile()
             evidence.add('profile', name=control.name, channel=channel,
                          voltage_cap_v=4.5, current_cap_a=.5,
@@ -378,7 +378,7 @@ def h04_powered(transport, evidence, load):
 
             dev.emergency_off()
             fixed = _profile(access='power_only')
-            dev.apply_profile(fixed)
+            dev.apply_profile(fixed, confirmed_wiring='independent')
             dev.verify_profile()
             before = io.commands
             for action in (lambda: dev.set_channel(channel, voltage=3.3),

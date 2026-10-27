@@ -137,7 +137,7 @@ class TestDevice(unittest.TestCase):
     def setUp(self):
         self.fake = FakeTransport()
         self.dev = Keithley2231A(self.fake)
-        self.dev.apply_profile(profile())
+        self.dev.apply_profile(profile(), confirmed_wiring='independent')
 
     def test_output_states_handles_initial_local_without_changing_outputs(self):
         fake = FakeTransport()
@@ -219,7 +219,7 @@ class TestDevice(unittest.TestCase):
 
         fake = VoltageLimitedFake()
         dev = Keithley2231A(fake, debug=True)
-        dev.apply_profile(profile())
+        dev.apply_profile(profile(), confirmed_wiring='independent')
         before = list(fake.cmds)
         with self.assertRaises(LimitsError): dev.diagnostic_write('VOLT 3.31')
         self.assertEqual(fake.cmds, before)
@@ -245,8 +245,8 @@ class TestDevice(unittest.TestCase):
     def test_normal_and_debug_profiles_use_identical_wire_sequences(self):
         normal, diagnostic = FakeTransport(), FakeTransport()
         events = []
-        Keithley2231A(normal).apply_profile(profile())
-        Keithley2231A(diagnostic, debug=True, debug_trace=events.append).apply_profile(profile())
+        Keithley2231A(normal).apply_profile(profile(), confirmed_wiring='independent')
+        Keithley2231A(diagnostic, debug=True, debug_trace=events.append).apply_profile(profile(), confirmed_wiring='independent')
         self.assertEqual(normal.cmds, diagnostic.cmds)
         self.assertEqual([e['command'] for e in events if e['event'] in ('write', 'query')], normal.cmds)
 
@@ -265,7 +265,7 @@ class TestDevice(unittest.TestCase):
 
         fake = ErrorReply()
         dev = Keithley2231A(fake)
-        dev.apply_profile(profile())
+        dev.apply_profile(profile(), confirmed_wiring='independent')
         dev.output(1, True)
         before_errors = fake.cmds.count('SYST:ERR?')
         with self.assertRaisesRegex(InstrumentError, 'output OFF confirmed'):
@@ -292,7 +292,7 @@ class TestDevice(unittest.TestCase):
 
         fake = ErrorReply()
         dev = Keithley2231A(fake)
-        dev.apply_profile(profile())
+        dev.apply_profile(profile(), confirmed_wiring='independent')
         dev.output(1, True)
         fake.ignore_shutdown = True
         with self.assertRaisesRegex(InstrumentError, 'UNKNOWN OUTPUT STATE'):
@@ -309,7 +309,7 @@ class TestDevice(unittest.TestCase):
 
         fake = BadReply()
         dev = Keithley2231A(fake)
-        dev.apply_profile(profile())
+        dev.apply_profile(profile(), confirmed_wiring='independent')
         dev.output(1, True)
         off_before = fake.cmds.count('OUTP 0')
         with self.assertRaisesRegex(InstrumentError, 'UNKNOWN OUTPUT STATE'):
@@ -403,7 +403,7 @@ class TestDevice(unittest.TestCase):
 
         fake = BadReadback()
         dev = Keithley2231A(fake)
-        dev.apply_profile(profile())
+        dev.apply_profile(profile(), confirmed_wiring='independent')
         fake.corrupt = True
         with self.assertRaises(SafetyError):
             dev.set_channel(3, voltage=2.0, current=.08)
@@ -414,7 +414,7 @@ class TestDevice(unittest.TestCase):
     def test_on_off_and_profile_lock(self):
         self.dev.output(1, True)
         self.assertTrue(self.fake.values[1]['CHAN:OUTP'])
-        with self.assertRaises(SafetyError): self.dev.apply_profile(profile())
+        with self.assertRaises(SafetyError): self.dev.apply_profile(profile(), confirmed_wiring='independent')
         self.dev.output(1, False)
         self.assertFalse(self.fake.values[1]['CHAN:OUTP'])
 
@@ -519,7 +519,7 @@ class TestDevice(unittest.TestCase):
                     replace(settings.channels[2], expected_regulation=expected)))
                 fake = FakeTransport()
                 dev = Keithley2231A(fake)
-                dev.apply_profile(settings)
+                dev.apply_profile(settings, confirmed_wiring='independent')
                 dev.set_channel(3, voltage=2.0, current=.08)
                 dev.output(3, True)
                 fake.operation_status_masks[3] = 8
@@ -551,7 +551,7 @@ class TestDevice(unittest.TestCase):
         with self.assertRaises(SafetyError): self.dev.tracking_timers(3, 5)
         self.assertEqual(self.fake.cmds, before)
         self.dev.emergency_off()
-        self.dev.apply_profile(profile('tracking'))
+        self.dev.apply_profile(profile('tracking'), confirmed_wiring='independent')
         for pair in ((3, float('nan')), (3, .01), (True, 5), (3, 5.01)):
             before = list(self.fake.cmds)
             with self.assertRaises(ValueError): self.dev.tracking_timers(*pair)
@@ -579,7 +579,7 @@ class TestDevice(unittest.TestCase):
                 return str(float(result) + .1) if command == 'OUTP:TIM:DEL?' else result
         source = WrongTimerReadback()
         dev = Keithley2231A(source)
-        dev.apply_profile(profile('tracking'))
+        dev.apply_profile(profile('tracking'), confirmed_wiring='independent')
         with self.assertRaises(SafetyError): dev.tracking_timers(3, 5)
         self.assertFalse(dev.armed)
         self.assertTrue(all(not values['CHAN:OUTP'] for values in source.values.values()))
@@ -595,7 +595,7 @@ class TestDevice(unittest.TestCase):
 
     def test_regulation_check_cannot_be_bypassed(self):
         self.dev.emergency_off()
-        self.dev.apply_profile(profile(expected='cv'))
+        self.dev.apply_profile(profile(expected='cv'), confirmed_wiring='independent')
         with self.assertRaises(SafetyError): self.dev.read_channel(1, with_regulation=False)
 
     def test_connection_failure_attempts_off(self):
@@ -606,7 +606,7 @@ class TestDevice(unittest.TestCase):
 
     def test_tracking_requires_explicit_voltage_and_output_apis(self):
         self.dev.emergency_off()
-        self.dev.apply_profile(profile('tracking'))
+        self.dev.apply_profile(profile('tracking'), confirmed_wiring='independent')
         self.assertTrue(self.fake.flags['OUTP:TRAC'])
         with self.assertRaises(SafetyError): self.dev.set_channel(1, voltage=2)
         self.dev.combined_outputs(True, confirm_all_channels_safe=True)
@@ -620,7 +620,7 @@ class TestDevice(unittest.TestCase):
                 dev.apply_profile(Profile('tracking', (
                     ChannelProfile(2, .3, 1, .1),
                     ChannelProfile(3, .4, ratio, .2),
-                    ChannelProfile(4, .5, .5, .3)), wiring='tracking'))
+                    ChannelProfile(4, .5, .5, .3)), wiring='tracking'), confirmed_wiring='independent')
                 dev.set_tracking_voltage(1, 1.2)
                 self.assertAlmostEqual(fake.values[2]['VOLT'], 1.2 * ratio)
                 dev.set_tracking_voltage(2, ratio)
@@ -638,6 +638,44 @@ class TestDevice(unittest.TestCase):
                 with self.assertRaises(SafetyError): dev.set_tracking_voltage(1, 1.2)
                 self.assertFalse(dev.armed)
                 self.assertIn('OUTP 0', fake.cmds)
+
+    def test_independent_and_tracking_require_physical_no_jumper_confirmation(self):
+        """No physical wiring assertion means NO SCPI, even on a new session."""
+        for wiring in ('independent', 'tracking'):
+            for confirmation in (None, 'series', 'parallel', 'tracking', ''):
+                with self.subTest(wiring=wiring, confirmation=confirmation):
+                    source = FakeTransport()
+                    dev = Keithley2231A(source)
+                    setting = profile(wiring)
+                    before = list(source.cmds)
+                    with self.assertRaisesRegex(SafetyError, 'NO external Series/Parallel jumpers'):
+                        dev.apply_profile(setting, confirmed_wiring=confirmation)
+                    self.assertEqual(source.cmds, before)
+                    self.assertFalse(dev.armed)
+                    self.assertFalse(dev.faulted)
+                    self.assertIsNone(dev.profile)
+
+    def test_parallel_to_independent_requires_new_manual_confirmation(self):
+        """An OFF command does not imply physical jumpers were removed."""
+        source = FakeTransport()
+        dev = Keithley2231A(source)
+        combined = ParallelProfile('parallel', 3.0, .3, 2.0, .1,
+                                   ChannelProfile(4.0, .5, 1.0, .1))
+        dev.apply_profile(combined, confirmed_wiring='parallel')
+        dev.emergency_off()
+        before = list(source.cmds)
+        for confirmed in (None, 'parallel', 'series'):
+            with self.subTest(confirmed=confirmed):
+                with self.assertRaisesRegex(SafetyError, 'NO external Series/Parallel jumpers'):
+                    dev.apply_profile(profile(), confirmed_wiring=confirmed)
+                self.assertEqual(source.cmds, before)
+                self.assertIs(dev.profile, combined)
+        # The following represents an operator who has physically checked and
+        # removed both Parallel jumpers while PSU outputs were OFF.
+        dev.apply_profile(profile(), confirmed_wiring='independent')
+        self.assertTrue(dev.armed)
+        self.assertFalse(source.flags['OUTP:PARALLEL'])
+        self.assertEqual(dev.output_states(), {1: False, 2: False, 3: False})
 
     def test_combined_physical_wiring_confirmation(self):
         class SeriesSource(FakeTransport):
@@ -714,7 +752,7 @@ class TestDevice(unittest.TestCase):
     def test_all_profile_application_failures_share_fault_cleanup(self):
         """All topologies clear the profile and attempt only best-effort OFF."""
         candidates = (
-            ('independent', profile(), None),
+            ('independent', profile(), 'independent'),
             ('series', SeriesProfile('series', (2., 3.), 4.5, .3, 2., .1,
                                      ChannelProfile(4., .5, 2., .3)), 'series'),
             ('parallel', ParallelProfile('parallel', 3.0, .3, 2.0, .1,
@@ -797,7 +835,7 @@ class TestDevice(unittest.TestCase):
             with self.subTest(key=key):
                 fake = FakeTransport(); dev = Keithley2231A(fake)
                 base = profile()
-                dev.apply_profile(Profile('fixed', base.channels, access='power_only'))
+                dev.apply_profile(Profile('fixed', base.channels, access='power_only'), confirmed_wiring='independent')
                 fake.values[1][key] = value
                 with self.assertRaises(SafetyError): dev.verify_profile()
                 self.assertFalse(dev.armed)
@@ -866,7 +904,7 @@ class TestDevice(unittest.TestCase):
         fake.cmds.clear()
         fake.query = lambda cmd: 'Keithley instruments, 2231A-30-3, OTHER, 1.04-1.04' if cmd == '*IDN?' else original(cmd)
         with self.assertRaisesRegex(InstrumentError, 'identity changed'):
-            dev.apply_profile(profile())
+            dev.apply_profile(profile(), confirmed_wiring='independent')
         self.assertTrue(dev.faulted)
         self.assertFalse(dev.armed)
         self.assertNotIn('VOLT 0', fake.cmds)
@@ -886,7 +924,7 @@ class TestDevice(unittest.TestCase):
         self.assertNotEqual(first, dev.instrument_id)
         self.assertEqual(dev.instrument_key,
                          ('keithley instruments', '2231A-30-3', 'TEST'))
-        dev.apply_profile(profile())
+        dev.apply_profile(profile(), confirmed_wiring='independent')
         self.assertTrue(dev.armed)
 
     def test_optional_serial_binding_rejects_another_supply_before_profile_writes(self):
@@ -894,7 +932,7 @@ class TestDevice(unittest.TestCase):
         fake = FakeTransport()
         dev = Keithley2231A(fake, expected_serial='OTHER-PSU')
         with self.assertRaisesRegex(InstrumentError, 'serial number mismatch'):
-            dev.apply_profile(profile())
+            dev.apply_profile(profile(), confirmed_wiring='independent')
         self.assertFalse(dev.armed)
         self.assertNotIn('VOLT 0', fake.cmds)
         self.assertFalse(any(cmd.startswith(('VOLT:LIM ', 'VOLT:LIM:STAT ', 'CURR ', 'VOLT '))
@@ -906,7 +944,7 @@ class TestDevice(unittest.TestCase):
     def test_apply_disables_inherited_timers(self):
         self.dev.emergency_off()
         for values in self.fake.values.values(): values['OUTP:TIM:STAT'] = 1
-        self.dev.apply_profile(profile())
+        self.dev.apply_profile(profile(), confirmed_wiring='independent')
         self.assertTrue(all(values['OUTP:TIM:STAT'] == 0 for values in self.fake.values.values()))
 
 
@@ -1023,7 +1061,7 @@ class TestDevice(unittest.TestCase):
 
         source = DelayedOff()
         dev = Keithley2231A(source)
-        dev.apply_profile(profile('tracking'))
+        dev.apply_profile(profile('tracking'), confirmed_wiring='independent')
         dev.combined_outputs(True, confirm_all_channels_safe=True)
         dev.combined_outputs(False)
         self.assertEqual(dev.output_states(), {1: False, 2: False, 3: False})
@@ -1063,7 +1101,7 @@ class TestStats(unittest.TestCase):
         self.assertEqual(s.ampere_hours,0)
 
     def test_acquisition(self):
-        fake=FakeTransport(); dev=Keithley2231A(fake); dev.apply_profile(profile())
+        fake=FakeTransport(); dev=Keithley2231A(fake); dev.apply_profile(profile(), confirmed_wiring='independent')
         a=Acquisition(dev,interval_s=.1)
         self.assertEqual(len(a.sample()),3)
         self.assertEqual(a.stats[1].voltage.count,1)
@@ -1080,7 +1118,7 @@ class TestStats(unittest.TestCase):
 
         fake = FakeTransport()
         dev = Keithley2231A(fake)
-        dev.apply_profile(profile())
+        dev.apply_profile(profile(), confirmed_wiring='independent')
         stop = ClockStop()
         acquisition = Acquisition(dev, interval_s=2.0)
         with patch('keithley2231a.monitor.time.monotonic', lambda: stop.now):
@@ -1152,7 +1190,7 @@ class TestTransportNetwork(unittest.TestCase):
             ChannelProfile(3.3,.2,1,.1,record=False),
             ChannelProfile(5.,.2,1,.1),
             ChannelProfile(3.3,.1,1,.05)))
-        fake=FakeTransport(); dev=Keithley2231A(fake); dev.apply_profile(p)
+        fake=FakeTransport(); dev=Keithley2231A(fake); dev.apply_profile(p, confirmed_wiring='independent')
         dev.output(1, True)
         fake.values[1]['VOLT'] = 9.
         a=Acquisition(dev)

@@ -129,7 +129,7 @@ def h11(transport, evidence, load):
             ChannelProfile(3.00, .200, 1.50, .200),
             ChannelProfile(4.00, .300, 2.00, .300)),
             wiring='independent', lock_front_panel=False, verify_every_s=5.0)
-        dev.apply_profile(profile)
+        dev.apply_profile(profile, confirmed_wiring='independent')
         dev.verify_profile()
         evidence.add('profile', channels=profile_evidence(profile))
         operator_gate('CONFIRM H11 CONNECT CH1 ALL_OFF LOAD=OFF',

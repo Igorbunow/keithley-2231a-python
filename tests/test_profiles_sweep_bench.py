@@ -21,7 +21,7 @@ class TestAccessProfiles(unittest.TestCase):
         p = Profile.unrestricted()
         self.assertEqual([(x.max_voltage,x.max_current) for x in p.channels],
                          [(30,3),(30,3),(5,3)])
-        fake=FakeTransport(); psu=Keithley2231A(fake); psu.apply_profile(p)
+        fake=FakeTransport(); psu=Keithley2231A(fake); psu.apply_profile(p, confirmed_wiring='independent')
         psu.set_channel(1, voltage=30, current=3)
         psu.set_channel(3, voltage=5, current=3)
         with self.assertRaises(LimitsError): psu.set_channel(3, voltage=5.01)
@@ -36,7 +36,7 @@ class TestAccessProfiles(unittest.TestCase):
 
     def test_lockdown_blocks_setpoints_arbitrary_sequences_and_timers(self):
         fake=FakeTransport(); psu=Keithley2231A(fake)
-        psu.apply_profile(power_profile([PowerStep(2,.01),PowerStep(1,.02)]))
+        psu.apply_profile(power_profile([PowerStep(2,.01),PowerStep(1,.02)]), confirmed_wiring='independent')
         for action in (lambda: psu.set_channel(1, voltage=1.5),
                        lambda: psu.output(1, True),
                        lambda: psu.sequence([(0,1,True)]),
@@ -64,7 +64,7 @@ class TestAccessProfiles(unittest.TestCase):
         steps = [PowerStep(1, 0.0), PowerStep(2, 1.0), PowerStep(3, 1.0)]
         fake = FakeTransport()
         psu = Keithley2231A(fake)
-        psu.apply_profile(power_profile(steps))
+        psu.apply_profile(power_profile(steps), confirmed_wiring='independent')
         with patch('keithley2231a.device.time.sleep') as sleeper:
             psu.power_on()
             selected = 1
@@ -104,7 +104,7 @@ class TestAccessProfiles(unittest.TestCase):
 
     def test_power_on_failure_trips_and_off(self):
         fake=FakeTransport(); psu=Keithley2231A(fake)
-        psu.apply_profile(power_profile([PowerStep(1,0),PowerStep(2,0)]))
+        psu.apply_profile(power_profile([PowerStep(1,0),PowerStep(2,0)]), confirmed_wiring='independent')
         fake.failed_query='CHAN:OUTP?'
         with self.assertRaises(SafetyError): psu.power_on()
         self.assertEqual(fake.flags['OUTP:STAT:ALL'],0)
@@ -112,7 +112,7 @@ class TestAccessProfiles(unittest.TestCase):
 
 class TestSweep(unittest.TestCase):
     def test_sweep_csv_and_stop_off(self):
-        fake=FakeTransport(); psu=Keithley2231A(fake); psu.apply_profile(profile())
+        fake=FakeTransport(); psu=Keithley2231A(fake); psu.apply_profile(profile(), confirmed_wiring='independent')
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'curve.csv'
             with patch('keithley2231a.sweep.time.sleep'):
@@ -125,14 +125,14 @@ class TestSweep(unittest.TestCase):
             self.assertFalse(psu.armed)
 
     def test_sweep_requires_safe_access_and_limits(self):
-        psu=Keithley2231A(FakeTransport()); psu.apply_profile(power_profile())
+        psu=Keithley2231A(FakeTransport()); psu.apply_profile(power_profile(), confirmed_wiring='independent')
         with self.assertRaises(SafetyError): voltage_sweep(psu,1,[1],current_limit_a=.01)
-        psu.emergency_off(); psu.apply_profile(profile())
+        psu.emergency_off(); psu.apply_profile(profile(), confirmed_wiring='independent')
         with self.assertRaises(ValueError): voltage_sweep(psu,1,[4],current_limit_a=.01)
         self.assertTrue(psu.armed) # preflight rejects without interacting
 
     def test_sweep_rejects_other_live_channels(self):
-        fake=FakeTransport(); psu=Keithley2231A(fake); psu.apply_profile(profile())
+        fake=FakeTransport(); psu=Keithley2231A(fake); psu.apply_profile(profile(), confirmed_wiring='independent')
         psu.output(2, True)
         before=len(fake.cmds)
         with self.assertRaises(SafetyError): voltage_sweep(psu,1,[.2],current_limit_a=.02)
@@ -140,7 +140,7 @@ class TestSweep(unittest.TestCase):
         self.assertTrue(fake.values[2]['CHAN:OUTP']) # No unintended global OFF on preflight
 
     def test_observer_exception_causes_off(self):
-        fake=FakeTransport(); psu=Keithley2231A(fake); psu.apply_profile(profile())
+        fake=FakeTransport(); psu=Keithley2231A(fake); psu.apply_profile(profile(), confirmed_wiring='independent')
         with patch('keithley2231a.sweep.time.sleep'):
             with self.assertRaisesRegex(RuntimeError,'dmm failed'):
                 voltage_sweep(psu,1,[.2],current_limit_a=.02,

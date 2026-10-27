@@ -52,7 +52,7 @@ class TestH12Stage(unittest.TestCase):
     def test_readback_mismatch_trips_and_prevents_automatic_on(self):
         fake = FakeTransport()
         dev = Keithley2231A(fake)
-        dev.apply_profile(safe_profile())
+        dev.apply_profile(safe_profile(), confirmed_wiring='independent')
         fake.values[2]['VOLT:LIM'] = 3.1
         with self.assertRaises(SafetyError):
             dev.verify_profile()
@@ -69,7 +69,7 @@ class TestH12Stage(unittest.TestCase):
             with self.subTest(debug=debug):
                 fake = FakeTransport()
                 dev = Keithley2231A(fake, debug=debug)
-                dev.apply_profile(safe_profile())
+                dev.apply_profile(safe_profile(), confirmed_wiring='independent')
                 dev.output(1, True)
                 fake.failed_query = 'CHAN:OUTP?'
                 with self.assertRaises(Exception):
@@ -77,7 +77,7 @@ class TestH12Stage(unittest.TestCase):
                 before = list(fake.cmds)
                 fake.failed_query = None
                 for operation in (lambda: dev.output(1, True),
-                                  dev.emergency_off, lambda: dev.apply_profile(safe_profile())):
+                                  dev.emergency_off, lambda: dev.apply_profile(safe_profile(), confirmed_wiring='independent')):
                     with self.assertRaises((SafetyError, TransportError)):
                         operation()
                     self.assertEqual(fake.cmds, before)
@@ -88,7 +88,7 @@ class TestH12Stage(unittest.TestCase):
                 recovered = Keithley2231A(fresh, debug=debug)
                 with self.assertRaises(SafetyError):
                     recovered.output(1, True)
-                recovered.apply_profile(safe_profile())
+                recovered.apply_profile(safe_profile(), confirmed_wiring='independent')
                 self.assertEqual(recovered.output_states(), {1: False, 2: False, 3: False})
                 self.assertNotIn('CHAN:OUTP 1', fresh.cmds)
 

@@ -229,11 +229,22 @@ The probe does not enable outputs or set V/I. The actual instrument communicatio
 from keithley2231a import Keithley2231A, SerialTransport, Profile
 
 with Keithley2231A(SerialTransport('/dev/ttyUSB1')) as psu:
-    psu.apply_profile(Profile.from_json('examples/safe_3ch.json'))
+    psu.apply_profile(Profile.from_json('examples/safe_3ch.json'),
+                      confirmed_wiring='independent')
     psu.verify_profile()
     psu.set_channel(1, voltage=1.20, current=0.10)
     # Explicit human check of load/wiring required before psu.output(1, True)
 ```
+
+**Mandatory physical topology confirmation:** before calling `apply_profile()`
+for Independent **or Tracking**, verify that the CH1/CH2 terminals have no
+external Series/Parallel jumper wires, and pass `confirmed_wiring='independent'`.
+For Series/Parallel use the matching `confirmed_wiring='series'` or `'parallel'`
+only **after** manually inspecting the respective external connections with
+all PSU outputs OFF. Tokens are operator attestations; software cannot sense
+whether the jumper wires are actually present. Wrong or absent confirmation
+is rejected before any SCPI I/O. No topology change occurs automatically in
+physical wiring.
 
 `apply_profile` **immediately switches ALL outputs OFF** and rewrites configuration. Don't run while powering a device.
 
@@ -241,7 +252,7 @@ with Keithley2231A(SerialTransport('/dev/ttyUSB1')) as psu:
 
 ```python
 profile = Profile.unrestricted()       # CH1/2 ≤30 V/3 A, CH3 ≤5 V/3 A
-# psu.apply_profile(profile)           # intentionally OFF-first
+# psu.apply_profile(profile, confirmed_wiring='independent')           # intentionally OFF-first
 # psu.set_channel(1, voltage=12.0, current=1.0)
 ```
 
@@ -260,7 +271,7 @@ profile = Profile(
     ),
     power_sequence=(PowerStep(1, 0.0), PowerStep(2, 0.5)),
 )
-# psu.apply_profile(profile)  # all outputs OFF
+# psu.apply_profile(profile, confirmed_wiring='independent')  # all outputs OFF
 # psu.power_on()              # CH1, wait 0.5 s, CH2
 # psu.power_off()             # CH2, wait 0.5 s, CH1
 # set_channel(), timer(), arbitrary sequence() are forbidden while armed

@@ -160,7 +160,7 @@ def h05(transport, evidence, load):
                           verify_every_s=3600.0, access='power_only',
                           power_sequence=(PowerStep(1, 0.0), PowerStep(2, 1.0),
                                           PowerStep(3, 1.0)))
-        dev.apply_profile(profile)
+        dev.apply_profile(profile, confirmed_wiring='independent')
         evidence.add('profile', name=profile.name, access='power_only', wiring='independent',
                      per_channel={'max_voltage_v': 1.0, 'max_current_a': 0.1,
                                   'initial_voltage_v': 1.0, 'initial_current_a': 0.1},

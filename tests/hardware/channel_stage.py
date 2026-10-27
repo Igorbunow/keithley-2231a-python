@@ -178,7 +178,7 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False,
             initial_outputs = require_outputs(dev)
             evidence.add('connected_load_recovery_preflight', output_states=initial_outputs,
                          load_input='OFF', requires_all_outputs_off=True)
-        dev.apply_profile(profile())
+        dev.apply_profile(profile(), confirmed_wiring='independent')
         if not dev.armed or dev.faulted or dev.profile.wiring != 'independent':
             raise SafetyError('H03 profile not armed in independent mode')
         evidence.add('profile', name='H03 CV CC qualification',

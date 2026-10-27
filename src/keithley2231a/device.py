@@ -456,9 +456,14 @@ class Keithley2231A:
             pass
 
     def apply_profile(self, profile: Profile, *, confirmed_wiring: str | None = None) -> None:
-        """Arms profile with all outputs OFF. For series/parallel physical wires must
-        be manually confirmed EVERY time, e.g. confirmed_wiring='series'.
-        Always replaces an existing profile only after reconfiguring from outputs OFF.
+        """Arm a profile only after operator confirmation of physical topology.
+
+        ``confirmed_wiring='independent'`` means CH1/CH2 have NO external
+        Series or Parallel jumpers (also required for Tracking). This is a
+        *human assertion*, not a measurement of the actual cable arrangement.
+        Combined profiles require their respective explicit wiring token.
+        All confirmations are checked BEFORE SCPI I/O; profiles are applied
+        with outputs OFF and never turn outputs on automatically.
         """
         if isinstance(profile, SeriesProfile):
             self.apply_series_profile(profile, confirmed_wiring=confirmed_wiring)
@@ -467,10 +472,12 @@ class Keithley2231A:
             self.apply_parallel_profile(profile, confirmed_wiring=confirmed_wiring)
             return
         if not isinstance(profile, Profile): raise ProfileError('expected Profile, SeriesProfile or ParallelProfile')
-        if profile.wiring == 'parallel':
-            raise SafetyError('Use ParallelProfile for guarded parallel configuration')
-        if profile.wiring == 'series' and confirmed_wiring != profile.wiring:
-            raise SafetyError('Confirm physically installed CH1/CH2 wiring explicitly')
+        if profile.wiring not in ('independent', 'tracking'):
+            raise SafetyError('Use a topology-specific profile for Series/Parallel wiring')
+        if confirmed_wiring != 'independent':
+            raise SafetyError('Before applying Independent/Tracking, confirm CH1/CH2 '
+                              'have NO external Series/Parallel jumpers: '
+                              "confirmed_wiring='independent'")
         with self._lock:
             if self._armed:
                 raise SafetyError('Active profile immutable. Call emergency_off() before replacing it')
@@ -492,7 +499,8 @@ class Keithley2231A:
                     self._write('OUTP:PARALLEL 0')
                 if not self._off_confirmed():
                     self._trip('Output could not be switched OFF')
-                # When changing wiring, remove physical jumpers while outputs OFF.
+                # Operator must have confirmed the physical Series/Parallel
+                # jumpers were removed BEFORE this configuration began.
                 self._disable_combined_modes()
                 for ch, spec in enumerate(profile.channels, 1):
                     self._select(ch)

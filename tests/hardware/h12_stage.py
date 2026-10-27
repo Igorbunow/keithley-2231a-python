@@ -91,7 +91,7 @@ def h12(transport, evidence):
         for ch in (1, 2, 3):
             evidence.add('initial_channel', channel=ch,
                          settings=channel_snapshot(dev, ch, measured=True))
-        dev.apply_profile(safe_profile())
+        dev.apply_profile(safe_profile(), confirmed_wiring='independent')
         for label, operation in rejected_calls(dev):
             before = dev.debug_transport.commands
             try:

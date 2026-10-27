@@ -307,7 +307,7 @@ def h09_powered(transport, evidence, load, meter):
             'и удалите перемычку CH1−↔CH2+. Подтвердите, что на клеммах нет проводов.', io)
         evidence.add('operator_gate', token=FINAL_TOKEN, action='disconnect_series_wiring')
         dev.emergency_off()
-        dev.apply_profile(_safe_independent_profile())
+        dev.apply_profile(_safe_independent_profile(), confirmed_wiring='independent')
         require_outputs(dev)
         if load.input_state() != 'OFF':
             raise SafetyError('KEL103 did not remain OFF')

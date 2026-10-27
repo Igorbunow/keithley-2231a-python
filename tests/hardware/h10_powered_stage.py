@@ -298,7 +298,7 @@ def _run_parallel_powered(transport, evidence, load, meter, *, high_current):
                       'и CH1−/CH2−. Подтвердите пустые клеммы и отсутствие проводов.', io)
         evidence.add('operator_gate', token=FINAL_TOKEN, action='disconnect_parallel_wiring')
         dev.emergency_off()
-        dev.apply_profile(_safe_profile())
+        dev.apply_profile(_safe_profile(), confirmed_wiring='independent')
         require_outputs(dev)
         dev.diagnostic_write('SYST:LOC')
         outcome, reason = 'PASS', ('external Parallel 4 A CC point passed' if high_current else

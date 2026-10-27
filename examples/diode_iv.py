@@ -33,7 +33,7 @@ profile = Profile('diode-low-energy-example', (
     lock_front_panel=True)
 
 with Keithley2231A(SerialTransport(args.port, timeout=3)) as psu:
-    psu.apply_profile(profile)  # ALWAYS global OFF and reconfiguration
+    psu.apply_profile(profile, confirmed_wiring='independent')  # ALWAYS global OFF and reconfiguration
     points = voltage_sweep(psu, 1, voltages, current_limit_a=args.current_limit,
                            settle_s=.5, csv_path=args.csv)
 for point in points:

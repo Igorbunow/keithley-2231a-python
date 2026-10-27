@@ -6,7 +6,7 @@ profile = Profile.from_json(Path(__file__).with_name('safe_3ch.json'))
 
 with Keithley2231A(SerialTransport('/dev/ttyUSB1', timeout=3)) as dev:
     print(dev.identity())
-    dev.apply_profile(profile)
+    dev.apply_profile(profile, confirmed_wiring='independent')
     print('Profile loaded; outputs remain OFF')
     dev.verify_profile()
     print('Profile verified. SCPI error:', dev.error())
