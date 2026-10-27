@@ -28,7 +28,7 @@ def preflight(port, test_id='H09'):
     """Print the OFF-only scope without opening any instrument connection."""
     token, _ = tokens(test_id)
     mode = 'SER' if test_id == 'H09' else 'PARALLEL'
-    print(f'Keithley {port}, CP2102 10C4:EA60, USB–TTL 9600 8N1.\n'
+    print(f'Keithley {port}, CP2102 10C4:EA60, USB–TTL 8N1 (скорость из bench config).\n'
           f'{test_id}: только OFF-диагностика {mode}, БЕЗ силовой сборки.\n'
           'Все CH1/CH2/CH3 OFF; клеммы свободны; KEL103 INPUT OFF и отключена.\n'
           'DMM и осциллограф отключены; общей шины и перемычек нет; Output Recall=Off.\n'

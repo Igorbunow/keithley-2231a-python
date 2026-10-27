@@ -8,7 +8,7 @@ from unittest.mock import patch
 from test_driver import FakeTransport, profile
 from keithley2231a import (Profile, ChannelProfile, PowerStep, ProfileError,
                             LimitsError, Keithley2231A, SafetyError, voltage_sweep,
-                            BenchCoordinator, BenchStep, BenchAction)
+                            )
 
 
 def power_profile(steps=()):
@@ -145,30 +145,6 @@ class TestSweep(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'dmm failed'):
                 voltage_sweep(psu,1,[.2],current_limit_a=.02,
                               observer=lambda r: (_ for _ in ()).throw(RuntimeError('dmm failed')))
-        self.assertEqual(fake.flags['OUTP:STAT:ALL'],0)
-
-class Meter:
-    def measure(self):return {'V':1.25}
-
-class TestBench(unittest.TestCase):
-    def test_two_supplies_dmm(self):
-        one=FakeTransport(); two=FakeTransport()
-        a=Keithley2231A(one); b=Keithley2231A(two)
-        a.apply_profile(profile());b.apply_profile(profile())
-        session=BenchCoordinator({'a':a,'b':b},{'dmm':Meter()})
-        with patch('keithley2231a.bench.time.sleep'):
-            captures=session.run((BenchStep(0,(BenchAction('a','output',1,enabled=True),),True,'run'),))
-        self.assertEqual(captures[0].meter_readings['dmm']['V'],1.25)
-        self.assertEqual(set(captures[0].supply_readings),{'a','b'})
-        self.assertEqual(one.flags['OUTP:STAT:ALL'],0)
-        self.assertEqual(two.flags['OUTP:STAT:ALL'],0)
-
-    def test_bench_exception_forces_off(self):
-        fake=FakeTransport(); psu=Keithley2231A(fake);psu.apply_profile(profile())
-        bench=BenchCoordinator({'psu':psu})
-        with patch('keithley2231a.bench.time.sleep'):
-            with self.assertRaises(ValueError):
-                bench.run([BenchStep(0,(BenchAction('psu','bad'),))])
         self.assertEqual(fake.flags['OUTP:STAT:ALL'],0)
 
 if __name__=='__main__': unittest.main()

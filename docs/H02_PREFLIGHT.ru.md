@@ -137,7 +137,7 @@ python3 tools/hw_qualify.py run H02 --dry-run
 отдельного разрешения аппаратной группы:
 
 ```bash
-python3 tools/hw_qualify.py run H02 --execute --port /dev/ttyUSB3
+python3 tools/hw_qualify.py run H02 --execute --config config/bench.local.toml
 ```
 
 Точный токен перед открытием порта:

@@ -61,3 +61,7 @@ output/
 CODEX_*
 qualification_matrix_*
 !docs/hardware_reports/qualification_matrix_2026-10-25.md
+
+# Bench-local wiring, addresses and instrument metadata
+config/bench.local.toml
+config/bench.*.local.toml

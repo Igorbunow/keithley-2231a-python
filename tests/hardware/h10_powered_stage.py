@@ -14,39 +14,51 @@ import re
 import time
 
 from common import StageAdapter, operator_gate, require_outputs
+from bench_config import current_bench
 from keithley2231a import (ChannelProfile, Keithley2231A, ParallelProfile,
                            Profile, SafetyError)
 
-METER_HOST = '192.168.22.112'
-LOAD_PORT = '/dev/ttyACM0'
 FINAL_TOKEN = 'CONFIRM H10 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF DMM=DISCONNECTED NO_JUMPERS'
 
 
-def approval_token(meter_host=METER_HOST, load_serial_port=LOAD_PORT):
+def approval_token(meter_host=None, load_serial_port=None):
+    from bench_config import current_bench
+    bench = current_bench()
+    if meter_host is None: meter_host = bench.meter.host
+    if load_serial_port is None: load_serial_port = bench.load.port
     return (f'CONFIRM H10 POWERED PARALLEL ALL_OFF '
             f'JUMPERS=CH1+->CH2+_CH1-->CH2- LOAD=KEL103_USB={load_serial_port} '
-            f'CR=30,5 DMM7510={meter_host}:5025 FRONT=DCV10 CH3=OPEN RECALL=OFF '
+            f'CR=30,5 DMM7510={meter_host}:{current_bench().meter.network_port} FRONT=DCV10 CH3=OPEN RECALL=OFF '
             'CAP=4V_0.500A POWER<=1W')
 
 
-def high_current_approval_token(meter_host=METER_HOST, load_serial_port=LOAD_PORT):
+def high_current_approval_token(meter_host=None, load_serial_port=None):
+    from bench_config import current_bench
+    bench = current_bench()
+    if meter_host is None: meter_host = bench.meter.host
+    if load_serial_port is None: load_serial_port = bench.load.port
     return (f'CONFIRM H10 HIGH_CURRENT PARALLEL ALL_OFF '
             f'JUMPERS=CH1+->CH2+_CH1-->CH2-_10AWG '
             f'LOAD=KEL103_USB={load_serial_port} CR=0.50 LOAD_LEADS=10AWG '
-            f'DMM7510={meter_host}:5025 FRONT=DCV10 CH3=OPEN RECALL=OFF '
+            f'DMM7510={meter_host}:{current_bench().meter.network_port} FRONT=DCV10 CH3=OPEN RECALL=OFF '
             'V=3.00 I=4.00 ICAP=4.50 POWER<=10W')
 
 
-def preflight(port, meter_host=METER_HOST, load_serial_port=LOAD_PORT,
+def preflight(port, meter_host=None, load_serial_port=None,
               load_transport='serial', high_current=False):
+    from bench_config import current_bench
+    bench = current_bench()
+    if meter_host is None: meter_host = bench.meter.host
+    if load_serial_port is None: load_serial_port = bench.load.port
+    if load_transport is None: load_transport = bench.load.transport
     if load_transport != 'serial':
         print('H10 Powered requires the reviewed KEL103 USB link; no hardware accessed.')
         return
     if high_current:
         token = high_current_approval_token(meter_host, load_serial_port)
-        print(f'Keithley: {port}, USB–TTL 9600 8N1. KEL103 USB: {load_serial_port}, '
-              '115200 8N1. DMM7510: '
-              f'{meter_host}:5025 raw TCP, SCPI, front terminals, DCV 10 V, NPLC 1.\n'
+        print(f'Keithley: {port}, USB–TTL 8N1 (скорость из bench config). KEL103 USB: {load_serial_port}, '
+              '8N1 (скорость из bench config). DMM7510: '
+              f'{meter_host}:{current_bench().meter.network_port} raw TCP, SCPI, front terminals, DCV 10 V, NPLC 1.\n'
               'Высокотоковая точка H10, отдельный разрешённый прогон. До подключения: '
               'Keithley CH1/CH2/CH3 OFF, KEL103 INPUT OFF, Output Recall OFF; сетевой '
               'выключатель Keithley доступен. Осциллограф, общая шина и прежние перемычки сняты.\n'
@@ -64,9 +76,9 @@ def preflight(port, meter_host=METER_HOST, load_serial_port=LOAD_PORT,
               f'Финальное подтверждение всех OFF и пустых клемм:\n{FINAL_TOKEN}')
         return
     token = approval_token(meter_host, load_serial_port)
-    print(f'Keithley: {port}, USB–TTL 9600 8N1. KEL103 USB: {load_serial_port}, '
-          '115200 8N1. DMM7510: '
-          f'{meter_host}:5025 raw TCP, SCPI, front terminals, DCV 10 V, NPLC 1.\n'
+    print(f'Keithley: {port}, USB–TTL 8N1 (скорость из bench config). KEL103 USB: {load_serial_port}, '
+          '8N1 (скорость из bench config). DMM7510: '
+          f'{meter_host}:{current_bench().meter.network_port} raw TCP, SCPI, front terminals, DCV 10 V, NPLC 1.\n'
           'До начала: CH1/CH2/CH3 OFF; KEL103 INPUT OFF; Output Recall OFF; '
           'сетевой выключатель Keithley доступен. Осциллограф отключён, земли каналов '
           'и все прежние перемычки сняты.\n'
@@ -150,9 +162,7 @@ def _point(dev, load, meter, evidence, mode, resistance, current, *,
            voltage=3.00, max_power_w=1.00, current_tolerance_a=.03,
            expected_current_a=None, expected_voltage_v=None, regulation_mode=None):
     dev.set_channel(1, voltage=voltage, current=current)
-    configure_load = (load.configure_h10_high_current_cr if resistance == .5
-                      else load.configure_h10_cr)
-    if abs(configure_load(float(resistance)) - resistance) > .001:
+    if abs(load.configure_cr(float(resistance)) - resistance) > .001:
         raise SafetyError('KEL103 resistance readback mismatch')
     load.set_input(True)
     dev.combined_outputs(True, confirm_all_channels_safe=True)
@@ -227,7 +237,7 @@ def h10_high_current(transport, evidence, load, meter):
 
 def _run_parallel_powered(transport, evidence, load, meter, *, high_current):
     token_builder = high_current_approval_token if high_current else approval_token
-    token = token_builder(load_serial_port=getattr(load, 'port', LOAD_PORT))
+    token = token_builder(load_serial_port=getattr(load, 'port', None))
     dev = Keithley2231A(transport, debug=True,
                        debug_trace=lambda record: evidence.add('driver_trace', trace=record),
                        debug_adapter=lambda channel: H10PoweredScope(channel, evidence))

@@ -1,0 +1,39 @@
+# One source of bench connection settings; copy to bench.local.toml and verify.
+# Historical values are examples, not proof of a currently connected instrument.
+# All hardware execution requires a separate operator gate.
+
+[devices.psu]
+model = "2231A-30-3"
+transport = "serial"
+port = "/dev/ttyUSB1"
+baudrate = 9600
+timeout_s = 2.0
+usb_vid = "10C4"
+usb_pid = "EA60"
+
+[devices.load]
+model = "KEL103"
+transport = "serial"
+port = "/dev/ttyACM0"
+baudrate = 115200
+timeout_s = 1.5
+usb_vid = "0416"
+usb_pid = "5011"
+# Optional alternative, change transport to "udp" explicitly, never fall back:
+host = "192.168.22.106"
+network_port = 18190
+
+[devices.meter]
+model = "DMM7510"
+transport = "tcp"
+host = "192.168.22.112"
+network_port = 5025
+timeout_s = 5.0
+terminator = "\n"
+
+[devices.scope]
+model = "TDS3064B"
+transport = "escope_http"
+host = "192.168.22.105"
+network_port = 80
+timeout_s = 10.0

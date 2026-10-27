@@ -39,7 +39,7 @@ Parallel. Силовые соединения отсутствуют. Бюдже
 связи. При неопределённом состоянии выключить Keithley сетевым выключателем.
 
 ```bash
-PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H10 --port /dev/ttyUSB3
+PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H10 --config config/bench.local.toml
 ```
 
 OFF-команда выполнена и записана в отчёте ниже. Для следующей, силовой подгруппы
@@ -125,7 +125,7 @@ INPUT OFF; runner сам сверит и включит/выключит наг�
 Dry preflight не открывает порты:
 
 ```bash
-PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H10 --high-current --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0 --meter-host 192.168.22.112
+PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H10 --high-current --config config/bench.local.toml
 ```
 
 После проверки схемы токен печатается одной строкой. Запуск возможен только с
@@ -133,7 +133,7 @@ PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H10 --high-c
 DMM и снятых перемычек:
 
 ```bash
-PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py run H10 --high-current --execute --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0 --meter-host 192.168.22.112
+PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py run H10 --high-current --execute --config config/bench.local.toml
 ```
 
 ### Результат H10 high-current — 2026-10-27
@@ -150,7 +150,7 @@ Keithley 2,04811–2,04896 В / 3,99916–3,99953 А (CC); KEL103 1,9982 В /
 Dry preflight, порт не открывается:
 
 ```bash
-PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H10 --powered --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0 --meter-host 192.168.22.112
+PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H10 --powered --config config/bench.local.toml
 ```
 
 Точный токен для будущего запуска печатается runner-ом; его пока не вводить.

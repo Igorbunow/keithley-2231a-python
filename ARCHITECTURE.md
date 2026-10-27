@@ -4,40 +4,32 @@
 
 ## Goals and boundaries
 
-The library provides a **guarded, testable Python API for a single Keithley 2231A-30-3** with optional host-side orchestration of multiple units and non-Keithley meters. The design separates the command transport, SCPI protocol and safety semantics, measurement processing, and experiment orchestration. Do **not** assume that profile enforcement, serial communication or the front-panel lock is a hardware safety function.
+The library provides a **guarded, testable Python API for a single Keithley 2231A-30-3** without embedding a general-purpose multi-instrument automation framework. The design separates transport, SCPI protocol, safety semantics and measurement processing. Do **not** assume that profile enforcement, serial communication or the front-panel lock is a hardware safety function.
 
 ### Layer diagram
 
 ```text
-            User code / CLI examples / lab experiment
-                              |
-           +------------------+-------------------+
-           |                                      |
-       BenchCoordinator                      voltage_sweep()
-      (timed actions, DMMs)                  (IV curve steps)
-           |                                      |
-           +------------------+-------------------+
-                              |
-                      Keithley2231A
-           (SCPI, selected channel, guarded commands)
-                              |
-                immutable Profile + PowerStep
-           (rated limits / restrictions / mode checks)
-                              |
-               Transport protocol (write/query)
-                    /                    \
-           SerialTransport            TcpTransport
-              9600 8N1          transparent TCP-UART only
-                    \                    /
-                     instrument physical UART
-                              |
-                 external output wiring & DUT
+              User code / CLI / single-source sweep
+                             |
+          Keithley2231A / voltage_sweep / Acquisition
+                             |
+                 immutable Profile + PowerStep
+                             |
+                guarded SCPI command path
+                             |
+               Transport (UART / raw TCP)
+                             |
+                  Keithley 2231A-30-3
+                             |
+                   wiring / DUT
 
-  Acquisition (CSV, Welford stats, trapezoidal Ah/Wh) reads Keithley2231A
-  External DMMs implement Meter.measure() in the application/adapter layer
+  Qualification only (tests/hardware/, not installed library):
+     bench.local.toml -> equipment factory -> H01-H12 stages
+                         |                     |
+                 Keithley public API   KEL103 / DMM7510 / TDS3064
 ```
 
-**Important:** `BenchCoordinator` is a *software scheduler*. It does not make sequential UART operations simultaneous or hard real-time; actual trigger distribution and clock synchronization are future adapters with explicit capability declarations.
+**Important:** Multiple-instrument control and hardware synchronization belong to a future separate project. Sequential measurements and host timestamps are not synchronized hardware capture.
 
 ## Module map
 
@@ -48,7 +40,8 @@ The library provides a **guarded, testable Python API for a single Keithley 2231
 | `device.py` | `Keithley2231A`, SCPI mapping, outputs, timers, monitoring interlocks, profile verification | All mutating guarded commands require an armed profile |
 | `monitor.py` | `Acquisition`, per-channel stats, CSV, temporal energy integration | Samples are sequential, not synchronized |
 | `sweep.py` | Voltage stepping, settled readings, meter callbacks, CSV and final OFF | No battery discharge, negative current, precision SMU or hardware triggering |
-| `bench.py` | Multiple PSU wrappers, generic `Meter` protocol, actions and host-timed snapshots | No claim of hard synchronization, independent power cutoffs |
+| `tests/hardware/bench_config.py` | One validated TOML configuration for all equipment | No SCPI commands or direct instrument access |
+| `tests/hardware/equipment/` | Test-only KEL103, DMM7510 and TDS3064B adapters | Not part of the published Keithley package |
 | `examples/` | Read-only probe and opt-in lab recipes | Outputs only with explicit operator action |
 | `tests/` | Fake SCPI emulator, CPU-only tests | Passing tests do **not** prove physical hardware behaviour |
 | `docs/VERIFICATION.md` | Evidence-based qualification tracking | No fake hardware green status |
@@ -85,12 +78,7 @@ Faulted (attempt global OFF, command delivery NOT guaranteed)
 
 **Each physical instrument must have exactly one command owner.** A transparent MCU TCP bridge should accept only one control client, otherwise independent SCPI commands can interleave and change the selected channel. `Keithley2231A` uses a reentrant lock around device operations, but two independent processes or two library instances are not mutually locked. Device-side writer ownership and lease expiry belong to the Ethernet bridge.
 
-`BenchCoordinator` currently executes steps in order and reads supplies/meters sequentially. Monotonic timestamps facilitate alignment of slow DC curves; the timestamps are not hardware timestamps from instruments. To achieve tighter synchronization later, introduce optional abstractions:
-
-1. `TriggerCapable` with `prepare()`, `arm()`, `trigger()` and explicit latency/error bounds;
-2. `ClockSource` with declared timestamp domain, accuracy and sync mechanism;
-3. `DigitalTriggerLine` / isolated hardware fan-out or PSU-specific SCPI `*TRG` adapter after hardware testing;
-4. `Capability` and `VerificationEvidence` fields per driver/firmware/feature.
+Coordinating multiple power supplies or DMMs, distributing triggers and synchronizing clocks are out of scope for this library. A future independent automation project should define `TriggerCapable`, clock domain declarations, bounded trigger latency and per-instrument capability/evidence contracts. Hardware qualification stages use test-only adapters, not a general bench automation framework.
 
 Do **not** silently call `*TRG` in a generic coordinator: it can alter configured outputs and must be part of a qualified, profile-checked action.
 
@@ -98,7 +86,7 @@ Do **not** silently call `*TRG` in a generic coordinator: it can alter configure
 
 `voltage_sweep` requires other PSU channels OFF, uses one source channel to apply a DC step and then reads `MEAS:VOLT?` and `MEAS:CURR?`. External DMM readings can be attached through an observer callback (CSV columns are keyed by meter reading names). This enables diode I–V, resistor verification and transistor curves with additional bias sources, but all wiring and current limiting remain the experiment author's responsibility. The supply cannot sink current; its one-milliamp readback resolution is inadequate for microamp diode leakage curves.
 
-For several PSUs and DMMs use the `BenchCoordinator`. It accepts multiple units, action sequences and custom meters; all channel commands still pass through each unit's active profile. Cross-device energy/current measurements must respect non-simultaneous sample times.
+For multi-supply experiments, use independent instrument libraries and a future standalone coordinator. This library intentionally does not ship a multi-instrument coordinator.
 
 ## Transport faults and future MCU bridge
 
@@ -134,3 +122,26 @@ All qualification scopes inherit `StageAdapter` in `tests/hardware/common.py`.
 They define command limits, permitted values and operator-authorized channels;
 they do not implement SCPI initialization or copy driver command sequences.
 Common output-state, snapshot and operator-gate checks are reused across stages.
+
+
+## R1 — Qualification infrastructure boundaries
+
+The shipping `src/keithley2231a/` package contains no test-equipment
+drivers. Hardware stages only use the public Keithley driver. All physical
+connections originate in a single validated `config/bench.local.toml` via
+`bench_config.py` and `equipment/factory.py`. KEL103 transport codecs do
+not duplicate the higher-level device policy: `_KEL103Core` implements one
+command/error/evidence/readback path for serial and UDP. The e*Scope and
+DMM7510 adapters live in `tests/hardware/equipment` and can later be
+moved into independent instrument projects. There are no old transport aliases.
+
+The stage-specific approved *test points* and allow-listed PSU SCPI
+operations remain part of the corresponding qualification stage; they
+are safety-reviewed scenario definitions, not transport configuration.
+They cannot be overridden at runtime without updating the stage and
+its qualification evidence.
+
+
+The former vendor-specific `BenchCoordinator` was removed as out of scope.
+Multi-instrument orchestration will be developed as an independent project
+after its component device drivers have matured.

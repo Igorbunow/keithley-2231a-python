@@ -49,7 +49,7 @@ class RecallScope(StageAdapter):
 
 def preflight(port):
     """Describe the separate Recall subgroup without opening a port."""
-    print(f'Output Recall H06: Keithley {port}, 9600 8N1; все выходные клеммы свободны.\n'
+    print(f'Output Recall H06: Keithley {port}, 8N1 (скорость из bench config); все выходные клеммы свободны.\n'
           'KEL103 физически отключена, INPUT OFF; режим нагрузки не используется. '
           'Осциллограф, общая шина и перемычки сняты. Independent, все выходы OFF.\n'
           'User Settings: Save Last ON; Output Recall будет вручную OFF/ON по точкам.\n'

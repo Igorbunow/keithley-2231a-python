@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from bench_config import current_bench
+
 import csv
 from dataclasses import asdict
 import hashlib
@@ -30,10 +32,12 @@ CHANNELS = {1: (4.00, .300, 4.00, .150),
 FINAL_TOKEN = 'CONFIRM H07 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
 
 
-def approval_token(load_serial_port='/dev/ttyACM0'):
+def approval_token(load_serial_port=None):
     """Authorize one three-minute pass with a physically disconnected load at entry."""
+    if load_serial_port is None:
+        load_serial_port = current_bench().load.port
     return (f'CONFIRM H07 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED '
-            f'USB={load_serial_port} BAUD=115200 CH1=V4.00_I0.150 '
+            f'USB={load_serial_port} BAUD={current_bench().load.baudrate} CH1=V4.00_I0.150 '
             'CH2=V1.50_I0.200 CH3=V2.00_I0.300 CR=40OHM DURATION=180S RECALL=OFF')
 
 

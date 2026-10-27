@@ -15,30 +15,38 @@ import re
 import time
 
 from common import StageAdapter, operator_gate, require_outputs
+from bench_config import current_bench
 from keithley2231a import (ChannelProfile, Keithley2231A, Profile, SafetyError,
                            SeriesProfile)
 
-METER_HOST = '192.168.22.112'
-LOAD_PORT = '/dev/ttyACM0'
 FINAL_TOKEN = 'CONFIRM H09 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF DMM=DISCONNECTED NO_JUMPERS'
 MEASUREMENT_ROUNDS = 6
 STABLE_PAIRS_REQUIRED = 2
 
 
-def approval_token(meter_host=METER_HOST, load_serial_port=LOAD_PORT):
+def approval_token(meter_host=None, load_serial_port=None):
+    from bench_config import current_bench
+    bench = current_bench()
+    if meter_host is None: meter_host = bench.meter.host
+    if load_serial_port is None: load_serial_port = bench.load.port
     return (f'CONFIRM H09 POWERED SERIES40 ALL_OFF JUMPER=CH1-->CH2+ '
             f'LOAD=KEL103_USB={load_serial_port} CR=40,12,2000,1600 '
-            f'DMM7510={meter_host}:5025 FRONT=DCV100 CH3=OPEN_ZERO_VOLTAGE '
+            f'DMM7510={meter_host}:{current_bench().meter.network_port} FRONT=DCV100 CH3=OPEN_ZERO_VOLTAGE '
             'RECALL=OFF CAP=40V_25MA_POWER=1W')
 
 
-def preflight(port, args_meter_host=METER_HOST, load_transport='serial',
-              load_serial_port=LOAD_PORT):
+def preflight(port, args_meter_host=None, load_transport=None,
+              load_serial_port=None):
+    from bench_config import current_bench
+    bench = current_bench()
+    if args_meter_host is None: args_meter_host = bench.meter.host
+    if load_serial_port is None: load_serial_port = bench.load.port
+    if load_transport is None: load_transport = bench.load.transport
     if load_transport != 'serial':
         raise ValueError('H09 powered qualification currently requires the reviewed KEL103 USB link')
-    print(f'Keithley {port}: USB–TTL 9600 8N1, оператором подтверждённый CP2102 10C4:EA60.\n'
-          f'KEL103: USB {load_serial_port}, 115200 8N1, INPUT OFF. '
-          f'DMM7510: {args_meter_host}:5025 raw TCP, SCPI, FRONT DCV 100 V/NPLC 1.\n'
+    print(f'Keithley {port}: USB–TTL 8N1 (скорость из bench config), оператором подтверждённый CP2102 10C4:EA60.\n'
+          f'KEL103: USB {load_serial_port}, 8N1 (скорость из bench config), INPUT OFF. '
+          f'DMM7510: {args_meter_host}:{current_bench().meter.network_port} raw TCP, SCPI, FRONT DCV 100 V/NPLC 1.\n'
           'Все выходы OFF; Output Recall=Off; сетевой выключатель Keithley доступен.\n'
           'Подключение выполняется только при PSU и KEL INPUT OFF: короткой изолированной '
           'перемычкой соединить Keithley CH1− с CH2+ (внешняя последовательная схема).\n'
@@ -129,7 +137,7 @@ def _safe_independent_profile():
 
 def _point(dev, load, meter, evidence, mode, resistance, voltage, current):
     dev.set_channel(1, voltage=voltage, current=current)
-    actual_r = load.configure_h09_cr(float(resistance))
+    actual_r = load.configure_cr(float(resistance))
     if abs(actual_r - resistance) > .001:
         raise SafetyError('KEL103 resistance readback mismatch')
     load.set_input(True)
@@ -244,7 +252,7 @@ def h09_powered(transport, evidence, load, meter):
         if load.input_state() != 'OFF':
             raise SafetyError('KEL103 INPUT must be OFF before H09 setup')
         meter.configure_voltage(range_v=100)
-        token = approval_token(load_serial_port=getattr(load, 'port', LOAD_PORT))
+        token = approval_token(load_serial_port=getattr(load, 'port', None))
         evidence.add('powered_stage_authorization', token=token,
                      source='interactive qualification gate before any instrument port opened')
         io.powered_gate = True

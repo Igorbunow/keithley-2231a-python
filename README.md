@@ -3,11 +3,11 @@
 [**English**](README.md) | [**Русский**](docs/README.ru.md)
 
 **Python control library for the Keithley 2231A-30-3 three-channel DC power supply.**
-Provides SCPI over USB–TTL UART, optional transparent TCP–UART bridges, immutable safety profiles, per-channel sequencing, measurement logs/statistics, DC voltage sweeps (including I–V curves), and extensible multi-instrument lab orchestration.
+Provides SCPI over USB–TTL UART, optional transparent TCP–UART bridges, immutable safety profiles, per-channel sequencing, measurement logs/statistics, DC voltage sweeps (including I–V curves).
 
 > **Experimental software / hardware qualification in progress.** A successful simulator/CI run does not validate an output command on a real instrument. Physical qualification records list the instrument's menu firmware as Main 1.04 / Aux 0.01; raw `*IDN?` revision fields have returned both `1.04-1.04` and `1.04-0.01`. Firmware is reported and recorded, not hard-coded as an API compatibility gate. See [verification matrix](docs/VERIFICATION.md) before powering a DUT. This is NOT a safety-rated protection system.
 
-**Version:** 0.2.0 · **Python:** 3.10+ · **License:** [MIT](LICENSE) · **Manufacturer affiliation:** none (independent community project).
+**Version:** 0.2.1.dev0 · **Python:** 3.10+ · **License:** [MIT](LICENSE) · **Manufacturer affiliation:** none (independent community project).
 
 ## Why this library?
 
@@ -16,7 +16,7 @@ Provides SCPI over USB–TTL UART, optional transparent TCP–UART bridges, immu
 - **Conservative profiles:** per-channel V/I bounds, hardware voltage limit setting, output-off-first profile arming, optional CV/CC expectation and periodic integrity checks.
 - **Full-rated-range profile:** `Profile.unrestricted()` allows all **rated** V/I settings, without extra user-specific reduced caps; it is **not** a raw SCPI bypass or permission to exceed instrument ratings.
 - **Power-only profile:** output levels and topology are frozen; operators may switch power on/off. Fixed `power_sequence` enables channels in order and disables in reverse. No arbitrary channel toggles when a sequence is specified.
-- **Measurement and automation:** per-channel CSV logs, min/max/mean/population σ, Ah/Wh integration; guarded voltage sweeps with optional DMM callback; multiple PSUs and meters via host-side scheduler.
+- **Measurement and automation:** per-channel CSV logs, min/max/mean/population σ, Ah/Wh integration; guarded voltage sweeps with optional DMM callback; optional external readings via an observer callback.
 - **Replaceable transports:** UART `SerialTransport('/dev/ttyUSB1')`, future MCU bridge `TcpTransport('psu-lab.local', 5025)`; TCP is a transparent UART tunnel, **not native Ethernet, VISA or VXI-11**.
 
 ## Hardware and safety first
@@ -271,11 +271,14 @@ from keithley2231a import voltage_sweep
 #                        csv_path='runs/iv.csv')
 ```
 
-Uncomment only after validating the test circuit and the external meter API. The source is stepped in DC voltage; PSU current and voltage are acquired sequentially. **It is not an SMU or high-speed curve tracer.** `voltage_sweep()` requires other channels OFF and attempts global OFF in `finally`, even after successful completion. For powered bias sources, use the multi-instrument coordinator instead. For diodes include a **series resistor** and measure DUT voltage directly with a DMM or estimate `Vdiode ≈ Vpsu − I·R` (lead drops ignored).
+Uncomment only after validating the test circuit and the external meter API. The source is stepped in DC voltage; PSU current and voltage are acquired sequentially. **It is not an SMU or high-speed curve tracer.** `voltage_sweep()` requires other channels OFF and attempts global OFF in `finally`, even after successful completion. For powered bias sources, use a separately designed multi-instrument orchestrator instead. For diodes include a **series resistor** and measure DUT voltage directly with a DMM or estimate `Vdiode ≈ Vpsu − I·R` (lead drops ignored).
 
-### Many PSUs and other makers' instruments
+### Future multi-instrument automation
 
-Use `BenchCoordinator({'psu-a': first, 'psu-b': second}, {'dmm': adapter})` with any external meter implementing `measure() -> dict[str, float]`; `BenchStep` / `BenchAction` automate settings and capture. Every reading carries timestamps, but **software coordination cannot provide true simultaneous switching or synchronous sampling**. External trigger adapters/hardware timing are a future extension. See [recipes](docs/RECIPES.md).
+Orchestration of multiple independent sources, DMMs and oscilloscopes will live
+in a separate repository built on each instrument's own driver. The present
+Keithley package intentionally does **not** provide a `BenchCoordinator` or
+require vendor-specific external-instrument packages.
 
 ### UART vs future Ethernet bridge
 
@@ -314,3 +317,27 @@ Do not merge hardware verification claims based solely on CI green status. Hardw
 Original code and documentation are MIT-licensed; see [LICENSE](LICENSE). Third-party dependencies retain their own terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Keithley and Tektronix are trademarks of their respective owners. **This is an independent, unofficial library**, not approved, supported or warranted by either manufacturer.
 
 Contributions and hardware test results welcome: [CONTRIBUTING.md](CONTRIBUTING.md).
+
+
+## Qualification bench (single configuration source)
+
+Hardware qualification is **not** run by the library's normal unit tests. Its one
+configuration file defines PSU, load, multimeter and oscilloscope connections.
+There are no separate CLI flags for individual serial ports or instrument hosts.
+
+```bash
+cp config/bench.example.toml config/bench.local.toml
+# Edit and physically verify the connections in config/bench.local.toml
+python tools/hw_qualify.py preflight H01 --config config/bench.local.toml
+# Only after an operator reviews the card and wiring:
+python tools/hw_qualify.py run H01 --config config/bench.local.toml --execute
+```
+
+`bench.local.toml` is ignored by Git. The runner prints the effective settings and
+records a configuration SHA-256 in evidence. `preflight` never opens instruments.
+Connecting, energizing outputs or moving leads always requires the operator gates.
+Historical H01–H12 evidence refers to its original implementation revision and
+**does not automatically verify this refactored revision**.
+
+See [R1 infrastructure notes](docs/R1_INFRASTRUCTURE.md) and its
+[Russian translation](docs/R1_INFRASTRUCTURE.ru.md).

@@ -53,29 +53,12 @@ from keithley2231a import voltage_sweep
 
 No reverse-bias, negative current or two-quadrant sink capability exists. The expression above neglects wiring drop, DUT temperature and resistor tolerance; best practice: connect an external DMM directly across diode and put it in an observer callback. `voltage_sweep` causes global OFF on exit, and leaves the session disarmed. Check other channels are not powering unrelated loads before starting.
 
-## Bias experiments with multiple channels / PSUs
+## Multi-instrument experiments (future standalone project)
 
-```python
-from keithley2231a import BenchCoordinator, BenchStep, BenchAction
-
-# first and second are Keithley2231A objects with safe, armed profiles.
-# meter_adapter defines measure() -> dict[str, float], and can wrap any DMM.
-bench = BenchCoordinator({'source_a': first, 'source_b': second},
-                         {'dmm': meter_adapter})
-steps = (
-    BenchStep(0, (BenchAction('source_a', 'set', channel=1, voltage=1.0),),
-              capture=True, label='base'),
-    BenchStep(1.0, (BenchAction('source_b', 'set', channel=1, voltage=2.0),),
-              capture=True, label='biased'),
-)
-# captures = bench.run(steps)  # OFFs all supplies after completion by default
-```
-
-Callers can implement loops over several channel setpoints (transistor curves, sensor calibration or power-rail optimization) while sampling a DMM. Because each `set_channel()` is profile-checked, `power_only` devices reject `set` actions. To switch a `power_only` PSU use `BenchAction('source_a', 'power_on')` / `power_off`.
-
-### Timing/synchronization warning
-
-`BenchCoordinator` timestamps its actions/measurements and runs them **sequentially on the host**. It does **not** provide exact simultaneous operation, sub-ms timing or SCPI hardware triggers. Deterministic synchronization of DMMs, oscilloscopes and multiple supplies requires adapters with real hardware trigger wiring or PTP/shared clock and device-specific characterization. The instrument's `*TRG` capability is not yet qualified by this library.
+Each driver will evolve independently. A future lab orchestrator can call its
+public high-level interface and discover supported capabilities; there is no
+`BenchCoordinator` or multi-vendor scheduler inside this library. The local
+`voltage_sweep()` observer callback remains available for external DMM readings.
 
 ## Future Ethernet adapter requirements
 

@@ -35,7 +35,7 @@ Runner сверит монотонность I–V, показания KEL103, C
 Команда только готовит карточку, не обращается к приборам:
 
 ```sh
-PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H11 --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0
+PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H11 --config config/bench.local.toml
 ```
 
 ## Допуски

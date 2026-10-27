@@ -17,20 +17,25 @@ import time
 from common import StageAdapter, channel_snapshot, operator_gate, require_outputs
 from keithley2231a import ChannelProfile, Keithley2231A, LimitsError, Profile, SafetyError
 
-METER_HOST = '192.168.22.112'
 FINAL_TOKEN = 'CONFIRM H08 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF DMM=DISCONNECTED'
 
 
-def approval_token(host=METER_HOST):
+def approval_token(host=None):
+    from bench_config import current_bench
+    bench = current_bench()
+    if host is None: host = bench.meter.host
     return (f'CONFIRM H08 TRACKING ALL_OFF LOAD=DISCONNECTED SCOPE=DISCONNECTED '
-            f'NO_JUMPERS DMM7510={host}:5025 DMM_LEADS=DISCONNECTED FRONT=DCV10 NPLC=1 '
+            f'NO_JUMPERS DMM7510={host}:{current_bench().meter.network_port} DMM_LEADS=DISCONNECTED FRONT=DCV10 NPLC=1 '
             'RATIOS=1:1,1:2 VCAP=2.00,3.00,4.00 ICAP=0.300,0.400,0.500 RECALL=OFF')
 
 
-def preflight(port, host=METER_HOST):
+def preflight(port, host=None):
+    from bench_config import current_bench
+    bench = current_bench()
+    if host is None: host = bench.meter.host
     """Display the complete planned wiring and command scope without any I/O."""
-    print(f'Keithley {port}: проверенный CP2102 10C4:EA60, USB–TTL 9600 8N1.\n'
-          f'DMM7510 {host}:5025 raw TCP, SCPI (не TSP), FRONT INPUT HI/LO, DCV 10 V, NPLC=1.\n'
+    print(f'Keithley {port}: проверенный CP2102 10C4:EA60, USB–TTL 8N1 (скорость из bench config).\n'
+          f'DMM7510 {host}:{current_bench().meter.network_port} raw TCP, SCPI (не TSP), FRONT INPUT HI/LO, DCV 10 V, NPLC=1.\n'
           'Начало: все три выхода OFF; KEL103 INPUT OFF, силовые провода и щупы DMM отключены.\n'
           'Осциллограф отключён; общей шины, перемычек и DUT нет; Output Recall=Off.\n'
           'После CONNECT gate: красный FRONT INPUT HI DMM к CH1+, чёрный INPUT LO к CH1−.\n'

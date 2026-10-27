@@ -80,13 +80,13 @@ Runner задаёт и вычитывает значения при выключ
 Offline preflight не открывает порты:
 
 ~~~sh
-python3 tools/hw_qualify.py preflight H06 --recall --port /dev/ttyUSB3
+python3 tools/hw_qualify.py preflight H06 --recall --config config/bench.local.toml
 ~~~
 
 Выполняемый запуск после разрешения оператора:
 
 ~~~sh
-python3 tools/hw_qualify.py run H06 --recall --execute --port /dev/ttyUSB3
+python3 tools/hw_qualify.py run H06 --recall --execute --config config/bench.local.toml
 ~~~
 
 Начальное подтверждение — только при выключенных выходах, свободных клеммах,

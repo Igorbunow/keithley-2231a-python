@@ -59,7 +59,7 @@ CLI по умолчанию не открывает приборы. При за�
 (последний известный — `/dev/ttyUSB3`) и явно выбрать KEL103 USB:
 
 ```sh
-python3 tools/hw_qualify.py run H05 --execute --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0
+python3 tools/hw_qualify.py run H05 --execute --config config/bench.local.toml
 ```
 
 Перед открытием портов CLI запросит этот точный powered-токен. После завершения

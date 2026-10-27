@@ -33,7 +33,7 @@ SCPI-запроса, затем проверит очередь ошибок и 
 задаст DCV, диапазон 10 V, AUTO input impedance, NPLC=1, autozero ON, averaging OFF;
 проверит функцию/диапазон/NPLC и будет получать свежие `READ?`. Команды/ответы и
 firmware DMM записываются отдельно от PSU firmware; serial обоих приборов
-редактируются. Адаптер в `tests/hardware/dmm7510.py` реализует существующий
+редактируются. Адаптер в `tests/hardware/equipment/dmm7510.py` реализует существующий
 `Meter.measure()`; SCPI источника остаются в драйвере источника.
 
 После OFF/readback отдельный MOVE gate разрешает перенос обоих щупов на CH2:
@@ -112,7 +112,7 @@ StageAdapter с бюджетом, allow-list и `SYST:ERR?`; прямой дос
 ## Запуск
 
 ```bash
-PYTHONPATH=src python3 tools/hw_qualify.py preflight H08 --port /dev/ttyUSB3 --meter-host 192.168.22.112
+PYTHONPATH=src python3 tools/hw_qualify.py preflight H08 --config config/bench.local.toml
 PYTHONPATH=src python3 -m unittest discover -s tests -q
 ```
 

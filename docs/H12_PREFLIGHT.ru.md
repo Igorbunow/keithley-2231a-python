@@ -43,7 +43,7 @@ OFF. Отказ связи при моделируемом ON запрещает
 Карточка без доступа к приборам:
 
 ```sh
-PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H12 --port /dev/ttyUSB3
+PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H12 --config config/bench.local.toml
 ```
 
 Разрешение одного аппаратного прохода:

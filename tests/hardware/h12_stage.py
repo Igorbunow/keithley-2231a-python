@@ -58,7 +58,7 @@ class H12Scope(StageAdapter):
 
 def preflight(port):
     """Describe the physical phase without opening any instrument."""
-    print(f'Keithley: {port}, USB–TTL 9600 8N1. Все выходы OFF.\n'
+    print(f'Keithley: {port}, USB–TTL 8N1 (скорость из bench config). Все выходы OFF.\n'
           'Клеммы CH1/CH2/CH3 свободны: нагрузка, DMM, осциллограф, перемычки '
           'и общая шина отключены. KEL103 INPUT OFF; режим/значение не задавать.\n'
           'Output Recall=Off проверить на панели; сетевой выключатель доступен.\n'

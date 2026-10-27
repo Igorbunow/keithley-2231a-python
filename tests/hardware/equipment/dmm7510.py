@@ -48,22 +48,26 @@ class DMM7510:
             self.live, self.configured = False, False
             raise
 
+    def identify(self):
+        """Read-only identity and command-language probe, shared with setup."""
+        identity = self._transfer('*IDN?', query=True)
+        parts = [part.strip() for part in identity.split(',')]
+        if (len(parts) != 4 or 'KEITHLEY' not in parts[0].upper()
+                or parts[1].upper() not in ('MODEL DMM7510', 'DMM7510')):
+            raise ValueError('Unexpected DMM7510 identity')
+        language = self._transfer('*LANG?', query=True).strip().strip('"').upper()
+        self.evidence.add('dmm7510_command_set', language=language)
+        if language != 'SCPI':
+            raise ValueError(f'DMM7510 command set is {language}; select SCPI and reboot')
+        return identity
+
     def configure_voltage(self, range_v=10):
         """Identify before reset; select and verify a supported 10 V or 100 V range."""
         if type(range_v) is not int or range_v not in (10, 100):
             raise ValueError('DMM7510 DC voltage range must be 10 or 100 V')
         try:
-            identity = self._transfer('*IDN?', query=True)
+            identity = self.identify()
             parts = [part.strip() for part in identity.split(',')]
-            if (len(parts) != 4 or 'KEITHLEY' not in parts[0].upper()
-                    or parts[1].upper() not in ('MODEL DMM7510', 'DMM7510')):
-                raise ValueError('Unexpected DMM7510 identity')
-            # Both common queries work in TSP. No language-specific error query
-            # is safe until the documented command-set query confirms SCPI.
-            language = self._transfer('*LANG?', query=True).strip().strip('"').upper()
-            self.evidence.add('dmm7510_command_set', language=language)
-            if language != 'SCPI':
-                raise ValueError(f'DMM7510 command set is {language}; select SCPI and reboot')
             self._scpi_ready = True
             self._check_error('SCPI command-set verification')
             if self._transfer(':ROUT:TERM?', query=True).strip().upper() not in ('FRON', 'FRONT'):

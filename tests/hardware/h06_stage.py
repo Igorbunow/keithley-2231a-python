@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from bench_config import current_bench
+
 import math
 import re
 import time
@@ -25,10 +27,12 @@ CHANNELS = {
 FINAL_TOKEN = 'CONFIRM H06 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
 
 
-def approval_token(load_serial_port='/dev/ttyACM0'):
+def approval_token(load_serial_port=None):
     """Bind the one powered H06 pass to the explicit electronic-load USB port."""
+    if load_serial_port is None:
+        load_serial_port = current_bench().load.port
     return (f'CONFIRM H06 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED '
-            f'USB={load_serial_port} BAUD=115200 '
+            f'USB={load_serial_port} BAUD={current_bench().load.baudrate} '
             'CH1=V1.00_I0.100 CH2=V1.50_I0.200 CH3=V2.00_I0.300 '
             'TIMER=3.0S CR=22OHM RECALL=OFF')
 
@@ -159,7 +163,7 @@ def h06(transport, evidence, load):
             evidence.add('operator_gate', token=token, channel=channel,
                          action='connect' if channel == 1 else 'move',
                          load='KEL103 CR 22 ohm', outputs='OFF')
-            load.configure_h04p_cr(22.0)
+            load.configure_cr(22.0)
             dev.timer(channel, TIMER_S)
             if load.input_state() != 'OFF':
                 raise SafetyError('KEL103 INPUT must be OFF before output timer test')

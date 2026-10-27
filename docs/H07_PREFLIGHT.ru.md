@@ -64,7 +64,7 @@ SCPI разрешены только для профиля, поканальны
 Dry run не открывает порты:
 
 ```bash
-PYTHONPATH=src python3 tools/hw_qualify.py preflight H07 --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0
+PYTHONPATH=src python3 tools/hw_qualify.py preflight H07 --config config/bench.local.toml
 ```
 
 После разрешения H07 применяется та же команда с `run H07 --execute`.

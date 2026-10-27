@@ -53,7 +53,7 @@ Output Recall проверяется на панели как Off; сетевы�
 Сначала только dry-run; он не открывает порты:
 
 ~~~sh
-python3 tools/hw_qualify.py preflight H06 --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0
+python3 tools/hw_qualify.py preflight H06 --config config/bench.local.toml
 ~~~
 
 Выполняемый runner откроет порт только после подтверждения USB VID:PID адаптера,

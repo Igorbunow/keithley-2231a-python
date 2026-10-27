@@ -196,7 +196,7 @@ class TestQualification(unittest.TestCase):
                 self.source, self.state, self.resistance, self.closed = source, 'OFF', None, False
                 source.load = self
             def input_state(self): return self.state
-            def configure_h10_cr(self, resistance): self.resistance = resistance; return resistance
+            def configure_cr(self, resistance): self.resistance = resistance; return resistance
             def set_input(self, enabled): self.state = 'ON' if enabled else 'OFF'
             def measurements(self):
                 voltage, current = self.source.actual_pair()
@@ -241,9 +241,7 @@ class TestQualification(unittest.TestCase):
         with patch.object(q, 'open_transport', side_effect=AssertionError('PSU port opened')):
             try:
                 with contextlib.redirect_stdout(output):
-                    result = q.main(['preflight', 'H10', '--high-current', '--port', '/dev/ttyUSB3',
-                                     '--load-transport', 'serial', '--load-serial-port', '/dev/ttyACM0',
-                                     '--meter-host', '192.168.22.112'])
+                    result = q.main(['preflight', 'H10', '--high-current', ])
             except SystemExit as exc:
                 self.fail(f'H10 high-current preflight was not accepted: {exc}')
         card = output.getvalue()
@@ -307,7 +305,7 @@ class TestQualification(unittest.TestCase):
                 self.source, self.state, self.resistance, self.closed = source, 'OFF', None, False
                 source.load = self
             def input_state(self): return self.state
-            def configure_h10_high_current_cr(self, resistance):
+            def configure_cr(self, resistance):
                 self.resistance = resistance
                 return resistance
             def set_input(self, enabled): self.state = 'ON' if enabled else 'OFF'
@@ -413,7 +411,6 @@ class TestQualification(unittest.TestCase):
             def identify(self): return 'KORAD,KEL103,TEST,3.30'
             def input_state(self): return self.state
             def configure_cr(self, resistance): self.resistance = resistance; return resistance
-            def configure_h09_cr(self, resistance): return self.configure_cr(resistance)
             def set_input(self, enabled):
                 self.state = 'ON' if enabled else 'OFF'
                 if enabled:
@@ -474,7 +471,7 @@ class TestQualification(unittest.TestCase):
             self.assert_driver_path(evidence, source)
 
     def test_dmm7510_scpi_voltage_and_identity_evidence_are_isolated(self):
-        from dmm7510 import DMM7510
+        from equipment.dmm7510 import DMM7510
 
         class MeterIO:
             language = 'SCPI'
@@ -524,7 +521,7 @@ class TestQualification(unittest.TestCase):
                 if fault == 'tsp': self.assertEqual(io.cmds, ['*IDN?', '*LANG?'])
 
     def test_dmm7510_uses_100v_range_for_high_voltage_readback(self):
-        from dmm7510 import DMM7510
+        from equipment.dmm7510 import DMM7510
 
         class MeterIO:
             def __init__(self): self.commands, self.range_v = [], 10.
@@ -644,9 +641,9 @@ class TestQualification(unittest.TestCase):
 
         ports = [Port(), WrongPort()]
         self.assertTrue(q.verify_serial_adapter('/dev/ttyUSB3', 'TTL 10C4:EA60', ports))
-        with self.assertRaisesRegex(ValueError, 'does not match'):
+        with self.assertRaisesRegex(ValueError, 'different USB VID:PID|does not match'):
             q.verify_serial_adapter('/dev/ttyUSB1', 'TTL 10C4:EA60', ports)
-        with self.assertRaisesRegex(ValueError, 'does not match'):
+        with self.assertRaisesRegex(ValueError, 'different USB VID:PID|does not match'):
             q.verify_serial_adapter('/dev/ttyUSB3', 'TTL 0403:6010', ports)
 
     def test_dry_run_never_constructs_transport(self):
@@ -778,7 +775,7 @@ class TestQualification(unittest.TestCase):
                 q.preflight('H06', '/dev/ttyUSB3', load_transport='serial',
                             load_serial_port='/dev/ttyACM0')
             text = output.getvalue()
-            self.assertIn('KEL103 USB /dev/ttyACM0, 115200 8N1', text)
+            self.assertIn('KEL103: /dev/ttyACM0 @ 115200 baud 8N1', text)
             self.assertIn('CR 22 Ω', text)
             self.assertIn('только к одному каналу за раз', text)
             self.assertIn('Ручной сетевой цикл Output Recall в этом прогоне НЕ выполняется', text)
@@ -786,7 +783,7 @@ class TestQualification(unittest.TestCase):
             self.assertIn('LOAD=KEL103 DISCONNECTED USB=/dev/ttyACM0 BAUD=115200', text)
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                q.main(['preflight', 'H06', '--recall', '--port', '/dev/ttyUSB3'])
+                q.main(['preflight', 'H06', '--recall', ])
             self.assertIn('111→000', output.getvalue())
             self.assertIn('101→101', output.getvalue())
             self.assertIn('010→010', output.getvalue())
@@ -894,17 +891,17 @@ class TestQualification(unittest.TestCase):
                     patch.object(q, 'open_transport', side_effect=sessions) as opened, \
                     patch.object(q.sys.stdin, 'isatty', return_value=True), \
                     patch.object(h06_recall, 'recall', side_effect=simulated_runner), \
-                    patch('channel_stage.KEL103Serial', side_effect=AssertionError('load opened')), \
-                    patch('channel_stage.KEL103UDP', side_effect=AssertionError('load opened')), \
+                    patch('equipment.kel103.KEL103Serial', side_effect=AssertionError('load opened')), \
+                    patch('equipment.kel103.KEL103UDP', side_effect=AssertionError('load opened')), \
                     patch('builtins.input', side_effect=['CP2102 10C4:EA60', h06_recall.TOKEN,
                                                        'CONFIRM H06 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF']), \
                     contextlib.redirect_stdout(io.StringIO()):
-                result = q.main(['run', 'H06', '--recall', '--execute', '--port', '/dev/ttyUSB3'])
+                result = q.main(['run', 'H06', '--recall', '--execute', ])
             self.assertEqual(result, 0)
             self.assertEqual([call.args for call in opened.call_args_list],
-                             [('/dev/ttyUSB3',), ('/dev/ttyUSB3',)])
+                             [('/dev/ttyUSB1',), ('/dev/ttyUSB1',)])
             self.assertEqual([call.args for call in verify.call_args_list],
-                             [('/dev/ttyUSB3', 'CP2102 10C4:EA60')] * 2)
+                             [('/dev/ttyUSB1', 'CP2102 10C4:EA60')] * 2)
 
     def test_h06_timer_expiry_and_reenable_use_common_driver_path(self):
         from h06_stage import h06
@@ -948,8 +945,6 @@ class TestQualification(unittest.TestCase):
             def identify(self): return 'KORAD-KEL103 V3.30 SN:[REDACTED]'
             def input_state(self): return self.input
             def configure_cr(self, resistance):
-                raise AssertionError('H06 must use the bounded CR configuration path')
-            def configure_h04p_cr(self, resistance):
                 if self.input != 'OFF' or resistance != 22.0:
                     raise AssertionError('invalid CR setup')
                 self.resistance = resistance
@@ -1004,7 +999,7 @@ class TestQualification(unittest.TestCase):
             failed_load = Load(failed_raw)
             def fail_cr_setup(resistance):
                 raise ValueError(f'unsupported CR value: {resistance}')
-            failed_load.configure_h04p_cr = fail_cr_setup
+            failed_load.configure_cr = fail_cr_setup
             with tempfile.TemporaryDirectory() as failed_tmp:
                 failed_evidence = self.module().Evidence(
                     Path(failed_tmp) / 'events.jsonl', 'H06')
@@ -1057,7 +1052,7 @@ class TestQualification(unittest.TestCase):
             self.assertEqual(raw.calls, [])
 
     def test_h05_single_sequence_accepts_one_capture_after_counter_reset(self):
-        from h05_stage import TDS3064B
+        from equipment.tds3064 import TDS3064B
 
         class Evidence:
             def __init__(self, path): self.path = path
@@ -1065,7 +1060,7 @@ class TestQualification(unittest.TestCase):
 
         class Scope(TDS3064B):
             def __init__(self, path):
-                super().__init__(path, Evidence(path / 'events.jsonl'))
+                super().__init__(path, Evidence(path / 'events.jsonl'), host='example.invalid', port=80)
                 self.count_reads = 0
             def number(self, command):
                 if command == 'ACQUIRE:STATE?': return 0
@@ -1082,7 +1077,7 @@ class TestQualification(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             scope = Scope(Path(tmp))
-            with patch('h05_stage.decode_isf', return_value=[(0.0, 0.0), (1.0, 1.0)]):
+            with patch('equipment.tds3064.decode_isf', return_value=[(0.0, 0.0), (1.0, 1.0)]):
                 scope.arm()
                 waveforms = scope.collect()
             self.assertEqual(set(waveforms), {1, 2, 3})
@@ -1096,7 +1091,7 @@ class TestQualification(unittest.TestCase):
             enabled = False
             def identify(self): return 'KORAD KEL103'
             def input_state(self): return 'ON' if self.enabled else 'OFF'
-            def configure_h04p_cr(self, resistance): pass
+            def configure_cr(self, resistance): pass
             def set_input(self, enabled): self.enabled = enabled
             def measurements(self): return {'kel103_voltage_v': 1.0, 'kel103_current_a': 0.045}
             def close(self): pass
@@ -1113,7 +1108,7 @@ class TestQualification(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             raw, load = FakeTransport(), Load()
             evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H05')
-            with patch('h05_stage.TDS3064B', Scope), patch('keithley2231a.device.time.sleep'), \
+            with patch('equipment.factory.open_scope', return_value=Scope()), patch('keithley2231a.device.time.sleep'), \
                     contextlib.redirect_stdout(io.StringIO()):
                 outcome = h05(raw, evidence, load)
             self.assertEqual(outcome, 'PASS')
@@ -1198,7 +1193,7 @@ class TestQualification(unittest.TestCase):
                         q.main(args)
 
     def test_kel103_udp_is_lf_terminated_and_rejects_unknown_commands(self):
-        from channel_stage import KEL103UDP
+        from equipment.kel103 import KEL103UDP
 
         class DatagramFake:
             def __init__(self): self.sent, self.closed = [], False
@@ -1208,7 +1203,7 @@ class TestQualification(unittest.TestCase):
             def close(self): self.closed = True
 
         fake = DatagramFake()
-        load = KEL103UDP('192.168.22.106', sock=fake)
+        load = KEL103UDP('192.168.22.106', 18190, sock=fake)
         self.assertEqual(load.query(':INP?'), 'OFF')
         self.assertEqual(fake.sent, [(b':INP?\n', ('192.168.22.106', 18190))])
         with self.assertRaises(ValueError): load.write(':SYST:FACTRESET')
@@ -1255,7 +1250,7 @@ class TestQualification(unittest.TestCase):
             wire.close()
 
     def test_kel103_cr_setup_is_input_off_only_and_verified(self):
-        from channel_stage import KEL103UDP
+        from equipment.kel103 import KEL103UDP
 
         class DatagramFake:
             def __init__(self, replies): self.replies, self.sent = list(replies), []
@@ -1265,40 +1260,40 @@ class TestQualification(unittest.TestCase):
             def close(self): pass
 
         fake = DatagramFake((b'OFF', b'CR', b'CR', b'40.000OHM'))
-        load = KEL103UDP('192.168.22.106', sock=fake)
+        load = KEL103UDP('192.168.22.106', 18190, sock=fake)
         load.configure_cr(40.0)
         self.assertEqual(fake.sent, [b':INP?\n', b':FUNC CR\n', b':FUNC?\n',
                                      b':RES 40OHM\n', b':FUNC?\n', b':RES?\n'])
 
         h04p = DatagramFake((b'OFF', b'CR', b'CR', b'11.000OHM', b'OFF', b'ON'))
-        load = KEL103UDP('192.168.22.106', sock=h04p)
-        self.assertEqual(load.configure_h04p_cr(11.0), 11.0)
+        load = KEL103UDP('192.168.22.106', 18190, sock=h04p)
+        self.assertEqual(load.configure_cr(11.0), 11.0)
         load.set_input(True)
         self.assertEqual(h04p.sent, [b':INP?\n', b':FUNC CR\n', b':FUNC?\n',
                                      b':RES 11OHM\n', b':FUNC?\n', b':RES?\n',
                                      b':INP?\n', b':INP ON\n', b':INP?\n'])
 
         active = DatagramFake((b'ON',))
-        load = KEL103UDP('192.168.22.106', sock=active)
+        load = KEL103UDP('192.168.22.106', 18190, sock=active)
         with self.assertRaises(Exception): load.configure_cr(12.0)
         self.assertEqual(active.sent, [b':INP?\n'])
 
         unconfigured = DatagramFake(())
-        load = KEL103UDP('192.168.22.106', sock=unconfigured)
+        load = KEL103UDP('192.168.22.106', 18190, sock=unconfigured)
         with self.assertRaises(Exception): load.set_input(True)
         self.assertEqual(unconfigured.sent, [])
 
         high_voltage = DatagramFake((b'OFF', b'CR', b'CR', b'2000.000OHM'))
-        load = KEL103UDP('192.168.22.106', sock=high_voltage)
-        self.assertEqual(load.configure_h09_cr(2000.0), 2000.0)
+        load = KEL103UDP('192.168.22.106', 18190, sock=high_voltage)
+        self.assertEqual(load.configure_cr(2000.0), 2000.0)
         self.assertEqual(high_voltage.sent, [b':INP?\n', b':FUNC CR\n', b':FUNC?\n',
                                              b':RES 2000OHM\n', b':FUNC?\n', b':RES?\n'])
         before = list(high_voltage.sent)
-        with self.assertRaises(ValueError): load.configure_h09_cr(100.0)
+        with self.assertRaises(ValueError): load.configure_cr(100.0)
         self.assertEqual(high_voltage.sent, before)
 
     def test_kel103_serial_uses_bounded_lf_protocol_and_latches_link_errors(self):
-        from channel_stage import KEL103Serial
+        from equipment.kel103 import KEL103Serial
 
         class SerialFake:
             def __init__(self): self.sent, self.replies, self.closed = [], [b'OFF\r\n'], False
@@ -1310,7 +1305,7 @@ class TestQualification(unittest.TestCase):
             def close(self): self.closed = True
 
         fake = SerialFake()
-        load = KEL103Serial('/dev/ttyACM0', serial_port=fake)
+        load = KEL103Serial('/dev/ttyACM0', expected_vid=0x0416, expected_pid=0x5011, baudrate=115200, serial_port=fake)
         self.assertEqual(load.query(':INP?'), 'OFF')
         load.write(':INP OFF')
         self.assertEqual(fake.sent, [b':INP?\n', b':INP OFF\n'])
@@ -1320,7 +1315,7 @@ class TestQualification(unittest.TestCase):
 
         failed = SerialFake()
         failed.replies = [b'']
-        load = KEL103Serial('/dev/ttyACM0', serial_port=failed)
+        load = KEL103Serial('/dev/ttyACM0', expected_vid=0x0416, expected_pid=0x5011, baudrate=115200, serial_port=failed)
         with self.assertRaisesRegex(OSError, 'incomplete/oversized'):
             load.query(':INP?')
         with self.assertRaisesRegex(OSError, 'link uncertain'):
@@ -1328,7 +1323,7 @@ class TestQualification(unittest.TestCase):
         self.assertEqual(failed.sent, [b':INP?\n'])
 
     def test_kel103_high_current_cr_requires_input_off_and_is_verified_before_enable(self):
-        from channel_stage import KEL103Serial
+        from equipment.kel103 import KEL103Serial
         from keithley2231a import SafetyError
 
         class SerialFake:
@@ -1342,32 +1337,35 @@ class TestQualification(unittest.TestCase):
 
         fake = SerialFake((b'OFF\n', b'CR\n', b'CR\n', b'0.500OHM\n',
                            b'OFF\n', b'ON\n'))
-        load = KEL103Serial('/dev/ttyACM0', serial_port=fake)
-        self.assertTrue(hasattr(load, 'configure_h10_high_current_cr'),
-                        'KEL103 high-current CR setup is missing')
-        self.assertEqual(load.configure_h10_high_current_cr(.5), .5)
+        load = KEL103Serial('/dev/ttyACM0', expected_vid=0x0416, expected_pid=0x5011, baudrate=115200, serial_port=fake)
+        self.assertTrue(hasattr(load, 'configure_cr'),
+                        'KEL103 bounded CR setup is missing')
+        self.assertEqual(load.configure_cr(.5), .5)
         load.set_input(True)
         self.assertEqual(fake.sent, [b':INP?\n', b':FUNC CR\n', b':FUNC?\n',
                                      b':RES 0.5OHM\n', b':FUNC?\n', b':RES?\n',
                                      b':INP?\n', b':INP ON\n', b':INP?\n'])
         before = list(fake.sent)
-        with self.assertRaises(ValueError): load.configure_h10_high_current_cr(.4)
+        with self.assertRaises(ValueError): load.configure_cr(.4)
         self.assertEqual(fake.sent, before)
 
         active = SerialFake((b'ON\n',))
-        load = KEL103Serial('/dev/ttyACM0', serial_port=active)
-        with self.assertRaises(SafetyError): load.configure_h10_high_current_cr(.5)
+        load = KEL103Serial('/dev/ttyACM0', expected_vid=0x0416, expected_pid=0x5011, baudrate=115200, serial_port=active)
+        with self.assertRaises(SafetyError): load.configure_cr(.5)
         self.assertEqual(active.sent, [b':INP?\n'])
 
     def test_kel103_serial_refuses_wrong_usb_device_before_open(self):
-        from channel_stage import KEL103Serial
-        from serial.tools import list_ports
+        from equipment.kel103 import KEL103Serial
+        try:
+            from serial.tools import list_ports
+        except ImportError:
+            self.skipTest('pyserial is not installed')
         with patch.object(list_ports, 'comports', return_value=[
                 type('Port', (), {'device': '/dev/ttyACM0', 'vid': 0x10C4,
                                   'pid': 0xEA60})()]), \
              patch('serial.Serial') as serial_open:
             with self.assertRaisesRegex(OSError, 'identity mismatch'):
-                KEL103Serial('/dev/ttyACM0')
+                KEL103Serial('/dev/ttyACM0', expected_vid=0x0416, expected_pid=0x5011, baudrate=115200)
             serial_open.assert_not_called()
 
     def test_h03_usb_load_preflight_requires_explicit_usb_identity(self):
@@ -1375,11 +1373,10 @@ class TestQualification(unittest.TestCase):
         output = io.StringIO()
         with patch.object(q, 'open_transport', side_effect=AssertionError('PSU port opened')):
             with contextlib.redirect_stdout(output):
-                self.assertEqual(q.main(['preflight', 'H03', '--load-transport', 'serial',
-                                         '--load-serial-port', '/dev/ttyACM0']), 0)
+                self.assertEqual(q.main(['preflight', 'H03', ]), 0)
         text = output.getvalue()
         self.assertIn('USB /dev/ttyACM0', text)
-        self.assertIn('115200 8N1', text)
+        self.assertIn('115200 baud 8N1', text)
         self.assertIn('USB=/dev/ttyACM0 BAUD=115200', text)
         self.assertIn('ERRBASE=CHECK', text)
 
@@ -1395,7 +1392,7 @@ class TestQualification(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 self.assertEqual(q.main(['preflight', 'H03']), 0)
         text = output.getvalue()
-        self.assertIn('KEL103 UDP 192.168.22.106:18190', text)
+        self.assertIn('KEL103 USB', text)
         self.assertIn('CR 40.0 Ω', text)
         self.assertIn('CR 12.0 Ω', text)
         self.assertIn('считывает U/I/P', text)
@@ -2091,7 +2088,7 @@ class TestQualification(unittest.TestCase):
                 self.closed = False
             def identify(self): return 'KORAD-KEL103 V3.30 SN:[REDACTED]'
             def input_state(self): return self.input
-            def configure_h04p_cr(self, resistance):
+            def configure_cr(self, resistance):
                 if self.input != 'OFF': raise RuntimeError('load input active')
                 self.resistance = resistance
                 return resistance

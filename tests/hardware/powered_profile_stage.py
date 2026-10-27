@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+from bench_config import current_bench
+
 import math
 import re
 import time
@@ -35,13 +37,18 @@ MAX_SECONDS = 900
 SHUTDOWN_RESERVE = 128
 
 
-def approval_token(load_transport='udp', load_port=18190,
-                   load_serial_port='/dev/ttyACM0'):
+def approval_token(load_transport=None, load_port=None,
+                   load_serial_port=None):
     """Return an exact H04-Powered gate tied to the explicitly selected load link."""
+    from bench_config import current_bench
+    bench = current_bench()
+    if load_serial_port is None: load_serial_port = bench.load.port
+    if load_transport is None: load_transport = bench.load.transport
+    if load_port is None: load_port = bench.load.network_port
     if load_transport == 'udp':
         connection = f'LAN=UDP:{load_port}'
     elif load_transport == 'serial':
-        connection = f'USB={load_serial_port} BAUD=115200'
+        connection = f'USB={load_serial_port} BAUD={current_bench().load.baudrate}'
     else:
         raise ValueError('load transport must be udp or serial')
     return ('CONFIRM H04P INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED '
@@ -237,7 +244,7 @@ def _measure_point(dev, io, evidence, load, channel, *, phase, point,
         if (abs(float(dev.diagnostic_query('VOLT?')) - voltage) > .0049 or
                 abs(float(dev.diagnostic_query('CURR?')) - current) > .00049):
             raise SafetyError('fixed power_only preset readback mismatch')
-    actual_resistance = load.configure_h04p_cr(resistance)
+    actual_resistance = load.configure_cr(resistance)
     if abs(actual_resistance - resistance) > .001:
         raise SafetyError('KEL103 resistance did not verify')
     load.set_input(True)

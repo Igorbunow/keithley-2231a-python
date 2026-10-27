@@ -61,10 +61,10 @@ def voltage_sweep(device: Keithley2231A, channel: int, voltages: Sequence[float]
             or abs(v*100-round(v*100)) > 1e-6):
             raise ValueError('voltage step outside profile or unsupported 10 mV resolution')
     # Avoid silently shutting down unrelated running channels on sweep exit.
-    # Multi-source/bias experiments belong in BenchCoordinator.
+    # Multi-source/bias experiments belong to a separate orchestration project.
     for other in (1, 2, 3):
         if other != channel and device.read_channel(other).enabled:
-            raise SafetyError('voltage_sweep requires all other channels OFF; use BenchCoordinator for bias experiments')
+            raise SafetyError('voltage_sweep requires all other channels OFF; use a separate lab orchestrator for bias experiments')
     # Prepare files before energizing DUT. Stream rows only after successful sweeps.
     result = []
     try:

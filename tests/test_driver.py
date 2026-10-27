@@ -916,6 +916,10 @@ class TestTransportNetwork(unittest.TestCase):
         self.assertEqual(got, [b'*IDN?\r\n'])
 
     def test_serial_timeout_and_stale_input_require_new_transport(self):
+        try:
+            import serial
+        except ImportError:
+            self.skipTest('pyserial is not installed')
         from unittest.mock import Mock, patch
         from keithley2231a import SerialTransport, TransportError
         for stale in (False, True):

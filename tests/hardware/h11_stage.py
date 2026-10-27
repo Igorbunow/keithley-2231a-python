@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from bench_config import current_bench
+
 import csv
 import math
 import re
@@ -17,26 +19,32 @@ from common import StageAdapter, operator_gate, require_outputs
 from keithley2231a import (ChannelProfile, Keithley2231A, Profile, SafetyError,
                            voltage_sweep)
 
-LOAD_PORT = '/dev/ttyACM0'
 VOLTAGES = (0.50, 1.00, 1.50, 2.00)
 CURRENT_LIMIT_A = 0.040
 FINAL_TOKEN = 'CONFIRM H11 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF DISCONNECTED'
 
 
-def approval_token(load_serial_port=LOAD_PORT):
+def approval_token(load_serial_port=None):
+    from bench_config import current_bench
+    bench = current_bench()
+    if load_serial_port is None: load_serial_port = bench.load.port
     return (f'CONFIRM H11 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED '
-            f'USB={load_serial_port} BAUD=115200 RECALL=OFF '
+            f'USB={load_serial_port} BAUD={current_bench().load.baudrate} RECALL=OFF '
             'CH1=V0.50_I0.040_VCAP2.00_ICAP0.100 '
             'CH2=V1.50_I0.200_VCAP3.00_ICAP0.200 '
             'CH3=V2.00_I0.300_VCAP4.00_ICAP0.300 CR=40OHM '
             'SWEEP=0.50,1.00,1.50,2.00 I_LIMIT=0.040A STOP=CC')
 
 
-def preflight(port, load_serial_port=LOAD_PORT, load_transport='serial'):
+def preflight(port, load_serial_port=None, load_transport=None):
+    from bench_config import current_bench
+    bench = current_bench()
+    if load_serial_port is None: load_serial_port = bench.load.port
+    if load_transport is None: load_transport = bench.load.transport
     if load_transport != 'serial':
         raise ValueError('H11 requires the reviewed KEL103 USB connection')
-    print(f'Keithley: {port}, USB–TTL 9600 8N1. KEL103: USB {load_serial_port}, '
-          '115200 8N1; INPUT OFF. Осциллограф, DMM, перемычки и общая шина отключены.\n'
+    print(f'Keithley: {port}, USB–TTL 8N1 (скорость из bench config). KEL103: USB {load_serial_port}, '
+          '8N1 (скорость из bench config); INPUT OFF. Осциллограф, DMM, перемычки и общая шина отключены.\n'
           'Перед началом все выходы Keithley OFF; Output Recall=Off; сетевой выключатель доступен. '
           'Нагрузка должна быть физически отсоединена. Runner сначала проверит состояние '
           'и задаст уникальный профиль: CH1 0.50 V/0.040 A, cap 2.00 V/0.100 A; '

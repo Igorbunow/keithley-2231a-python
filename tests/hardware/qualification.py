@@ -22,6 +22,9 @@ import subprocess
 import sys
 import time
 
+from bench_config import load_bench, activate_bench, current_bench, EXAMPLE, bench_summary
+from equipment.factory import open_psu, open_load, open_meter as equipment_open_meter
+
 ROOT = Path(__file__).resolve().parents[2]
 MATRIX = ROOT / 'docs/hardware_reports/qualification_matrix_2026-10-25.md'
 TOKEN = 'CONFIRM H01 INDEPENDENT ALL_OFF LOAD=DISCONNECTED'
@@ -66,14 +69,19 @@ def stage_passed(status: str) -> bool:
 def software_metadata():
     """Identify the checked-out implementation, including uncommitted sources."""
     def git(*args):
-        return subprocess.check_output(['git', *args], cwd=ROOT, text=True).strip()
+        try:
+            return subprocess.check_output(['git', '-c', f'safe.directory={ROOT}', *args],
+                                           cwd=ROOT, text=True, stderr=subprocess.DEVNULL).strip()
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            return 'unversioned'
     digest = hashlib.sha256()
-    for pattern in ('src/keithley2231a/*.py', 'tools/hw_qualify.py', 'tests/hardware/*.py'):
+    for pattern in ('src/keithley2231a/*.py', 'tools/hw_qualify.py', 'tests/hardware/*.py',
+                    'tests/hardware/equipment/*.py', 'config/bench.example.toml'):
         for path in sorted(ROOT.glob(pattern)):
             digest.update(str(path.relative_to(ROOT)).encode())
             digest.update(path.read_bytes())
     return {'sha': git('rev-parse', 'HEAD'), 'dirty': bool(git('status', '--porcelain')),
-            'source_sha256': digest.hexdigest(), 'library_version': '0.2.0',
+            'source_sha256': digest.hexdigest(), 'library_version': '0.2.1.dev0',
             'python': platform.python_version(), 'os': platform.platform()}
 
 
@@ -117,21 +125,27 @@ class Evidence:
 
 
 def open_transport(port):
-    """Only call after the specific interactive operator gate."""
-    from keithley2231a import SerialTransport
-    return SerialTransport(port, baudrate=9600, timeout=2.0)
+    """Open the PSU using the validated active bench; never scan or fallback."""
+    bench = current_bench()
+    if port != bench.psu.port:
+        raise ValueError('PSU port differs from the active bench configuration')
+    return open_psu(bench)
 
 
 def open_meter(host, evidence):
-    """Construct the explicit raw-socket DMM adapter only after the H08 gate."""
-    from dmm7510 import DMM7510
-    from keithley2231a import TcpTransport
-    return DMM7510(TcpTransport(host, 5025, timeout=5.0, terminator=b'\n'), evidence)
+    """Open the configured meter through the only shared factory."""
+    bench = current_bench()
+    if host != bench.meter.host:
+        raise ValueError('meter host differs from the active bench configuration')
+    return equipment_open_meter(bench, evidence)
 
 
 def verify_serial_adapter(port, adapter, available_ports=None):
     """Require the operator-confirmed USB VID:PID to match the selected port."""
     match = re.search(r'(?<![0-9A-Fa-f])([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?![0-9A-Fa-f])', adapter)
+    config = current_bench().psu
+    if match is not None and (int(match.group(1), 16), int(match.group(2), 16)) != (int(config.usb_vid, 16), int(config.usb_pid, 16)):
+        raise ValueError('operator confirmed a different USB VID:PID than configured for the bench')
     if match is None:
         raise ValueError('Adapter confirmation must include USB VID:PID, for example 10C4:EA60')
     if available_ports is None:
@@ -151,16 +165,24 @@ def verify_serial_adapter(port, adapter, available_ports=None):
     raise ValueError(f'USB adapter port {port} is not present in serial-port inventory')
 
 
-def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_channel=1,
-              load_transport='udp', load_serial_port='/dev/ttyACM0', diagnose_status=False,
-              load_connected=False, recall=False, meter_host='192.168.22.112', powered=False,
+def preflight(test_id, port=None, load_host=None, load_port=None, start_channel=1,
+              load_transport=None, load_serial_port=None, diagnose_status=False,
+              load_connected=False, recall=False, meter_host=None, powered=False,
               high_current=False):
     """Print a human-readable card; never contact hardware."""
+    bench = current_bench()
+    if port is None: port = bench.psu.port
+    if load_host is None: load_host = bench.load.host
+    if load_port is None: load_port = bench.load.network_port
+    if load_transport is None: load_transport = bench.load.transport
+    if load_serial_port is None: load_serial_port = bench.load.port
+    if meter_host is None: meter_host = bench.meter.host
     if test_id == 'H06' and recall:
         from h06_recall import preflight as recall_preflight
         print('[H06 Output Recall] Отдельная подгруппа ручных сетевых циклов')
         recall_preflight(port)
         return
+    print(bench_summary(bench))
     row = stages()[test_id]
     if test_id == 'H10':
         if powered or high_current:
@@ -196,8 +218,8 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         return
     if test_id == 'H07':
         from h07_stage import approval_token
-        print(f'Keithley: {port}, USB–TTL 9600 8N1; KEL103 USB '
-              f'{load_serial_port}, 115200 8N1. Один владелец каждого порта.\n'
+        print(f'Keithley: {port}, USB–TTL 8N1 (скорость из bench config); KEL103 USB '
+              f'{load_serial_port}, 8N1 (скорость из bench config). Один владелец каждого порта.\n'
               'На входе CH1/CH2/CH3 OFF, KEL103 INPUT OFF и физически отключена.\n'
               'Независимые каналы; осциллограф отключён; перемычек, общей шины и DUT нет.\n'
               'Output Recall=Off проверить на панели. Сетевой выключатель доступен.\n'
@@ -241,7 +263,7 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
             f'CH{ch}: V={values[2]:.2f} V / I={values[3]:.3f} A, '
             f'V-cap={values[0]:.2f} V / software I-cap={values[1]:.3f} A'
             for ch, values in H02_CHANNELS.items())
-        print(f'Порт: {port}; USB–TTL UART 9600 8N1, один владелец.\n'
+        print(f'Порт: {port}; USB–TTL UART 8N1 (скорость из bench config), один владелец.\n'
               'CH1/CH2/CH3 OFF, клеммы свободны; без DUT и объединяющих перемычек.\n'
               'Нагрузка отсоединена от всех каналов, INPUT OFF; режим/значение не задавать.\n'
               'Output Recall=Off проверить на панели; доступен сетевой выключатель.\n'
@@ -283,8 +305,8 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         from powered_profile_stage import H04P_MAXV_TOKEN, approval_token
         token = approval_token(load_transport, load_port, load_serial_port)
         load_connection = (f'KEL103 UDP {load_host}:{load_port}' if load_transport == 'udp'
-                           else f'KEL103 USB {load_serial_port}, 115200 8N1')
-        print(f'Keithley: {port}, USB–TTL 9600 8N1; {load_connection}. '
+                           else f'KEL103 USB {load_serial_port}, 8N1 (скорость из bench config)')
+        print(f'Keithley: {port}, USB–TTL 8N1 (скорость из bench config); {load_connection}. '
               'Independent CH1–CH3, без перемычек и DUT; Output Recall=Off; сетевой выключатель доступен.\n'
               'Начало: все выходы OFF, KEL103 INPUT OFF и нагрузка отсоединена. Подключается '
               'только один канал за раз, + к + и − к −. Runner задаёт CR и читает нагрузку.\n'
@@ -314,9 +336,10 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
               'Финальная проверка: CONFIRM H04P CH1=OFF CH2=OFF CH3=OFF LOAD=OFF')
         return
     if test_id == 'H05':
-        from h05_stage import H05_TOKEN as token
-        print(f'Keithley: {port}, USB–TTL 9600 8N1; KEL103 USB /dev/ttyACM0, 115200 8N1; '
-              'Tektronix TDS 3064B at 192.168.22.105. Independent CH1–CH3, '
+        from h05_stage import approval_token
+        token = approval_token()
+        print(f'Keithley: {port}, USB–TTL 8N1 (скорость из bench config); KEL103 USB {load_serial_port}, 8N1 (скорость из bench config); '
+              f'Tektronix TDS 3064B at {current_bench().scope.host}. Independent CH1–CH3, '
               'Output Recall=Off, all outputs OFF at start.\n'
               'Проводка, подтверждённая оператором: отрицательные клеммы CH1/CH2/CH3 '
               'объединены в общий возврат; все три земляных зажима осциллографа подключены '
@@ -354,8 +377,8 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
     if test_id == 'H06':
         from h06_stage import approval_token
         token = approval_token(load_serial_port)
-        print(f'Keithley: {port}, USB–TTL 9600 8N1; KEL103 USB {load_serial_port}, '
-              '115200 8N1; независимый режим, без перемычек и DUT. Все выходы и INPUT OFF.\n'
+        print(f'Keithley: {port}, USB–TTL 8N1 (скорость из bench config); KEL103 USB {load_serial_port}, '
+              '8N1 (скорость из bench config); независимый режим, без перемычек и DUT. Все выходы и INPUT OFF.\n'
               'Схема: KEL103 CR 22 Ω подключается только к одному каналу за раз; '
               'начать с CH1, затем переместить CH1→CH2→CH3, в конце снять с CH3. '
               'Полярность + к + и − к −; остальные выходные клеммы свободны.\n'
@@ -381,7 +404,7 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         return
     if test_id == 'H04':
         from profile_stage import H04_MAXV_TOKEN, H04_TOKEN as token
-        print(f'Порт: {port}; USB–TTL 9600 8N1, один владелец. Независимые CH1–CH3, '
+        print(f'Порт: {port}; USB–TTL 8N1 (скорость из bench config), один владелец. Независимые CH1–CH3, '
               'все выходы OFF; клеммы свободны, перемычек/DUT нет. KEL103 отключена, INPUT OFF.\n'
               'На панели проверьте Output Recall=Off; сетевой выключатель доступен.\n'
               'Сценарий: применить unrestricted() при уставках 0.00 V / 0.100 A, '
@@ -425,10 +448,10 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         selected_scope = sorted(H03Scope.READS | H03Scope.WRITES)
         digest = hashlib.sha256('\n'.join(selected_scope).encode()).hexdigest()
         load_connection = (f'KEL103 UDP {load_host}:{load_port}' if load_transport == 'udp'
-                           else f'KEL103 USB {load_serial_port}, 115200 8N1')
+                           else f'KEL103 USB {load_serial_port}, 8N1 (скорость из bench config)')
         from channel_stage import PROFILE_TOKEN
         profile_values = PROFILE_TOKEN
-        print(f'Порт: {port}; USB–TTL UART 9600 8N1, один владелец. Независимые CH1–CH3; '
+        print(f'Порт: {port}; USB–TTL UART 8N1 (скорость из bench config), один владелец. Независимые CH1–CH3; '
               f'без DUT/перемычек; {load_connection}; выбран вручную, без failover; '
               'один канал включён за раз.\n'
               f'Продолжение с CH{start_channel}; предыдущие точки должны быть в приложенном evidence.\n'
@@ -479,7 +502,7 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
         print('BLOCKED для выполнения: сначала разбор H01, паспорт нагрузки и отдельная полная карточка.\n'
               'SCPI-последовательность ещё не разрешена; порт не открывается.')
         return
-    print(f'Порт: {port}; USB–TTL UART, 9600 8N1; один владелец.\n'
+    print(f'Порт: {port}; USB–TTL UART, 8N1 (скорость из bench config); один владелец.\n'
           'ВСЕ выходы CH1/CH2/CH3 OFF; нагрузка INPUT OFF и отсоединена.\n'
           'Без перемычек и DUT. Режим нагрузки не задавать; вход остаётся OFF.\n'
           'Проверить Output Recall=Off на панели и соответствие порта TTL-адаптеру.\n'
@@ -643,15 +666,10 @@ def validate_h03_checkpoint(path, start_channel):
 def main(argv=None):
     """Dry run is default; each prepared hardware group has its own operator gate."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('list', 'preflight', 'run', 'report', 'abort'))
+    parser.add_argument('command', choices=('list', 'inventory', 'preflight', 'run', 'report', 'abort'))
     parser.add_argument('test_id', nargs='?', choices=tuple(stages()))
-    parser.add_argument('--port', default='/dev/ttyUSB1')
-    parser.add_argument('--meter-host', default='192.168.22.112', help='H08 DMM7510 raw TCP port 5025')
-    parser.add_argument('--load-host', default='192.168.22.106')
-    parser.add_argument('--load-port', type=int, default=18190)
-    parser.add_argument('--load-transport', choices=('udp', 'serial'), default='udp',
-                        help='explicit KEL103 connection; never auto-switches on failure')
-    parser.add_argument('--load-serial-port', default='/dev/ttyACM0')
+    parser.add_argument('--config', type=Path, default=EXAMPLE,
+                        help='single TOML bench configuration (no instrument endpoints as CLI flags)')
     parser.add_argument('--start-channel', type=int, choices=(1, 2, 3), default=1)
     parser.add_argument('--load-connected', action='store_true',
                         help='H03 CH1 recovery only: load remains wired, INPUT OFF; verify all PSU outputs OFF first')
@@ -670,6 +688,17 @@ def main(argv=None):
     mode.add_argument('--dry-run', action='store_true')
     parser.add_argument('--evidence', type=Path)
     args = parser.parse_args(argv)
+    try:
+        bench = load_bench(args.config)
+    except (OSError, ValueError, TypeError) as exc:
+        parser.error(f'invalid bench configuration: {exc}')
+    activate_bench(bench)
+    args.port = bench.psu.port
+    args.meter_host = bench.meter.host
+    args.load_host = bench.load.host
+    args.load_port = bench.load.network_port
+    args.load_transport = bench.load.transport
+    args.load_serial_port = bench.load.port
     if args.recall and args.test_id != 'H06':
         parser.error('--recall requires H06')
     if args.powered and args.test_id not in ('H09', 'H10'):
@@ -682,6 +711,38 @@ def main(argv=None):
         parser.error('--load-connected requires H03 start channel 1')
     if args.diagnose_status and (args.test_id != 'H03' or args.start_channel != 3):
         parser.error('--diagnose-status requires H03 --start-channel 3')
+    if args.command == 'inventory':
+        if args.test_id is not None:
+            parser.error('inventory does not accept a stage ID')
+        if args.evidence is not None and not args.execute:
+            parser.error('--evidence for inventory requires --execute')
+        print(bench_summary(bench))
+        if not args.execute:
+            print('DRY RUN: no device was contacted. Use inventory --execute to query '
+                  'all four instruments without changing their settings.')
+            return 0
+        from equipment.inventory import run_inventory, print_inventory
+        # Use an independent evidence directory for every run. Never overwrite.
+        if args.evidence is None:
+            import uuid
+            path = (ROOT / 'reports/local/inventory' /
+                    f'{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}_{uuid.uuid4().hex[:8]}' /
+                    'inventory.jsonl')
+        else:
+            path = args.evidence
+        try:
+            evidence = Evidence(path, 'INVENTORY')
+        except OSError as exc:
+            parser.error(f'cannot create inventory evidence: {exc}')
+        evidence.add('bench_configuration', sha256=bench.sha256,
+                     devices={name: {'model': getattr(bench, name).model,
+                                     'transport': getattr(bench, name).transport}
+                              for name in ('psu', 'load', 'meter', 'scope')})
+        print('Read-only queries only: no output enable/disable, setpoints, reset, '
+              'automatic reconnect or configuration changes.')
+        results = run_inventory(bench, evidence)
+        print_inventory(results, path)
+        return 0 if all(item.status == 'PASS' for item in results) else 2
     if args.command == 'list':
         for key, row in stages().items(): print(f'{key} {row[-1]} | {row[0]}')
         return 0
@@ -712,10 +773,9 @@ def main(argv=None):
     if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09', 'H10', 'H11', 'H12'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
-    if args.test_id in ('H09', 'H10') and (args.powered or args.high_current) and (
-            args.load_transport != 'serial' or args.load_serial_port != '/dev/ttyACM0'):
-        print(f'BLOCKED: {args.test_id} powered requires the reviewed KEL103 USB port '
-              '/dev/ttyACM0; no ports opened.')
+    if args.test_id in ('H09', 'H10') and (args.powered or args.high_current) and args.load_transport != 'serial':
+        print(f'BLOCKED: {args.test_id} powered requires an explicitly reviewed KEL103 USB link; '
+              'no ports opened.')
         return 2
     if args.test_id in ('H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07') and not stage_passed(stages()['H01'][-1]):
         print('BLOCKED: требуется рассмотренный PASS H01; порт не открыт.')
@@ -791,14 +851,15 @@ def main(argv=None):
             print('BLOCKED: требуется рассмотренный PASS H04; порт не открыт.')
             return 2
     if args.test_id == 'H05':
-        from h05_stage import H05_TOKEN as token, h05
+        from h05_stage import approval_token, h05
+        token = approval_token()
         runner = h05
         final_token = 'CONFIRM H05 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
         if not stage_passed(stages()['H04P'][-1]):
             print('BLOCKED: требуется рассмотренный PASS H04P; порты не открыты.')
             return 2
-        if args.load_transport != 'serial' or args.load_serial_port != '/dev/ttyACM0':
-            print('BLOCKED: H05 uses the explicitly preflighted KEL103 USB port /dev/ttyACM0.')
+        if args.load_transport != 'serial':
+            print('BLOCKED: H05 requires a configured KEL103 serial connection.')
             return 2
     if args.test_id == 'H06':
         from h06_stage import FINAL_TOKEN as final_token, approval_token, h06
@@ -806,9 +867,8 @@ def main(argv=None):
             from h06_recall import TOKEN as token, recall as runner
         else:
             token, runner = approval_token(args.load_serial_port), h06
-        if not args.recall and (args.load_transport != 'serial' or
-                                args.load_serial_port != '/dev/ttyACM0'):
-            print('BLOCKED: H06 uses the reviewed KEL103 USB port /dev/ttyACM0.')
+        if not args.recall and (args.load_transport != 'serial'):
+            print('BLOCKED: H06 requires a configured KEL103 serial connection.')
             return 2
     if args.test_id == 'H03':
         from channel_stage import approval_token, FINAL_TOKEN as final_token, h03
@@ -824,8 +884,8 @@ def main(argv=None):
             return 2
     if args.test_id == 'H11':
         from h11_stage import FINAL_TOKEN as final_token, approval_token, h11
-        if args.load_transport != 'serial' or args.load_serial_port != '/dev/ttyACM0':
-            print('BLOCKED: H11 requires the reviewed KEL103 USB connection /dev/ttyACM0; ports not opened.')
+        if args.load_transport != 'serial':
+            print('BLOCKED: H11 requires the configured KEL103 USB connection; ports not opened.')
             return 2
         required = ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09')
         if any(not stage_passed(stages()[stage][-1]) for stage in required):
@@ -861,7 +921,7 @@ def main(argv=None):
         return 2
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H%M%S.%fZ')
     evidence = Evidence(ROOT / f'reports/hardware/{now}_{args.test_id}/events.jsonl', args.test_id)
-    evidence.add('metadata', **software_metadata(), port=args.port, baud=9600, framing='8N1',
+    evidence.add('metadata', **software_metadata(), port=args.port, baud=bench.psu.baudrate, framing='8N1',
                  adapter=adapter,
                  topology=('external Parallel: CH1+↔CH2+ and CH1−↔CH2−; KEL103 and DMM7510 across pair; CH3 open'
                            if args.test_id == 'H10' and (args.powered or args.high_current) else
@@ -877,13 +937,13 @@ def main(argv=None):
                            'series_off_diagnostic' if args.test_id == 'H09' else
                            'parallel_off_diagnostic' if args.test_id == 'H10' else
                            'output_recall' if args.recall else None),
-                 load=('KORAD KEL103; USB serial /dev/ttyACM0; 115200 8N1; CR 0.50 Ω; '
+                 load=(f'KORAD KEL103; USB serial {args.load_serial_port}; {bench.load.baudrate} 8N1; CR 0.50 Ω; '
                        'input OFF before/after the single point'
                        if args.test_id == 'H10' and args.high_current else
-                       'KORAD KEL103; USB serial /dev/ttyACM0; 115200 8N1; CR 40/12 Ω; '
+                       f'KORAD KEL103; USB serial {args.load_serial_port}; {bench.load.baudrate} 8N1; CR 40/12 Ω; '
                        'input OFF between points'
                        if args.test_id == 'H09' and args.powered else
-                       'KORAD KEL103; USB serial /dev/ttyACM0; 115200 8N1; CR 30/5 Ω; '
+                       f'KORAD KEL103; USB serial {args.load_serial_port}; {bench.load.baudrate} 8N1; CR 30/5 Ω; '
                        'input OFF between points'
                        if args.test_id == 'H10' and args.powered else
                        'disconnected; KEL103 INPUT OFF; scope disconnected; no jumpers'
@@ -891,7 +951,7 @@ def main(argv=None):
                        f'KORAD KEL103; UDP port {args.load_port}; input OFF'
                        if args.test_id in ('H03', 'H04P') and args.load_transport == 'udp' else
                        f'KORAD KEL103; USB serial {args.load_serial_port}; '
-                       '115200 8N1; USB link previously HW OBSERVED on H03; input OFF'
+                       '8N1 (скорость из bench config); USB link previously HW OBSERVED on H03; input OFF'
                        if args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07')
                        else 'disconnected; input OFF'),
                  proposed_caps=('H09 powered: Series total soft cap 4.00 V, current cap 0.300 A; '
@@ -937,10 +997,14 @@ def main(argv=None):
                                 'V-cap 2/3/4 V; software I-cap 0.300/0.400/0.500 A'
                                 if args.test_id == 'H12' else
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
-                 independent_meter=({'model': 'DMM7510', 'host': args.meter_host, 'port': 5025,
+                 independent_meter=({'model': 'DMM7510', 'host': args.meter_host, 'port': bench.meter.network_port,
                                      'function': 'DCV 10 V, NPLC 1, front terminals'}
                                     if args.test_id == 'H08' or (args.test_id in ('H09', 'H10') and (args.powered or args.high_current))
                                     else None))
+    evidence.add('bench_configuration', sha256=bench.sha256, source=bench.source.name,
+                 devices={name: {'model': getattr(bench, name).model,
+                                 'transport': getattr(bench, name).transport}
+                          for name in ('psu', 'load', 'meter', 'scope')})
     evidence.add('approval', token=token)
     if args.diagnose_status:
         evidence.add('diagnostic_scope', channel=3, wire_trace='status commands only',
@@ -956,10 +1020,7 @@ def main(argv=None):
             meter = open_meter(args.meter_host, evidence)
         if (args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07', 'H11') or
                 (args.test_id in ('H09', 'H10') and (args.powered or args.high_current))) and not args.recall:
-            from channel_stage import KEL103Serial, KEL103UDP
-            load = (KEL103UDP(args.load_host, args.load_port, evidence=evidence)
-                    if args.load_transport == 'udp' else
-                    KEL103Serial(args.load_serial_port, evidence=evidence))
+            load = open_load(bench, evidence)
         transport = open_transport(args.port)
     except Exception:
         for instrument in (load, meter, transport):

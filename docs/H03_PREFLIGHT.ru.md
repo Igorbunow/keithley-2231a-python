@@ -50,8 +50,8 @@ CONFIRM H03 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED USB=/dev/ttyACM0 BAUD=1
 действие и не продолжать после ошибки или неизвестного состояния.
 
 ```bash
-python3 tools/hw_qualify.py preflight H03 --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0 --start-channel 1
-python3 tools/hw_qualify.py run H03 --dry-run --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0 --start-channel 1
+python3 tools/hw_qualify.py preflight H03 --config config/bench.local.toml --start-channel 1
+python3 tools/hw_qualify.py run H03 --dry-run --config config/bench.local.toml --start-channel 1
 ```
 
 После прохождения и физической проверки OFF runner остановится для review и коммита.
@@ -125,8 +125,8 @@ runner считывает нагрузку и задаёт ограниченн�
 
 ### Резервный USB-доступ
 
-Для отказа LAN runner поддерживает явный выбор `--load-transport serial`
-(`--load-serial-port /dev/ttyACM0`). Для этого подключения подготовлены LF-команды
+После отказа LAN можно явно выбрать `transport = "serial"`
+в секции `[devices.load]` файла `config/bench.local.toml` (с заданным USB-портом). Для этого подключения подготовлены LF-команды
 и ответы построчно, 115200 8N1, с allowlist H03 и остановом после любой ошибки связи.
 Перед открытием порта runner проверяет USB VID:PID `0416:5011` и точный путь; другой
 CDC-адаптер с тем же именем порта будет отклонён.
@@ -257,8 +257,8 @@ offline-регрессии: `tests/offline/test_qualification.py`. Полный 
 
 ```bash
 PYTHONPATH=src:tests:tests/hardware python3 -m unittest discover -s tests -v
-python3 tools/hw_qualify.py preflight H03 --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0 --start-channel 1
-python3 tools/hw_qualify.py run H03 --dry-run --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0 --start-channel 1
+python3 tools/hw_qualify.py preflight H03 --config config/bench.local.toml --start-channel 1
+python3 tools/hw_qualify.py run H03 --dry-run --config config/bench.local.toml --start-channel 1
 ```
 
 Старый UDP-пример:
@@ -316,7 +316,7 @@ Runner сохраняет реальные UART-байты только status-�
 64/64 SIM TESTED. Powered-диагностика выполнена: OPER3=8 и QUES3=1/2 не менялись после подтверждения дисплеев и выбора CH1. Все 274 ответа очереди ошибок нулевые; финальный OFF подтверждён оператором.
 
 ```bash
-PYTHONPATH=src python tools/hw_qualify.py run H03 --execute --start-channel 3 --diagnose-status --load-transport serial --load-serial-port /dev/ttyACM0 --prior-evidence reports/hardware/2026-10-25T222742.371680Z_H03/events.jsonl --prior-evidence reports/hardware/2026-10-25T231834.474816Z_H03/events.jsonl
+PYTHONPATH=src python tools/hw_qualify.py run H03 --execute --start-channel 3 --diagnose-status --prior-evidence reports/hardware/2026-10-25T222742.371680Z_H03/events.jsonl --prior-evidence reports/hardware/2026-10-25T231834.474816Z_H03/events.jsonl
 ```
 
 ```text

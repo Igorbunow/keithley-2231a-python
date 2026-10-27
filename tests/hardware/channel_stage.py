@@ -9,13 +9,14 @@
 """
 from __future__ import annotations
 
+from bench_config import current_bench
+
 import math
-import ipaddress
 import re
-import socket
 import time
 
 from common import StageAdapter, operator_gate, require_outputs
+from equipment.kel103 import KEL103UDP, KEL103Serial
 
 from keithley2231a import ChannelProfile, Keithley2231A, Profile, SafetyError
 
@@ -33,10 +34,16 @@ STATUS_DIAGNOSTIC_QUERIES = (
     'STAT:OPER:INST:ISUM3:ENAB?', 'STAT:QUES:INST:ISUM3:ENAB?')
 
 
-def approval_token(start_channel, load_transport='udp', load_host='192.168.22.106',
-                   load_port=18190, load_serial_port='/dev/ttyACM0', diagnose_status=False,
+def approval_token(start_channel, load_transport=None, load_host=None,
+                   load_port=None, load_serial_port=None, diagnose_status=False,
                    load_connected=False):
-    """Return the exact H03 approval bound to the selected load connection."""
+    """Return the exact H03 approval bound to the configured load connection."""
+    from bench_config import current_bench
+    device = current_bench().load
+    if load_transport is None: load_transport = device.transport
+    if load_host is None: load_host = device.host
+    if load_port is None: load_port = device.network_port
+    if load_serial_port is None: load_serial_port = device.port
     if diagnose_status and start_channel != 3:
         raise ValueError('status diagnosis is restricted to CH3')
     if load_connected and start_channel != 1:
@@ -44,7 +51,7 @@ def approval_token(start_channel, load_transport='udp', load_host='192.168.22.10
     if load_transport == 'udp':
         connection = f'LAN=UDP:{load_port}'
     elif load_transport == 'serial':
-        connection = f'USB={load_serial_port} BAUD=115200'
+        connection = f'USB={load_serial_port} BAUD={current_bench().load.baudrate}'
     else:
         raise ValueError('load transport must be udp or serial')
     if start_channel == 1:
@@ -59,316 +66,6 @@ def approval_token(start_channel, load_transport='udp', load_host='192.168.22.10
     return (f'CONFIRM H03 {action} INDEPENDENT ALL_OFF '
             f'LOAD=KEL103 INPUT=OFF {connection} {PROFILE_TOKEN} ERRBASE=CHECK')
 
-
-class KEL103UDP:
-    """Bounded KEL103 network adapter for H03 and H04-Powered load points.
-
-    @details Uses the documented KEL103 UDP command endpoint (LF-terminated
-             commands). Only qualification queries and approved CR/INPUT mutations are permitted.
-             Setpoint changes require a remotely confirmed INPUT OFF state.
-    """
-    READ_COMMANDS = frozenset(('*IDN?', ':INP?', ':FUNC?', ':RES?',
-                               ':MEAS:VOLT?', ':MEAS:CURR?', ':MEAS:POW?'))
-    WRITE_COMMANDS = frozenset((':FUNC CR', ':INP ON', ':INP OFF',
-                                ':RES 0.5OHM', ':RES 5OHM', ':RES 11OHM', ':RES 12OHM', ':RES 22OHM',
-                                ':RES 30OHM', ':RES 40OHM', ':RES 47OHM', ':RES 56OHM',
-                                ':RES 1600OHM', ':RES 2000OHM'))
-    H04P_RESISTANCES = (5.0, 11.0, 12.0, 22.0, 47.0, 56.0)
-    H09_RESISTANCES = (12.0, 40.0, 1600.0, 2000.0)
-    H10_RESISTANCES = (5.0, 30.0)
-    H10_HIGH_CURRENT_RESISTANCES = (0.5,)
-    VERIFIED_RESISTANCES = (0.5, 5.0, 11.0, 12.0, 22.0, 30.0, 40.0, 47.0, 56.0,
-                            1600.0, 2000.0)
-
-    def __init__(self, host, port=18190, timeout=1.5, sock=None, evidence=None):
-        self.host = str(ipaddress.IPv4Address(host))
-        if not isinstance(port, int) or not 1 <= port <= 65535:
-            raise ValueError('invalid KEL103 UDP port')
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError('KEL103 timeout must be finite and positive')
-        self.port, self.endpoint = port, (self.host, port)
-        self.transport = 'UDP'
-        self.timeout, self.evidence = timeout, evidence
-        if sock is None:
-            route = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            try:
-                route.connect(self.endpoint)
-                local_ip = route.getsockname()[0]
-            finally:
-                route.close()
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            try:
-                sock.bind((local_ip, port))
-            except BaseException:
-                sock.close()
-                raise
-        self.sock = sock
-        self.sock.settimeout(timeout)
-        self.live = True
-        self.verified_resistance = None
-
-    def _event(self, event, **values):
-        if self.evidence is not None:
-            self.evidence.add(event, **values)
-
-    def query(self, command):
-        """Send an allow-listed query and require a reply from the target."""
-        if not self.live:
-            raise OSError('KEL103 link uncertain; no further UDP commands')
-        if command not in self.READ_COMMANDS:
-            raise ValueError(f'KEL103 query is not permitted in H03: {command}')
-        self._event('kel103_query', command=command)
-        try:
-            self.sock.sendto((command + '\n').encode('ascii'), self.endpoint)
-            data, peer = self.sock.recvfrom(4096)
-            if peer != self.endpoint:
-                raise OSError(f'unexpected KEL103 UDP peer: {peer!r}')
-            response = data.decode('ascii').strip()
-            if not response:
-                raise OSError(f'empty KEL103 response to {command}')
-        except BaseException as exc:
-            self.live = False
-            self._event('kel103_io_error', command=command,
-                        exception_type=type(exc).__name__)
-            raise
-        safe_response = re.sub(r'(?i)(SN\s*:\s*)[^,\s]+', r'\1[REDACTED]', response)
-        self._event('kel103_read', command=command, response=safe_response)
-        print(f'KEL103 {command}: {safe_response}')
-        return response
-
-    def write(self, command):
-        """Send one H03-specific mutation; callers must verify it by query."""
-        if not self.live:
-            raise OSError('KEL103 link uncertain; no further UDP commands')
-        if command not in self.WRITE_COMMANDS:
-            raise ValueError(f'KEL103 write is not permitted in H03: {command}')
-        self._event('kel103_write', command=command)
-        try:
-            self.sock.sendto((command + '\n').encode('ascii'), self.endpoint)
-        except BaseException as exc:
-            self.live = False
-            self._event('kel103_io_error', command=command,
-                        exception_type=type(exc).__name__)
-            raise
-
-    def identify(self):
-        """Require the expected load family before any remote mutation."""
-        identity = self.query('*IDN?')
-        if 'KEL103' not in identity.upper():
-            raise SafetyError('unexpected electronic-load identity')
-        return identity
-
-    def input_state(self):
-        state = self.query(':INP?').upper()
-        if state not in ('ON', 'OFF'):
-            raise SafetyError(f'invalid KEL103 input state: {state}')
-        return state
-
-    @staticmethod
-    def _quantity(response, unit):
-        text = response.strip()
-        if text.upper().endswith(unit):
-            text = text[:-len(unit)].strip()
-        value = float(text)
-        if not math.isfinite(value) or value < 0:
-            raise SafetyError(f'invalid KEL103 measurement: {response}')
-        return value
-
-    def configure_cr(self, resistance_ohm):
-        """Select CR 12/40 Ω only while INPUT is confirmed OFF and verify it."""
-        if resistance_ohm not in (12.0, 40.0):
-            raise ValueError('H03 permits only CR 12.0 Ω and 40.0 Ω')
-        if self.input_state() != 'OFF':
-            raise SafetyError('KEL103 INPUT must be OFF before changing CR settings')
-        self.write(':FUNC CR')
-        if self.query(':FUNC?').upper() != 'CR':
-            raise SafetyError('KEL103 did not enter CR mode')
-        command = f':RES {resistance_ohm:g}OHM'
-        self.write(command)
-        if self.query(':FUNC?').upper() != 'CR':
-            raise SafetyError('KEL103 left CR mode while setting resistance')
-        actual = self._quantity(self.query(':RES?'), 'OHM')
-        if abs(actual - resistance_ohm) > 0.001:
-            raise SafetyError(f'KEL103 CR readback mismatch: {actual} Ω')
-        self.verified_resistance = resistance_ohm
-        return actual
-
-    def configure_h04p_cr(self, resistance_ohm):
-        """Select one bounded H04-Powered resistance while INPUT is confirmed OFF."""
-        if resistance_ohm not in self.H04P_RESISTANCES:
-            raise ValueError('H04-Powered CR value is not allow-listed')
-        if self.input_state() != 'OFF':
-            raise SafetyError('KEL103 INPUT must be OFF before changing CR settings')
-        self.write(':FUNC CR')
-        if self.query(':FUNC?').upper() != 'CR':
-            raise SafetyError('KEL103 did not enter CR mode')
-        self.write(f':RES {resistance_ohm:g}OHM')
-        if self.query(':FUNC?').upper() != 'CR':
-            raise SafetyError('KEL103 left CR mode while setting resistance')
-        actual = self._quantity(self.query(':RES?'), 'OHM')
-        if abs(actual - resistance_ohm) > 0.001:
-            raise SafetyError(f'KEL103 CR readback mismatch: {actual} Ω')
-        self.verified_resistance = resistance_ohm
-        return actual
-
-    def configure_h09_cr(self, resistance_ohm):
-        """Select one reviewed H09 resistance while KEL103 INPUT is OFF."""
-        if resistance_ohm not in self.H09_RESISTANCES:
-            raise ValueError('H09 CR value is not allow-listed')
-        if self.input_state() != 'OFF':
-            raise SafetyError('KEL103 INPUT must be OFF before changing CR settings')
-        self.write(':FUNC CR')
-        if self.query(':FUNC?').upper() != 'CR':
-            raise SafetyError('KEL103 did not enter CR mode')
-        self.write(f':RES {resistance_ohm:g}OHM')
-        if self.query(':FUNC?').upper() != 'CR':
-            raise SafetyError('KEL103 left CR mode while setting resistance')
-        actual = self._quantity(self.query(':RES?'), 'OHM')
-        if abs(actual - resistance_ohm) > 0.001:
-            raise SafetyError(f'KEL103 CR readback mismatch: {actual} Ω')
-        self.verified_resistance = resistance_ohm
-        return actual
-
-    def configure_h10_cr(self, resistance_ohm):
-        """Select one bounded H10 Parallel resistance while INPUT is OFF."""
-        if resistance_ohm not in self.H10_RESISTANCES:
-            raise ValueError('H10 CR value is not allow-listed')
-        if self.input_state() != 'OFF':
-            raise SafetyError('KEL103 INPUT must be OFF before changing CR settings')
-        self.write(':FUNC CR')
-        if self.query(':FUNC?').upper() != 'CR':
-            raise SafetyError('KEL103 did not enter CR mode')
-        self.write(f':RES {resistance_ohm:g}OHM')
-        if self.query(':FUNC?').upper() != 'CR':
-            raise SafetyError('KEL103 left CR mode while setting resistance')
-        actual = self._quantity(self.query(':RES?'), 'OHM')
-        if abs(actual - resistance_ohm) > .001:
-            raise SafetyError(f'KEL103 CR readback mismatch: {actual} Ω')
-        self.verified_resistance = resistance_ohm
-        return actual
-
-    def configure_h10_high_current_cr(self, resistance_ohm):
-        """Select the separately gated H10 0.50 Ω high-current load point."""
-        if resistance_ohm not in self.H10_HIGH_CURRENT_RESISTANCES:
-            raise ValueError('H10 high-current CR value is not allow-listed')
-        if self.input_state() != 'OFF':
-            raise SafetyError('KEL103 INPUT must be OFF before changing CR settings')
-        self.write(':FUNC CR')
-        if self.query(':FUNC?').upper() != 'CR':
-            raise SafetyError('KEL103 did not enter CR mode')
-        self.write(f':RES {resistance_ohm:g}OHM')
-        if self.query(':FUNC?').upper() != 'CR':
-            raise SafetyError('KEL103 left CR mode while setting CR')
-        actual = self._quantity(self.query(':RES?'), 'OHM')
-        if abs(actual - resistance_ohm) > .001:
-            raise SafetyError(f'KEL103 CR readback mismatch: {actual} Ω')
-        self.verified_resistance = actual
-        return actual
-
-    def set_input(self, enabled):
-        """Set and verify the load input; ON requires verified H03 CR setup."""
-        if type(enabled) is not bool:
-            raise TypeError('enabled must be bool')
-        if enabled:
-            if self.verified_resistance not in self.VERIFIED_RESISTANCES:
-                raise SafetyError('KEL103 CR setpoint must be verified before INPUT ON')
-            if self.input_state() != 'OFF':
-                raise SafetyError('KEL103 INPUT is already ON unexpectedly')
-        self.write(':INP ON' if enabled else ':INP OFF')
-        expected = 'ON' if enabled else 'OFF'
-        if self.input_state() != expected:
-            raise SafetyError(f'KEL103 INPUT did not verify {expected}')
-
-    def measurements(self):
-        """Read the three independent KEL103 live measurement values."""
-        return {
-            'kel103_voltage_v': self._quantity(self.query(':MEAS:VOLT?'), 'V'),
-            'kel103_current_a': self._quantity(self.query(':MEAS:CURR?'), 'A'),
-            'kel103_power_w': self._quantity(self.query(':MEAS:POW?'), 'W'),
-        }
-
-    def close(self):
-        self.sock.close()
-
-
-class KEL103Serial(KEL103UDP):
-    """Bounded H03 adapter for the KEL103 USB CDC serial interface.
-
-    @details USB serial command framing and the 115200 baud line setting are
-             community-documented and require physical confirmation on this unit.
-             This adapter never performs automatic fallback from UDP.
-    """
-    def __init__(self, port='/dev/ttyACM0', timeout=1.5, serial_port=None,
-                 evidence=None):
-        if not isinstance(port, str) or not port:
-            raise ValueError('KEL103 serial port must be a non-empty path')
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError('KEL103 timeout must be finite and positive')
-        if serial_port is None:
-            import serial
-            import os
-            from serial.tools import list_ports
-            matching = [item for item in list_ports.comports()
-                        if item.device == port and item.vid == 0x0416
-                        and item.pid == 0x5011]
-            if len(matching) != 1:
-                raise OSError('KEL103 USB adapter identity mismatch; expected 0416:5011')
-            serial_port = serial.Serial(
-                port=port, baudrate=115200, bytesize=8, parity='N', stopbits=1,
-                timeout=timeout, write_timeout=timeout, xonxoff=False,
-                rtscts=False, dsrdtr=False,
-                **({'exclusive': True} if os.name == 'posix' else {}))
-        self.port, self.timeout, self.evidence = port, timeout, evidence
-        self.transport = 'USB serial (community protocol)'
-        self.sock = serial_port
-        self.live = True
-        self.verified_resistance = None
-
-    def query(self, command):
-        if not self.live:
-            raise OSError('KEL103 link uncertain; no further serial commands')
-        if command not in self.READ_COMMANDS:
-            raise ValueError(f'KEL103 query is not permitted in H03: {command}')
-        self._event('kel103_query', command=command)
-        try:
-            if self.sock.in_waiting:
-                raise OSError('unsolicited/stale KEL103 serial input')
-            payload = (command + '\n').encode('ascii')
-            if self.sock.write(payload) != len(payload):
-                raise OSError('short KEL103 serial write')
-            self.sock.flush()
-            data = self.sock.readline(4097)
-            if not data.endswith(b'\n') or len(data) > 4096:
-                raise OSError('incomplete/oversized KEL103 serial response')
-            response = data.decode('ascii').strip()
-            if not response:
-                raise OSError('empty KEL103 serial response')
-        except BaseException as exc:
-            self.live = False
-            self._event('kel103_io_error', command=command,
-                        exception_type=type(exc).__name__)
-            raise
-        safe_response = re.sub(r'(?i)(SN\s*:\s*)[^,\s]+', r'\1[REDACTED]', response)
-        self._event('kel103_read', command=command, response=safe_response)
-        print(f'KEL103 {command}: {safe_response}')
-        return response
-
-    def write(self, command):
-        if not self.live:
-            raise OSError('KEL103 link uncertain; no further serial commands')
-        if command not in self.WRITE_COMMANDS:
-            raise ValueError(f'KEL103 write is not permitted in H03: {command}')
-        self._event('kel103_write', command=command)
-        try:
-            payload = (command + '\n').encode('ascii')
-            if self.sock.write(payload) != len(payload):
-                raise OSError('short KEL103 serial write')
-            self.sock.flush()
-        except BaseException as exc:
-            self.live = False
-            self._event('kel103_io_error', command=command,
-                        exception_type=type(exc).__name__)
-            raise
 
 
 def profile():

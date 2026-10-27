@@ -90,7 +90,7 @@ PYTHONPATH=src:tests/hardware python3 -m unittest discover -s tests -v
 Сначала можно вывести карточку preflight без открытия портов:
 
 ```bash
-PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H09 --powered --port /dev/ttyUSB3 --load-transport serial --load-serial-port /dev/ttyACM0 --meter-host 192.168.22.112
+PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H09 --powered --config config/bench.local.toml
 ```
 
 Физический запуск разрешён только после отдельного явного подтверждения ниже:
