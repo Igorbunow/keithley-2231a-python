@@ -469,3 +469,12 @@ limit probes. The limited report is labeled `H02_PROFILE_ONLY` and must not be
 used as evidence of full H02 qualification. See
 [`docs/R3_5_PROFILE_ONLY_REQUALIFICATION.ru.md`](docs/R3_5_PROFILE_ONLY_REQUALIFICATION.ru.md)
 for safety conditions and the non-I/O preflight command.
+
+### R3.5 SCPI sequence and Aux revision audit
+
+The qualification stage adapter retains one `SYST:ERR?` check after each
+command/query, but H01 and H02_PROFILE_ONLY no longer issue redundant adjacent
+error-queue polls. Malformed diagnostic replies now fail closed without any
+further I/O, and observed Main/Aux revision changes are explicitly recorded
+in evidence as observations only (never as an identity bypass). See
+[`docs/R3_5_SCPI_SEQUENCE_AND_FIRMWARE_AUDIT.ru.md`](docs/R3_5_SCPI_SEQUENCE_AND_FIRMWARE_AUDIT.ru.md).

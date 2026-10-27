@@ -40,8 +40,10 @@ STATE_QUERIES = ('INST:NSEL?', 'OUTP:STAT:ALL?', 'OUTP:SER?', 'OUTP:PARALLEL?',
                  'STAT:QUES:COND?', 'STAT:OPER:COND?')
 # SYST:REM is required by manual section 5-2. LOC restores panel control.
 # No profile, reset, setpoint, topology, timer or output mutation is allowed.
-H01_PLAN = ('SYST:REM', '*IDN?', 'SYST:ERR?', *OFF_QUERIES, 'SYST:VERS?', *STATE_QUERIES,
-            'SYST:ERR?', '*IDN?', *OFF_QUERIES)
+# StageAdapter performs one SYST:ERR? after every command except ERR? and LOC.
+# Avoid a second, explicit read immediately after an already-checked query.
+H01_PLAN = ('SYST:REM', '*IDN?', *OFF_QUERIES, 'SYST:VERS?', *STATE_QUERIES,
+            '*IDN?', *OFF_QUERIES)
 
 
 def stages():
@@ -104,14 +106,18 @@ class Evidence:
         return value
 
     def add(self, event: str, **fields):
+        revision_change = None
         if (fields.get('command') == '*IDN?' and 'response' in fields
                 and not event.startswith('kel103_')):
             parts = fields['response'].split(',')
             if len(parts) == 4:
                 if not event.startswith('dmm7510_'):
-                    self.firmware = parts[3].strip()
-                    if self.firmware not in self.firmware_observations:
-                        self.firmware_observations.append(self.firmware)
+                    observed = parts[3].strip()
+                    if self.firmware is not None and observed != self.firmware:
+                        revision_change = (self.firmware, observed)
+                    self.firmware = observed
+                    if observed not in self.firmware_observations:
+                        self.firmware_observations.append(observed)
                 parts[2] = ' [REDACTED]'
                 fields['response'] = ','.join(parts)
             else:
@@ -123,6 +129,11 @@ class Evidence:
             record['firmware_observations'] = list(self.firmware_observations)
         with self.path.open('a', encoding='utf-8') as stream:
             stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + '\n')
+        if revision_change is not None:
+            self.add('firmware_revision_drift', before=revision_change[0],
+                     after=revision_change[1],
+                     classification='OBSERVED_ONLY: firmware metadata, not identity',
+                     note='Do not suppress manufacturer/model/serial or SCPI safety checks')
         return record
 
 
@@ -532,7 +543,7 @@ def h01(transport, evidence):
     from keithley2231a import InstrumentError, Keithley2231A
 
     class H01Scope(StageAdapter):
-        READS = frozenset(c for c in H01_PLAN if c.endswith('?'))
+        READS = frozenset(c for c in H01_PLAN if c.endswith('?')) | {'SYST:ERR?'}
         WRITES = frozenset(('SYST:REM', 'SYST:LOC', 'INST:NSEL 1', 'INST:NSEL 2', 'INST:NSEL 3'))
         MAX_SECONDS = 120
 
@@ -562,11 +573,6 @@ def h01(transport, evidence):
             if answer is None: continue
             if command == '*IDN?':
                 pass  # The driver validates identity; revision is not an identity key.
-            elif command == 'SYST:ERR?':
-                code, message = answer.split(',', 1)
-                code = int(code.strip())
-                if code != 0 or not message.strip():
-                    raise ValueError('instrument error queue contains an error')
             else:
                 import math
                 value = float(answer)
@@ -586,7 +592,11 @@ def h01(transport, evidence):
                 if command == 'INST:NSEL?': initial_selection = int(value)
         require_outputs(dev)
         for channel in (1, 2, 3):
-            values = channel_snapshot(dev, channel, measured=True)
+            # output_states() has just restored the original selected channel.
+            # Do not issue an immediately repeated INST:NSEL 1 when it is already
+            # selected; channel_snapshot still validates the live INST:NSEL?.
+            values = channel_snapshot(dev, channel, measured=True,
+                                      select=not (channel == 1 and initial_selection == 1))
             if values['CHAN:OUTP?']:
                 raise ValueError(f'CH{channel} unexpectedly ON')
             evidence.add('channel_snapshot', channel=channel, phase='initial', values=values)

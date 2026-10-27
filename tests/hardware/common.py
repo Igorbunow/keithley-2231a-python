@@ -44,6 +44,7 @@ class StageAdapter:
         self.authorized_channel = None
         self.outputs = {ch: False for ch in (1, 2, 3)}
         self.expected_error = None
+        self.last_error_response = None  # Most recent auto-checked SCPI error queue reply.
 
     def operator_input(self, prompt):
         """Exclude operator response time from the instrument execution deadline."""
@@ -86,10 +87,34 @@ class StageAdapter:
             self.evidence.add('io_error', command=command, exception_type=type(exc).__name__)
             raise
         if query:
+            # The stage adapter is also a trust boundary. Diagnostic queries
+            # use raw driver replies; never follow an undecodable reply with
+            # a different SCPI command (including automatic error polling).
+            try:
+                if command == 'SYST:ERR?':
+                    code, message = answer.split(',', 1)
+                    int(code.strip())
+                    if not message.strip(): raise ValueError('empty SCPI error message')
+                elif command != '*IDN?':
+                    if answer.strip().upper() not in ('ON', 'OFF'):
+                        number = float(answer)
+                        if not math.isfinite(number): raise ValueError('non-finite number')
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                self.live = False
+                self.evidence.add('invalid_scpi_reply', command=command,
+                                  classification='UNKNOWN OUTPUT STATE; no follow-up I/O')
+                raise SafetyError(f'Invalid SCPI reply to {command}; '
+                                  'UNKNOWN OUTPUT STATE (no retry)')
+            if command == 'SYST:ERR?':
+                self.last_error_response = answer
             record = self.evidence.add('read', command=command, response=answer, units=UNITS.get(command))
             print(f'{command}: {record["response"]}')
         else:
             self._after_write(command)
+            # Show the successful write as well as query replies. Previously the
+            # terminal hid writes between error checks, giving a false impression
+            # that consecutive printed SYST:ERR? lines were adjacent on the wire.
+            print(f'SCPI WRITE: {command}')
         if command not in ('SYST:ERR?', 'SYST:LOC'):
             response = self._transfer('SYST:ERR?', True)
             code, message = response.split(',', 1)
@@ -131,26 +156,39 @@ def require_outputs(dev, expected=None, *, settle_timeout_s=0.0):
         time.sleep(.1)
 
 
-def selected_settings(dev, *, measured=False):
+def selected_settings(dev, *, measured=False, expected_channel=None):
     """Observe the current selection and its registers without assigning a channel.
 
-    Combined modes may alias a requested channel. Callers must retain the actual
-    INST:NSEL? context rather than label its registers as the requested channel.
+    Combined modes may alias a requested channel. When a channel is expected,
+    reject a selection mismatch BEFORE querying any of its settings.
     """
     commands = ('INST:NSEL?', 'VOLT?', 'CURR?', 'VOLT:LIM?', 'VOLT:LIM:STAT?',
                 'CHAN:OUTP?', 'OUTP:TIM:STAT?', 'OUTP:TIM:DEL?')
     if measured: commands += ('MEAS:VOLT?', 'MEAS:CURR?')
-    values = {command: float(dev.diagnostic_query(command)) for command in commands}
+    values = {}
+    for command in commands:
+        value = float(dev.diagnostic_query(command))
+        if command == 'INST:NSEL?' and expected_channel is not None and value != expected_channel:
+            raise SafetyError(f'Selected CH{value:g}, expected CH{expected_channel}; no settings queried')
+        values[command] = value
     if (not all(math.isfinite(v) for v in values.values()) or values['INST:NSEL?'] not in (1, 2, 3) or
             any(values[key] not in (0, 1) for key in ('VOLT:LIM:STAT?', 'CHAN:OUTP?', 'OUTP:TIM:STAT?'))):
         raise SafetyError(f'Invalid selected settings snapshot: {values}')
     return values
 
 
-def channel_snapshot(dev, channel, *, measured=False):
-    """Read one channel strictly; a selection alias is not a channel readback."""
-    dev.diagnostic_write(f'INST:NSEL {channel}')
-    values = selected_settings(dev, measured=measured)
+def channel_snapshot(dev, channel, *, measured=False, select=True):
+    """Read one channel strictly; always verify INST:NSEL? even if select=False.
+
+    select=False is allowed only when the caller knows the selection was just
+    restored by a validated driver readback. The snapshot still checks the actual
+    selection and refuses an aliased/wrong context before using its values.
+    """
+    if type(channel) is not int or channel not in (1, 2, 3) or type(select) is not bool:
+        raise ValueError('channel must be 1, 2 or 3; select must be bool')
+    if select:
+        dev.diagnostic_write(f'INST:NSEL {channel}')
+    values = selected_settings(dev, measured=measured, expected_channel=channel)
     if values['INST:NSEL?'] != channel:
         raise SafetyError(f'Invalid CH{channel} settings snapshot: {values}')
     return values

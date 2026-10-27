@@ -104,8 +104,7 @@ def _snapshot(dev, io, evidence, *, final=False):
                       or abs(values['VOLT:LIM?'] - expected_limit) > .0049
                       or values['VOLT:LIM:STAT?'] != 1 or values['OUTP:TIM:STAT?'] != 0):
             raise ValueError('protected profile readback mismatch')
-        dev.check_errors()
-
+        # StageAdapter already checked the queue after the final readback.
 
 
 def _h02_panel_and_debug(dev, io, evidence):
@@ -121,8 +120,10 @@ def _h02_panel_and_debug(dev, io, evidence):
     operator_gate(H02_PANEL_TOKEN, 'После панели введите точное подтверждение.', io)
     evidence.add('approval', phase='front_panel_max_voltage', token=H02_PANEL_TOKEN)
     dev.diagnostic_write('SYST:REM')
-    panel_error = dev.diagnostic_query('SYST:ERR?')
-    if not panel_error.startswith('0,'):
+    # StageAdapter already queried and validated SYST:ERR? immediately after REM.
+    # Reuse that evidence rather than drain the queue twice.
+    panel_error = io.last_error_response
+    if not panel_error or not panel_error.startswith('0,'):
         raise SafetyError(f'panel voltage-limit attempt left error: {panel_error}')
     require_outputs(dev)
     for ch in (1, 2, 3):
@@ -209,7 +210,7 @@ def h02(transport, evidence, *, profile_only=False):
         dev.diagnostic_write('SYST:REM')
         dev.identity()
         instrument_key = dev.instrument_key
-        dev.check_errors()
+        # Identity was already followed by StageAdapter's error-queue check.
         require_outputs(dev)
         if any(float(dev.diagnostic_query(command)) != 0 for command in MODES):
             raise ValueError('independent mode required before profile application')
@@ -246,12 +247,12 @@ def h02(transport, evidence, *, profile_only=False):
         else:
             _h02_panel_and_debug(dev, io, evidence)
         require_outputs(dev)
-        dev.check_errors()
         dev.emergency_off()
+        # Confirm all OFF first, then make CH1 the final selected channel.
+        # The former order queried INST:NSEL? twice back-to-back at this point.
+        require_outputs(dev)
         dev.diagnostic_write('INST:NSEL 1')
         if float(dev.diagnostic_query('INST:NSEL?')) != 1: raise ValueError('CH1 selection restore failed')
-        require_outputs(dev)
-        dev.check_errors()
         dev.diagnostic_write('SYST:LOC')
         outcome, reason = 'PASS', ('profile-only readback checks passed; physical OFF confirmation required'
                                    if profile_only else
@@ -268,7 +269,6 @@ def h02(transport, evidence, *, profile_only=False):
                 dev.diagnostic_write('SYST:REM')
                 dev.diagnostic_write('OUTP 0')
                 require_outputs(dev)
-                dev.check_errors()
                 dev.diagnostic_write('SYST:LOC')
             except BaseException as cleanup_exc:
                 outcome, reason = 'ABORTED', 'shutdown not confirmed; UNKNOWN OUTPUT STATE'
@@ -379,8 +379,9 @@ def _h04_max_voltage_panel_gate(io, dev, evidence):
                  token=H04_MAXV_TOKEN)
 
     dev.diagnostic_write('SYST:REM')
-    error = dev.diagnostic_query('SYST:ERR?')
-    if not error.startswith('0,'):
+    # The REM command above already checked SYST:ERR? via StageAdapter.
+    error = io.last_error_response
+    if not error or not error.startswith('0,'):
         raise SafetyError(f'front-panel max voltage attempt left instrument error: {error}')
     states = require_outputs(dev)
     if any(states.values()):
