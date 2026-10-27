@@ -222,6 +222,10 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
               'НЕ ВКЛЮЧАТЬ ВЫХОДЫ до разрешения H07. Токен:\n'
               f'{approval_token(load_serial_port)}')
         return
+    if test_id == 'H11':
+        from h11_stage import preflight as h11_preflight
+        h11_preflight(port, load_serial_port, load_transport)
+        return
     if test_id == 'H02':
         from profile_stage import (H02_CHANNELS, H02_DEBUG_TOKEN, H02_PANEL_TOKEN,
                                    TOKEN as token, H02Scope)
@@ -697,7 +701,7 @@ def main(argv=None):
     if args.command == 'preflight' or not args.execute:
         print('DRY RUN: порт не открыт, SCPI не отправлены.')
         return 0
-    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09', 'H10'):
+    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09', 'H10', 'H11'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
     if args.test_id in ('H09', 'H10') and (args.powered or args.high_current) and (
@@ -810,6 +814,19 @@ def main(argv=None):
         if args.load_transport != 'serial':
             print('BLOCKED: H07 requires the reviewed KEL103 USB connection; ports not opened.')
             return 2
+    if args.test_id == 'H11':
+        from h11_stage import FINAL_TOKEN as final_token, approval_token, h11
+        if args.load_transport != 'serial' or args.load_serial_port != '/dev/ttyACM0':
+            print('BLOCKED: H11 requires the reviewed KEL103 USB connection /dev/ttyACM0; ports not opened.')
+            return 2
+        required = ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09')
+        if any(not stage_passed(stages()[stage][-1]) for stage in required):
+            print('BLOCKED: H11 requires reviewed PASS H01–H09; ports not opened.')
+            return 2
+        if not stages()['H10'][-1].startswith('**PARTIAL (HW OBSERVED'):
+            print('BLOCKED: H11 requires reviewed H10 result; ports not opened.')
+            return 2
+        token, runner = approval_token(args.load_serial_port), h11
     if not sys.stdin.isatty():
         print('BLOCKED: требуется интерактивный терминал; пакетный ввод запрещён.')
         return 2
@@ -920,7 +937,7 @@ def main(argv=None):
     try:
         if args.test_id == 'H08' or (args.test_id in ('H09', 'H10') and (args.powered or args.high_current)):
             meter = open_meter(args.meter_host, evidence)
-        if (args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07') or
+        if (args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07', 'H11') or
                 (args.test_id in ('H09', 'H10') and (args.powered or args.high_current))) and not args.recall:
             from channel_stage import KEL103Serial, KEL103UDP
             load = (KEL103UDP(args.load_host, args.load_port, evidence=evidence)
@@ -948,7 +965,7 @@ def main(argv=None):
                       diagnose_status=args.diagnose_status,
                       load_connected=args.load_connected)
                if args.test_id == 'H03' else
-               runner(transport, evidence, load) if args.test_id in ('H04P', 'H05', 'H06', 'H07') else
+               runner(transport, evidence, load) if args.test_id in ('H04P', 'H05', 'H06', 'H07', 'H11') else
                runner(transport, evidence))
     physical_off = False
     try:

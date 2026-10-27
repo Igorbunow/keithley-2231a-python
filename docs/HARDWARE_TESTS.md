@@ -109,6 +109,7 @@ Record `*IDN?`, SCPI version, selected channel readbacks, basic output states, s
 
 - Log 30+ min at controlled constant load; independently sample a DMM periodically. Compare timestamp drift, missing frames, statistics, Ah/Wh and CSV file after process restart.
 - Use low-energy resistor or diode+resistor for `voltage_sweep`, observe staircase voltage and measured I, verify protective cutoff and final OFF. No reverse current or battery discharge tests.
+- H11 passed on hardware in the bounded scope: public `voltage_sweep()` through the shared dispatcher, four CH1/KEL103 CR 40 Ω points, 40 mA stop-on-CC, 0.0657 W peak, four CSV rows, 506 clean error replies and final physical OFF. See [H11 operator card and results](H11_PREFLIGHT.ru.md) and [full report](hardware_reports/2026-10-27T085111.022855Z_H11_qualification.md).
 - Connect two PSUs (each with its own profile) and one DMM. Test sequential coordinator behavior and timestamp dispersion; document it as software timing, **not simultaneous trigger**.
 - Test transport reconnect, burst requests, stale replies, unexpected control traffic and failure to recover OFF without false safety claims.
 
