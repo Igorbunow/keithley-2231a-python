@@ -190,7 +190,7 @@ class Keithley2231A:
                 raise SafetyError('Use the driver API; direct adapter sends are forbidden')
             self._command(command, query=query)
             if self._link_uncertain:
-                raise TransportError('Link uncertain; no commands or automatic reconnect')
+                raise TransportError('UNKNOWN OUTPUT STATE: link uncertain; no commands or automatic reconnect')
             session_command = self._session_command(command)
             if session_command not in ('*IDN?', 'SYST:ERR?', 'SYST:REM', 'SYST:RWLOCK', 'SYST:LOC'):
                 self._ensure_remote()
@@ -207,6 +207,14 @@ class Keithley2231A:
                 elif session_command.startswith('INST:NSEL '):
                     self._selected_channel = int(session_command[-1])
             else:
+                # Even custom transports must not hand a malformed line to a
+                # decoder/trace callback and then permit another wire command.
+                if (not isinstance(answer, str) or not answer.isascii() or
+                        any(char in answer for char in ('\r', '\n', '\x00'))):
+                    self._latch_fault(link_uncertain=True)
+                    raise InstrumentError(
+                        f'Malformed SCPI reply to {command}; UNKNOWN OUTPUT STATE '
+                        '(link uncertain; no retry)')
                 self._trace('reply', command, response=answer)
             return answer
 
@@ -370,21 +378,34 @@ class Keithley2231A:
     def _query(self, command: str) -> str:
         return self._dispatch_scpi(command, query=True)
 
+    def _malformed_value(self, description: str) -> None:
+        """A consumed, unparseable reply makes further exchange unsafe."""
+        self._latch_fault(link_uncertain=True)
+        raise InstrumentError(f'{description}; UNKNOWN OUTPUT STATE '
+                              '(link uncertain; no retry)')
+
     def _num(self, command: str) -> float:
         s = self._query(command)
         try:
             val = float(s)
-            if not math.isfinite(val): raise ValueError("not finite")
-            return val
-        except ValueError as exc:
-            raise InstrumentError(f"Unexpected response to {command}: {s!r}") from exc
+            if not math.isfinite(val): raise ValueError('not finite')
+        except (TypeError, ValueError, OverflowError):
+            self._malformed_value(f'Unexpected response to {command}: {s!r}')
+        return val
 
-    @staticmethod
-    def _bool(value: str) -> bool:
-        x = value.strip().upper()
-        if x in ('1', 'ON'): return True
-        if x in ('0', 'OFF'): return False
-        raise InstrumentError(f"Invalid boolean response: {value!r}")
+    def _uint(self, command: str) -> int:
+        """Parse integer-valued SCPI register/channel replies without truncation."""
+        value = self._num(command)
+        if not value.is_integer() or value < 0:
+            self._malformed_value(f'Invalid unsigned integer response to {command}: {value!r}')
+        return int(value)
+
+    def _bool(self, value: str) -> bool:
+        if isinstance(value, str):
+            x = value.strip().upper()
+            if x in ('1', 'ON'): return True
+            if x in ('0', 'OFF'): return False
+        self._malformed_value(f'Invalid boolean response: {value!r}')
 
     def identity(self) -> str:
         """Return the latest raw *IDN? reply; firmware revision is not device identity."""
@@ -392,14 +413,14 @@ class Keithley2231A:
             ans = self._query('*IDN?')
             parts = [part.strip() for part in ans.split(',')]
             if len(parts) != 4 or parts[0].lower() != 'keithley instruments' or parts[1].upper() != '2231A-30-3' or not parts[3]:
-                self._latch_fault()
+                self._latch_fault(link_uncertain=True)
                 raise InstrumentError('Not a valid Keithley 2231A-30-3 identity')
             key = (parts[0].lower(), parts[1].upper(), parts[2])
             if self._expected_serial is not None and parts[2] != self._expected_serial:
-                self._latch_fault()
+                self._latch_fault(link_uncertain=True)
                 raise InstrumentError('Instrument serial number mismatch')
             if self._instrument_key is not None and key != self._instrument_key:
-                self._latch_fault()
+                self._latch_fault(link_uncertain=True)
                 raise InstrumentError('Instrument identity changed during connection')
             self._instrument_key = key
             self._idn = ans
@@ -443,7 +464,9 @@ class Keithley2231A:
         """Latch a semantic safety fault and report shutdown evidence accurately."""
         self._latch_fault()
         if self._link_uncertain:
-            raise SafetyError(f'{why}; UNKNOWN OUTPUT STATE (link uncertain; no retry)')
+            raise SafetyError(f'{why}; UNKNOWN OUTPUT STATE (link uncertain; no retry). '
+                              'Use independent front-panel or external shutdown and '
+                              'verify outputs physically before a new session')
         if self._try_confirm_fault_shutdown():
             raise SafetyError(f'{why}; output OFF confirmed by readback')
         raise SafetyError(f'{why}; UNKNOWN OUTPUT STATE (shutdown unconfirmed)')
@@ -458,11 +481,16 @@ class Keithley2231A:
         """
         with self._lock:
             if self._link_uncertain:
-                raise SafetyError('Link uncertain; no further operations')
+                raise SafetyError('UNKNOWN OUTPUT STATE: link uncertain; no further operations')
             try:
                 return self._output_states()
-            except Exception:
+            except Exception as exc:
                 self._latch_fault()
+                if self._link_uncertain:
+                    raise SafetyError(
+                        f'UNKNOWN OUTPUT STATE ({exc}; link uncertain; no retry). '
+                        'Use independent front-panel or external shutdown, '
+                        'verify the outputs physically, then open a new session') from exc
                 raise
 
     def _output_states(self) -> dict[int, bool]:
@@ -478,10 +506,9 @@ class Keithley2231A:
         if self._profile is None and self._bool(self._query('OUTP:SER?')):
             enabled = self._bool(self._query('OUTP:STAT:ALL?'))
             return {ch: enabled for ch in (1, 2, 3)}
-        selected_value = self._num('INST:NSEL?')
-        if selected_value != int(selected_value) or int(selected_value) not in (1, 2, 3):
-            raise InstrumentError('Invalid selected-channel response')
-        selected = int(selected_value)
+        selected = self._uint('INST:NSEL?')
+        if selected not in (1, 2, 3):
+            self._malformed_value(f'Invalid selected-channel response: {selected}')
         states = {}
         try:
             for ch in (1, 2, 3):
@@ -1217,8 +1244,8 @@ class Keithley2231A:
                 questionable_mask = None
                 regulation_source = None
                 if with_regulation:
-                    operation_mask = int(self._num(f'STAT:OPER:INST:ISUM{ch}:COND?'))
-                    questionable_mask = int(self._num(f'STAT:QUES:INST:ISUM{ch}:COND?'))
+                    operation_mask = self._uint(f'STAT:OPER:INST:ISUM{ch}:COND?')
+                    questionable_mask = self._uint(f'STAT:QUES:INST:ISUM{ch}:COND?')
 
                     def decode_regulation(mask: int) -> str | None:
                         cv, cc = bool(mask & 1), bool(mask & 2)
@@ -1280,9 +1307,9 @@ class Keithley2231A:
             self._require_ready()
             try:
                 return {'identity': self._idn, 'scpi_version': self._query('SYST:VERS?'),
-                        'status_byte': int(self._num('*STB?')),
-                        'questionable_condition': int(self._num('STAT:QUES:COND?')),
-                        'operation_condition': int(self._num('STAT:OPER:COND?'))}
+                        'status_byte': self._uint('*STB?'),
+                        'questionable_condition': self._uint('STAT:QUES:COND?'),
+                        'operation_condition': self._uint('STAT:OPER:COND?')}
             except Exception as exc:
                 self._trip(f'Status query failed: {exc}')
 

@@ -257,6 +257,128 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(fake.cmds, [])
         self.assertEqual(dev.diagnostic_query('VOLT?'), '0.0')
 
+    def test_malformed_numeric_measurement_blocks_shutdown_on_uncertain_link(self):
+        class InvalidMeasurement(FakeTransport):
+            corrupt = False
+
+            def query(self, command):
+                reply = super().query(command)
+                if self.corrupt and command == 'MEAS:VOLT?':
+                    return 'not-a-voltage'
+                return reply
+
+        fake = InvalidMeasurement()
+        dev = Keithley2231A(fake)
+        dev.apply_profile(profile(), confirmed_wiring='independent')
+        dev.output(1, True)
+        fake.corrupt = True
+        off_before = fake.cmds.count('OUTP 0')
+        with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE.*link uncertain'):
+            dev.read_channel(1)
+        self.assertEqual(fake.cmds[-1], 'MEAS:VOLT?')
+        self.assertEqual(fake.cmds.count('OUTP 0'), off_before)
+        self.assertTrue(fake.values[1]['CHAN:OUTP'])  # Physical OFF is NOT proved.
+        self.assertTrue(dev.faulted)
+        self.assertFalse(dev.armed)
+        commands = list(fake.cmds)
+        from keithley2231a import TransportError
+        with self.assertRaises(TransportError):
+            dev.emergency_off()
+        self.assertEqual(fake.cmds, commands)
+
+    def test_malformed_boolean_output_state_preserves_unknown_without_restore(self):
+        class InvalidOutput(FakeTransport):
+            def query(self, command):
+                reply = super().query(command)
+                if command == 'CHAN:OUTP?' and self.active_ch == 2:
+                    return 'maybe'
+                return reply
+
+        fake = InvalidOutput()
+        fake.values[2]['CHAN:OUTP'] = 1.0
+        dev = Keithley2231A(fake)
+        with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE.*link uncertain'):
+            dev.output_states()
+        self.assertEqual(fake.cmds[-1], 'CHAN:OUTP?')
+        self.assertEqual(fake.active_ch, 2)  # No restore command after bad reply.
+        self.assertNotIn('OUTP 0', fake.cmds)
+        self.assertTrue(fake.values[2]['CHAN:OUTP'])
+        self.assertTrue(dev.faulted)
+        before = list(fake.cmds)
+        with self.assertRaises(SafetyError):
+            dev.output_states()
+        self.assertEqual(fake.cmds, before)
+
+    def test_invalid_selected_channel_reply_never_issues_next_command(self):
+        class InvalidSelection(FakeTransport):
+            response = '2.5'
+
+            def query(self, command):
+                reply = super().query(command)
+                return self.response if command == 'INST:NSEL?' else reply
+
+        for bad_reply in ('2.5', '4', 'nan'):
+            with self.subTest(reply=bad_reply):
+                fake = InvalidSelection()
+                fake.response = bad_reply
+                dev = Keithley2231A(fake)
+                with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE'):
+                    dev.output_states()
+                self.assertEqual(fake.cmds[-1], 'INST:NSEL?')
+                self.assertTrue(dev.faulted)
+
+    def test_non_string_scpi_reply_fails_closed_before_trace_or_more_io(self):
+        class NonStringStatus(FakeTransport):
+            def query(self, command):
+                reply = super().query(command)
+                return None if command == 'SYST:VERS?' else reply
+
+        fake = NonStringStatus()
+        dev = Keithley2231A(fake)
+        dev.apply_profile(profile(), confirmed_wiring='independent')
+        dev.output(1, True)
+        off_before = fake.cmds.count('OUTP 0')
+        with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE'):
+            dev.status()
+        self.assertEqual(fake.cmds[-1], 'SYST:VERS?')
+        self.assertEqual(fake.cmds.count('OUTP 0'), off_before)
+        self.assertTrue(fake.values[1]['CHAN:OUTP'])
+
+    def test_unexpected_identity_is_terminal_without_off_or_remote_retry(self):
+        class WrongIdentity(FakeTransport):
+            def query(self, command):
+                if command == '*IDN?':
+                    self.cmds.append(command)
+                    return 'not-a-complete-identity'
+                return super().query(command)
+
+        fake = WrongIdentity()
+        dev = Keithley2231A(fake)
+        with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE'):
+            dev.output_states()
+        self.assertEqual(fake.cmds, ['*IDN?'])
+        self.assertTrue(dev.faulted)
+        from keithley2231a import TransportError
+        with self.assertRaises(TransportError):
+            dev.emergency_off()
+        self.assertEqual(fake.cmds, ['*IDN?'])
+
+    def test_fractional_status_register_is_not_silently_truncated(self):
+        class FractionalStatus(FakeTransport):
+            def query(self, command):
+                reply = super().query(command)
+                if command == 'STAT:OPER:INST:ISUM1:COND?':
+                    return '1.5'
+                return reply
+
+        fake = FractionalStatus()
+        dev = Keithley2231A(fake)
+        dev.apply_profile(profile(), confirmed_wiring='independent')
+        with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE'):
+            dev.read_channel(1)
+        self.assertEqual(fake.cmds[-1], 'STAT:OPER:INST:ISUM1:COND?')
+        self.assertTrue(dev.faulted)
+
     def test_scpi_error_shutdown_is_checked_and_never_retried(self):
         class ErrorReply(FakeTransport):
             def query(self, command):
@@ -911,7 +1033,13 @@ class TestDevice(unittest.TestCase):
         self.assertNotIn('CURR 0', fake.cmds)
         self.assertFalse(any(cmd.startswith(('VOLT:LIM ', 'VOLT:LIM:STAT ', 'CURR ', 'VOLT '))
                              for cmd in fake.cmds))
-        self.assertIn('OUTP 0', fake.cmds)
+        # A different physical identity is not a trustworthy OFF command target.
+        self.assertNotIn('OUTP 0', fake.cmds)
+        before = list(fake.cmds)
+        from keithley2231a import TransportError
+        with self.assertRaises(TransportError):
+            dev.emergency_off()
+        self.assertEqual(fake.cmds, before)
 
     def test_firmware_revision_is_reported_but_not_used_as_identity(self):
         fake = FakeTransport()

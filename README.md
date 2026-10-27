@@ -148,6 +148,31 @@ monitoring is no substitute for independent OVP/OCP, an external interlock, or
 physical shutdown when communications fail. Monitor behavior on this revision
 has **not** been verified on physical hardware.
 
+## R3.3 — Truthful output state after malformed replies (software-only; SIM TESTED)
+
+`output_states()` returns `{1: bool, 2: bool, 3: bool}` **only when the
+relevant state readbacks succeeded**. A boolean `False` means a confirmed OFF
+reply; it never stands for an unreadable or unknown channel. A failed read
+raises instead of returning a partial map or silently assigning `False`.
+
+A malformed SCPI numeric, boolean, integer register/channel-selection, or
+non-text/framing reply, or an unexpected instrument identity, latches the
+connection **uncertain**, disarms the profile, and prohibits further
+SCPI commands. This also prevents the former attempt to restore a selected channel after an invalid state response. A communication
+exception/interrupted exchange uses the same no-retry rule. An ordinary,
+well-formed setpoint mismatch is a semantic fault and may still use the one
+shared best-effort shutdown/readback procedure while the link is known-good.
+
+**If `UNKNOWN OUTPUT STATE` is reported:** assume the supply may still be
+energized. Do **not** repeat `emergency_off()` on the failed connection and do
+not assume that `close()` switches outputs off. If safe and available, use the
+physical front-panel output control; otherwise isolate the load with an
+independent disconnect/interlock. Confirm OFF independently (for example with
+an appropriate meter), inspect wiring, and reconnect deliberately with a new
+transport/session before re-arming. A software test cannot establish that a
+physical load has been isolated. The new parser/fault cases are SIM TESTED;
+no R3.3 hardware qualification has been performed.
+
 ## CH3 status workaround and limitations
 
 CH3 remains available through the normal profile, `set_channel(3, ...)`,
