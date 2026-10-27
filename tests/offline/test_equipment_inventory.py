@@ -52,7 +52,7 @@ class InventoryTests(unittest.TestCase):
     def test_serial_identity_and_close_on_mismatch(self):
         port = Mock()
         port.query.return_value = 'ACME,Wrong,serial,1.0'
-        with patch('qualification.verify_serial_adapter'), patch.object(inventory, 'open_psu', return_value=port):
+        with patch('connection_gate.verify_serial_adapter'), patch.object(inventory, 'open_psu', return_value=port):
             with self.assertRaisesRegex(ValueError, 'identity/model mismatch'):
                 inventory._psu(self.config, self.evidence)
         port.query.assert_called_once_with('*IDN?')

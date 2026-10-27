@@ -42,9 +42,9 @@ def _endpoint(device) -> str:
 
 def _psu(config, evidence) -> str:
     # Reuse the same VID/PID verification and transport as qualification H01.
-    from qualification import verify_serial_adapter
+    from connection_gate import verify_serial_adapter
     device = config.psu
-    verify_serial_adapter(device.port, f'{device.usb_vid}:{device.usb_pid}')
+    verify_serial_adapter(device)
     transport = open_psu(config)
     try:
         identity = transport.query('*IDN?')

@@ -94,14 +94,14 @@ class TestBenchConfig(TestCase):
         for source_file in (Path(__file__).resolve().parents[2] / 'src/keithley2231a').glob('*.py'):
             self.assertNotIn('equipment.', source_file.read_text())
 
-    def test_serial_adapter_user_confirmation_matches_bench_config(self):
-        from qualification import verify_serial_adapter
+    def test_serial_adapter_identity_comes_from_config_and_os(self):
+        from connection_gate import verify_serial_adapter
         cfg = load_bench(EXAMPLE)
-        activate_bench(cfg)
         ports = [type('Port', (), {'device': cfg.psu.port, 'vid': 0x10C4, 'pid': 0xEA60})()]
-        self.assertTrue(verify_serial_adapter(cfg.psu.port, 'CP2102 10C4:EA60', ports))
-        with self.assertRaisesRegex(ValueError, 'configured for the bench'):
-            verify_serial_adapter(cfg.psu.port, 'FT232 0403:6001', ports)
+        self.assertTrue(verify_serial_adapter(cfg.psu, ports))
+        wrong = [type('Port', (), {'device': cfg.psu.port, 'vid': 0x0403, 'pid': 0x6001})()]
+        with self.assertRaisesRegex(ValueError, 'observed .* configured'):
+            verify_serial_adapter(cfg.psu, wrong)
 
     def test_equipment_connections_are_absent_from_stage_source(self):
         hardware = Path(__file__).resolve().parents[1] / 'hardware'

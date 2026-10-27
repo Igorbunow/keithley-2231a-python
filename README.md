@@ -455,3 +455,7 @@ Historical H01–H12 evidence refers to its original implementation revision and
 
 See [R1 infrastructure notes](docs/R1_INFRASTRUCTURE.md) and its
 [Russian translation](docs/R1_INFRASTRUCTURE.ru.md).
+
+### Shared hardware connection gate (R3.5)
+
+Every interactive hardware qualification run derives its instrument endpoints and USB IDs solely from `config/bench.local.toml`. The shared connection gate prints all participating instrument settings, validates serial VID:PID against OS discovery without opening a port, and asks the operator to confirm the configuration SHA-256 once before the stage-specific wiring/power gate. No manual retyping of serial adapters or endpoints. Network identity is checked by the existing instrument adapters after opening. This does **not** replace operator physical wiring approval or final OFF verification. See `docs/R3_BENCH_CONNECTION_GATE.ru.md`.

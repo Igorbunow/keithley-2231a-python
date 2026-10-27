@@ -624,27 +624,25 @@ class TestQualification(unittest.TestCase):
                     self.assertTrue(any('MOVE CH1->CH2' in a for a in answers))
                     self.assertTrue(any('DISCONNECT CH2' in a for a in answers))
 
-    def test_adapter_confirmation_must_match_selected_serial_port(self):
+    def test_configured_serial_path_must_match_os_inventory(self):
+        from dataclasses import replace
+        from bench_config import load_bench, EXAMPLE
         q = self.module()
-
+        instrument = load_bench(EXAMPLE).psu
         class Port:
             device = '/dev/ttyUSB3'
             vid = 0x10C4
             pid = 0xEA60
-            description = 'CP2102 USB to UART Bridge Controller'
-
         class WrongPort:
             device = '/dev/ttyUSB1'
             vid = 0x0403
             pid = 0x6010
-            description = 'FTDI Dual RS232-HS'
-
         ports = [Port(), WrongPort()]
-        self.assertTrue(q.verify_serial_adapter('/dev/ttyUSB3', 'TTL 10C4:EA60', ports))
-        with self.assertRaisesRegex(ValueError, 'different USB VID:PID|does not match'):
-            q.verify_serial_adapter('/dev/ttyUSB1', 'TTL 10C4:EA60', ports)
-        with self.assertRaisesRegex(ValueError, 'different USB VID:PID|does not match'):
-            q.verify_serial_adapter('/dev/ttyUSB3', 'TTL 0403:6010', ports)
+        self.assertTrue(q.verify_serial_adapter(replace(instrument, port='/dev/ttyUSB3'), ports))
+        with self.assertRaisesRegex(ValueError, 'observed .* configured'):
+            q.verify_serial_adapter(instrument, ports)
+        with self.assertRaisesRegex(ValueError, 'not present'):
+            q.verify_serial_adapter(replace(instrument, port='/dev/ttyUSB9'), ports)
 
     def test_dry_run_never_constructs_transport(self):
         q = self.module()
@@ -867,7 +865,7 @@ class TestQualification(unittest.TestCase):
                 elif fault == 'boot_timeout':
                     self.assertEqual(sessions[-1].cmds[-1], 'CHAN:OUTP?')
 
-    def test_h06_recall_cli_skips_load_and_rechecks_explicit_port(self):
+    def test_h06_recall_cli_uses_config_and_rechecks_same_adapter(self):
         import h06_recall
         from test_driver import FakeTransport
         q = self.module()
@@ -884,6 +882,9 @@ class TestQualification(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / 'docs/hardware_reports').mkdir(parents=True)
+            local = root / 'bench.local.toml'
+            from bench_config import EXAMPLE
+            local.write_bytes(EXAMPLE.read_bytes())
             with patch.object(q, 'ROOT', root), \
                     patch.object(q, 'software_metadata', return_value={}), \
                     patch.object(q, 'stage_passed', return_value=True), \
@@ -893,15 +894,16 @@ class TestQualification(unittest.TestCase):
                     patch.object(h06_recall, 'recall', side_effect=simulated_runner), \
                     patch('equipment.kel103.KEL103Serial', side_effect=AssertionError('load opened')), \
                     patch('equipment.kel103.KEL103UDP', side_effect=AssertionError('load opened')), \
-                    patch('builtins.input', side_effect=['CP2102 10C4:EA60', h06_recall.TOKEN,
+                    patch('builtins.input', side_effect=[q.connection_token(q.current_bench(), 'H06', recall=True),
+                                                       h06_recall.TOKEN,
                                                        'CONFIRM H06 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF']), \
                     contextlib.redirect_stdout(io.StringIO()):
-                result = q.main(['run', 'H06', '--recall', '--execute', ])
+                result = q.main(['run', 'H06', '--recall', '--config', str(local), '--execute', ])
             self.assertEqual(result, 0)
             self.assertEqual([call.args for call in opened.call_args_list],
                              [('/dev/ttyUSB1',), ('/dev/ttyUSB1',)])
             self.assertEqual([call.args for call in verify.call_args_list],
-                             [('/dev/ttyUSB1', 'CP2102 10C4:EA60')] * 2)
+                             [(q.current_bench().psu,)] * 2)
 
     def test_h06_timer_expiry_and_reenable_use_common_driver_path(self):
         from h06_stage import h06
@@ -1829,7 +1831,8 @@ class TestQualification(unittest.TestCase):
                         contextlib.redirect_stdout(output):
                     outcome = h02(fake, evidence)
                 records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
-                self.assertEqual(outcome, 'PASS' if bad == 'none' else 'ABORTED' if bad == 'timeout' else 'FAIL',
+                self.assertEqual(outcome, 'PASS' if bad == 'none' else 'ABORTED'
+                                 if bad in ('timeout', 'identity_change') else 'FAIL',
                                  [r for r in records if r['event'] == 'stage_error'])
                 self.assertTrue(fake.closed)
                 self.assertFalse(any(cmd in ('OUTP 1', 'CHAN:OUTP 1', 'SYST:RWLOCK', '*CLS', '*RST') for cmd in fake.cmds))
@@ -2245,7 +2248,8 @@ class TestQualification(unittest.TestCase):
                 evidence = q.Evidence(Path(tmp) / 'events.jsonl', 'H01')
                 with contextlib.redirect_stdout(io.StringIO()):
                     outcome = q.h01(fake, evidence)
-                self.assertEqual(outcome, 'PASS' if bad == 'none' else 'ABORTED' if bad == 'timeout' else 'FAIL')
+                self.assertEqual(outcome, 'PASS' if bad == 'none' else 'ABORTED'
+                                 if bad in ('timeout', 'model') else 'FAIL')
                 if bad == 'none': self.assert_driver_path(evidence, fake)
                 content = evidence.path.read_text()
                 self.assertNotIn('SECRET', content)

@@ -23,6 +23,8 @@ import sys
 import time
 
 from bench_config import load_bench, activate_bench, current_bench, EXAMPLE, bench_summary
+from connection_gate import (connection_card, connection_token, required_devices,
+                             verify_serial_adapter)
 from equipment.factory import open_psu, open_load, open_meter as equipment_open_meter
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -139,30 +141,6 @@ def open_meter(host, evidence):
         raise ValueError('meter host differs from the active bench configuration')
     return equipment_open_meter(bench, evidence)
 
-
-def verify_serial_adapter(port, adapter, available_ports=None):
-    """Require the operator-confirmed USB VID:PID to match the selected port."""
-    match = re.search(r'(?<![0-9A-Fa-f])([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(?![0-9A-Fa-f])', adapter)
-    config = current_bench().psu
-    if match is not None and (int(match.group(1), 16), int(match.group(2), 16)) != (int(config.usb_vid, 16), int(config.usb_pid, 16)):
-        raise ValueError('operator confirmed a different USB VID:PID than configured for the bench')
-    if match is None:
-        raise ValueError('Adapter confirmation must include USB VID:PID, for example 10C4:EA60')
-    if available_ports is None:
-        from serial.tools import list_ports
-        available_ports = list_ports.comports()
-    selected = Path(port).resolve()
-    for candidate in available_ports:
-        if Path(candidate.device).resolve() != selected:
-            continue
-        actual = (candidate.vid, candidate.pid)
-        expected = (int(match.group(1), 16), int(match.group(2), 16))
-        if actual == expected:
-            return True
-        actual_text = ('unknown' if None in actual else f'{actual[0]:04X}:{actual[1]:04X}')
-        raise ValueError(f'USB adapter {port} is {actual_text}, does not match confirmed '
-                         f'{expected[0]:04X}:{expected[1]:04X}')
-    raise ValueError(f'USB adapter port {port} is not present in serial-port inventory')
 
 
 def preflight(test_id, port=None, load_host=None, load_port=None, start_channel=1,
@@ -711,6 +689,12 @@ def main(argv=None):
         parser.error('--load-connected requires H03 start channel 1')
     if args.diagnose_status and (args.test_id != 'H03' or args.start_channel != 3):
         parser.error('--diagnose-status requires H03 --start-channel 3')
+    # The example bench is documentation/test data, not an approved live setup.
+    # Interactive hardware runs must explicitly use a real local bench file.
+    if args.command == 'run' and args.execute and bench.source == EXAMPLE.resolve():
+        print('BLOCKED: для аппаратного запуска нужен --config config/bench.local.toml; '
+              'bench.example.toml не является подтверждённой настройкой стенда.')
+        return 2
     if args.command == 'inventory':
         if args.test_id is not None:
             parser.error('inventory does not accept a stage ID')
@@ -756,6 +740,12 @@ def main(argv=None):
               'Этот CLI однопроходный; другой работающий процесс остановите Ctrl-C. Не переподключаться автоматически.')
         return 0
     if args.test_id is None: parser.error('preflight/run requires one test ID')
+    if args.command == 'preflight' or not args.execute:
+        print(connection_card(bench, args.test_id,
+                          required_devices(args.test_id, recall=args.recall,
+                                           powered=args.powered, high_current=args.high_current),
+                          recall=args.recall, powered=args.powered,
+                          high_current=args.high_current))
     preflight(args.test_id, args.port, args.load_host, args.load_port,
               args.start_channel, args.load_transport, args.load_serial_port,
               args.diagnose_status, args.load_connected, args.recall, args.meter_host,
@@ -901,28 +891,41 @@ def main(argv=None):
             print('BLOCKED: H12 requires reviewed PASS H11; port not opened.')
             return 2
         runner = h12
+    # One bench gate for ALL stages. Never ask the operator to retype a
+    # port, serial speed or VID:PID: the validated TOML is authoritative.
+    devices = required_devices(args.test_id, recall=args.recall,
+                               powered=args.powered, high_current=args.high_current)
+    print(connection_card(bench, args.test_id, devices, recall=args.recall,
+                          powered=args.powered, high_current=args.high_current))
     if not sys.stdin.isatty():
         print('BLOCKED: требуется интерактивный терминал; пакетный ввод запрещён.')
         return 2
+    bench_token = connection_token(bench, args.test_id, recall=args.recall,
+                                   powered=args.powered, high_current=args.high_current)
     try:
-        adapter = input('Проверенный USB–TTL адаптер (модель, USB VID:PID; без серийного номера): ').strip()
-        if not adapter:
-            print('BLOCKED: не указан проверенный адаптер.')
-            return 2
+        # USB discovery is read-only; network identity is verified on opening
+        # through existing equipment adapters, never assumed from the prompt.
         try:
-            verify_serial_adapter(args.port, adapter)
-        except (ImportError, OSError, ValueError) as exc:
-            print(f'BLOCKED: {exc}; последовательный порт не открыт.')
+            for name in devices:
+                instrument = getattr(bench, name)
+                if instrument.transport == 'serial':
+                    verify_serial_adapter(instrument)
+                    print(f'USB {name}: {instrument.port} VID:PID match PASS')
+        except (ImportError, OSError, ValueError, TypeError) as exc:
+            print(f'BLOCKED: {exc}; соединения не открывались.')
             return 2
-        while input(f'Подтверждение:\n{token}\n> ').strip() != token:
+        if input(f'Подтвердите подключения согласно конфигурации:\n{bench_token}\n> ').strip() != bench_token:
+            print('BLOCKED: соединения не подтверждены; порты не открывались.')
+            return 2
+        while input(f'Подтверждение схемы и условий этапа:\n{token}\n> ').strip() != token:
             print('Подтверждение не распознано; ожидаю повторный ввод. Для остановки — Ctrl-C.')
     except (EOFError, KeyboardInterrupt):
-        print('ABORTED до открытия порта.')
+        print('ABORTED до открытия соединений.')
         return 2
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H%M%S.%fZ')
     evidence = Evidence(ROOT / f'reports/hardware/{now}_{args.test_id}/events.jsonl', args.test_id)
     evidence.add('metadata', **software_metadata(), port=args.port, baud=bench.psu.baudrate, framing='8N1',
-                 adapter=adapter,
+                 adapter=f'{bench.psu.usb_vid}:{bench.psu.usb_pid} (OS verified)',
                  topology=('external Parallel: CH1+↔CH2+ and CH1−↔CH2−; KEL103 and DMM7510 across pair; CH3 open'
                            if args.test_id == 'H10' and (args.powered or args.high_current) else
                            'external Series: jumper CH1− to CH2+; aggregate load and DMM across CH1+/CH2−; CH3 open'
@@ -1005,6 +1008,9 @@ def main(argv=None):
                  devices={name: {'model': getattr(bench, name).model,
                                  'transport': getattr(bench, name).transport}
                           for name in ('psu', 'load', 'meter', 'scope')})
+    evidence.add('bench_connection_confirmation', token=bench_token, sha256=bench.sha256,
+                 devices=list(devices), serial_os_verified=[name for name in devices
+                     if getattr(bench, name).transport == 'serial'])
     evidence.add('approval', token=token)
     if args.diagnose_status:
         evidence.add('diagnostic_scope', channel=3, wire_trace='status commands only',
@@ -1032,7 +1038,7 @@ def main(argv=None):
         return 2
     def reopen_recall_transport():
         """Open once after a completed operator cycle; never scan or auto-retry."""
-        verify_serial_adapter(args.port, adapter)
+        verify_serial_adapter(bench.psu)
         return open_transport(args.port)
 
     outcome = (runner(transport, evidence, meter) if args.test_id == 'H08' else
