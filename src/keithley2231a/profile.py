@@ -65,7 +65,7 @@ class PowerStep:
 class Profile:
     name: str
     channels: tuple[ChannelProfile, ChannelProfile, ChannelProfile]
-    wiring: str = "independent"  # independent, series, parallel, tracking
+    wiring: str = "independent"  # independent or tracking
     # Separate from combining: Tracking has voltage ratios based on initial setpoints.
     lock_front_panel: bool = True
     # seconds > 0; periodic verification during monitoring
@@ -86,8 +86,8 @@ class Profile:
             raise ProfileError("profile name required")
         if not isinstance(self.lock_front_panel, bool):
             raise ProfileError("lock_front_panel must be bool")
-        if self.wiring not in ("independent", "parallel", "tracking"):
-            raise ProfileError("invalid wiring mode")
+        if self.wiring not in ("independent", "tracking"):
+            raise ProfileError("use ParallelProfile for parallel wiring; otherwise choose independent/tracking")
         if not isinstance(self.verify_every_s, (int, float)) or isinstance(self.verify_every_s, bool) or not math.isfinite(self.verify_every_s) or self.verify_every_s <= 0:
             raise ProfileError("verify_every_s must be > 0")
         if self.access not in ("control", "power_only"):
@@ -202,3 +202,55 @@ class SeriesProfile:
                 isinstance(self.verify_every_s, bool) or
                 not math.isfinite(self.verify_every_s) or self.verify_every_s <= 0):
             raise ProfileError("verify_every_s must be > 0")
+
+
+@dataclass(frozen=True)
+class ParallelProfile:
+    """Guarded CH1+CH2 output with aggregate current and software voltage caps."""
+    name: str
+    max_voltage: float
+    max_current: float
+    initial_voltage: float
+    initial_current: float
+    channel3: ChannelProfile
+    expected_regulation: str = 'auto'
+    lock_front_panel: bool = False
+    verify_every_s: float = 5.0
+    wiring: str = 'parallel'
+    access: str = 'control'
+
+    def __post_init__(self):
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ProfileError('name required')
+        values = (self.max_voltage, self.max_current,
+                  self.initial_voltage, self.initial_current)
+        if any(not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v)
+               for v in values):
+            raise ProfileError('parallel profile values must be finite numbers')
+        if not (0 < self.max_voltage <= 30):
+            raise LimitsError('parallel max_voltage must be in (0, 30]')
+        if not (0 < self.max_current <= 6):
+            raise LimitsError('parallel aggregate max_current must be in (0, 6]')
+        if not (0 <= self.initial_voltage <= self.max_voltage):
+            raise LimitsError('initial_voltage exceeds parallel software cap')
+        if not (0 <= self.initial_current <= self.max_current):
+            raise LimitsError('initial_current exceeds parallel aggregate current cap')
+        for label, value, step in (('max_voltage', self.max_voltage, .01),
+                                   ('initial_voltage', self.initial_voltage, .01),
+                                   ('max_current', self.max_current, .001),
+                                   ('initial_current', self.initial_current, .001)):
+            if abs(value / step - round(value / step)) > 1e-6:
+                raise ProfileError(f'{label} resolution {step}')
+        if not isinstance(self.channel3, ChannelProfile):
+            raise ProfileError('channel3 must be ChannelProfile')
+        self.channel3.validate(3)
+        if self.expected_regulation not in ('auto', 'cv', 'cc'):
+            raise ProfileError('expected_regulation must be auto/cv/cc')
+        if self.wiring != 'parallel' or self.access != 'control':
+            raise ProfileError('ParallelProfile requires parallel wiring and control access')
+        if type(self.lock_front_panel) is not bool:
+            raise ProfileError('lock_front_panel must be bool')
+        if (not isinstance(self.verify_every_s, (int, float)) or
+                isinstance(self.verify_every_s, bool) or
+                not math.isfinite(self.verify_every_s) or self.verify_every_s <= 0):
+            raise ProfileError('verify_every_s must be > 0')

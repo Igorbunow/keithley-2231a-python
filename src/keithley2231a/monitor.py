@@ -114,7 +114,11 @@ class Acquisition:
         for ch in channels:
             # Always poll even if recording is disabled: do not disable protection!
             reading = self.device.read_channel(ch)
-            if profile.channels[ch-1].record:
+            if profile.wiring in ('series', 'parallel'):
+                record = profile.channel3.record if ch == 3 else True
+            else:
+                record = profile.channels[ch-1].record
+            if record:
                 with self._lock: self.stats[ch].add(reading, max_gap_s=self.max_gap_s)
                 results.append(reading)
         return results

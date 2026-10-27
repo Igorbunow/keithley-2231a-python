@@ -173,9 +173,23 @@ voltage/current setpoint and is read through `read_channel(1)` with label `CH1+C
 observed mode. `combined_outputs(True, confirm_all_channels_safe=True)` uses global
 ON and may also energize CH3, so leave CH3 open or otherwise make it safe. In the
 observed firmware, Series `VOLT:LIM:STAT?` is disabled; the profile enforces its
-aggregate voltage cap in software and does not claim hardware OVP. The powered
-Series runner passed offline simulation only; H09 physical CV/CC qualification is
-pending.
+aggregate voltage cap in software and does not claim hardware OVP. H09 powered
+Series is HW OBSERVED for the reported CV/CC points; CC regulation readback has
+an explicit firmware status-bit caveat in the qualification matrix.
+
+### External Parallel operation
+
+Parallel uses a dedicated `ParallelProfile`; with outputs OFF, connect CH1+ to
+CH2+ and CH1− to CH2−, then confirm `confirmed_wiring='parallel'`. The pair is
+addressed through `read_channel(1)` as `CH1+CH2`; independent CH2 reads and
+setpoint changes are rejected. `max_current` is the aggregate limit (up to 6 A),
+and it is written only after Parallel mode is selected while outputs remain OFF.
+On the observed firmware, Parallel disables the pair's hardware voltage-limit
+enable. `max_voltage` is therefore enforced by the library as a software cap,
+not hardware OVP. `combined_outputs(True, confirm_all_channels_safe=True)` is a
+global ON and also energizes CH3. H10 OFF behavior is HW OBSERVED; powered
+Parallel remains unqualified. Simulations do not establish terminal current
+sharing or physical protection behavior.
 
 ## Installation and offline tests
 

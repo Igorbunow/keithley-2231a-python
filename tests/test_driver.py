@@ -2,7 +2,7 @@ import math
 import unittest
 from dataclasses import replace
 from keithley2231a import (Profile, ProfileError, ChannelProfile, InstrumentError, LimitsError, SafetyError,
-                          SeriesProfile, Keithley2231A, Acquisition, ChannelStats, Reading)
+                          SeriesProfile, ParallelProfile, Keithley2231A, Acquisition, ChannelStats, Reading)
 
 class FakeTransport:
     """Stateful minimal SCPI emulator; validates command sequences, no hardware."""
@@ -722,12 +722,88 @@ class TestDevice(unittest.TestCase):
         self.dev.apply_profile(profile())
         self.assertTrue(all(values['OUTP:TIM:STAT'] == 0 for values in self.fake.values.values()))
 
-    def test_combined_enable_is_blocked_pending_setpoint_qualification(self):
-        self.dev.emergency_off()
-        self.dev.apply_profile(profile('parallel'), confirmed_wiring='parallel')
-        with self.assertRaises(SafetyError):
-            self.dev.combined_outputs(True, confirm_all_channels_safe=True)
-        self.assertFalse(self.fake.values[3]['CHAN:OUTP'])
+
+    def test_parallel_profile_uses_aggregate_setpoint_and_software_voltage_cap(self):
+        class ParallelTransport(FakeTransport):
+            def write(self, cmd):
+                if cmd.startswith('CURR '):
+                    requested = float(cmd.split()[1])
+                    if not self.flags['OUTP:PARALLEL'] and requested > 3.0:
+                        raise AssertionError('independent channel current exceeds 3 A')
+                    if self.flags['OUTP:PARALLEL'] and requested > 6.0:
+                        raise AssertionError('parallel aggregate current exceeds 6 A')
+                super().write(cmd)
+                if cmd == 'OUTP:PARALLEL 1':
+                    self.values[1]['VOLT:LIM:STAT'] = 0.
+                    self.values[2]['VOLT:LIM:STAT'] = 0.
+                elif cmd == 'OUTP:PARALLEL 0':
+                    total_i = self.values[1]['CURR']
+                    self.values[1]['CURR'] = total_i / 2
+                    self.values[2]['CURR'] = total_i / 2
+                    self.values[2]['VOLT'] = self.values[1]['VOLT']
+                    self.values[1]['VOLT:LIM:STAT'] = 0.
+                    self.values[2]['VOLT:LIM:STAT'] = 0.
+            def query(self, cmd):
+                if self.flags['OUTP:PARALLEL'] and cmd == 'INST:NSEL?':
+                    self.cmds.append(cmd)
+                    return '1' if self.active_ch == 2 else str(self.active_ch)
+                if self.flags['OUTP:PARALLEL'] and self.active_ch in (1, 2) and cmd == 'VOLT:LIM:STAT?':
+                    self.cmds.append(cmd)
+                    return '0'
+                return super().query(cmd)
+
+        fake = ParallelTransport()
+        dev = Keithley2231A(fake)
+        p = ParallelProfile('bounded parallel', 3.0, .300, 2.0, .100,
+                            ChannelProfile(4., .5, 1., .1), lock_front_panel=False)
+        dev.apply_profile(p, confirmed_wiring='parallel')
+        self.assertTrue(dev.armed)
+        self.assertEqual(fake.flags['OUTP:PARALLEL'], 1)
+        self.assertEqual(dev.read_channel(1, with_regulation=False).label, 'CH1+CH2')
+        with self.assertRaises(SafetyError): dev.read_channel(2)
+        dev.set_channel(1, voltage=2.5, current=.2)
+        with self.assertRaises(SafetyError): dev.set_channel(2, voltage=2.5)
+        dev.combined_outputs(True, confirm_all_channels_safe=True)
+        self.assertEqual(dev.output_states(), {1: True, 2: True, 3: True})
+        with self.assertRaises(LimitsError): dev.set_channel(1, voltage=3.01)
+        dev.combined_outputs(False)
+        self.assertEqual(dev.output_states(), {1: False, 2: False, 3: False})
+        dev.emergency_off()
+
+    def test_parallel_profile_sets_aggregate_current_only_after_parallel_mode(self):
+        class ParallelCurrentTransport(FakeTransport):
+            def write(self, cmd):
+                if cmd.startswith('CURR '):
+                    requested = float(cmd.split()[1])
+                    ceiling = 6.0 if self.flags['OUTP:PARALLEL'] else 3.0
+                    if requested > ceiling:
+                        raise AssertionError(f'current {requested} exceeds active mode ceiling {ceiling}')
+                super().write(cmd)
+                if cmd == 'OUTP:PARALLEL 1':
+                    self.values[1]['VOLT:LIM:STAT'] = 0.
+                    self.values[2]['VOLT:LIM:STAT'] = 0.
+            def query(self, cmd):
+                if self.flags['OUTP:PARALLEL'] and self.active_ch in (1, 2) and cmd == 'VOLT:LIM:STAT?':
+                    self.cmds.append(cmd)
+                    return '0'
+                return super().query(cmd)
+
+        fake = ParallelCurrentTransport()
+        dev = Keithley2231A(fake)
+        p = ParallelProfile('aggregate 4 A', 3.0, 4.0, 2.0, 4.0,
+                            ChannelProfile(4., .5, 1., .1), lock_front_panel=False)
+        dev.apply_profile(p, confirmed_wiring='parallel')
+        mode_index = fake.cmds.index('OUTP:PARALLEL 1')
+        current_index = fake.cmds.index('CURR 4.000')
+        self.assertLess(mode_index, current_index)
+        self.assertTrue(dev.armed)
+        self.assertEqual(fake.values[1]['CURR'], 4.0)
+        dev.emergency_off()
+
+    def test_generic_profile_rejects_parallel_mode(self):
+        p = profile()
+        with self.assertRaisesRegex(ProfileError, 'ParallelProfile'):
+            Profile('legacy parallel', p.channels, wiring='parallel')
 
     def test_combined_output_off_waits_for_delayed_instrument_status(self):
         class DelayedOff(FakeTransport):
