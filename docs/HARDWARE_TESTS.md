@@ -170,3 +170,9 @@ Outcome: PASS / HW OBSERVED; no calibrated metrology or unrestricted rated limit
 claimed. See the [H04P report](hardware_reports/2026-10-26T123057.662164Z_H04P_qualification.md),
 [raw event log](../reports/hardware/2026-10-26T123057.662164Z_H04P/events.jsonl), and
 [qualification matrix](hardware_reports/qualification_matrix_2026-10-25.md).
+
+H12 is prepared as an OFF-only final-state check. Fault injection and explicit
+new-session recovery are simulation tested; the physical phase remains NOT_RUN.
+No powered USB disconnect is requested. See [H12 procedure](H12_PREFLIGHT.ru.md).
+
+The physical H12 OFF-only pass is recorded in the [H12 report](hardware_reports/2026-10-27T091202.942542Z_H12_qualification.md). USB-loss recovery remains simulation tested only.

@@ -1424,6 +1424,7 @@ class TestQualification(unittest.TestCase):
         self.assertTrue(q.stage_passed(q.stages()['H04'][-1]))
         self.assertTrue(q.stage_passed('**PASS (OFF-only; reviewed)**'))
         self.assertTrue(q.stage_passed(q.stages()['H01'][-1]))
+        self.assertTrue(q.stage_passed(q.stages()['H11'][-1]))
         self.assertTrue(q.stage_passed(
             '**PASS (HW OBSERVED; reviewed; [evidence](report.md))**'))
         self.assertFalse(q.stage_passed('NOT_RUN (requalification; historical PASS)'))

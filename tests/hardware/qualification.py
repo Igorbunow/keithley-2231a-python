@@ -51,9 +51,13 @@ def stages():
 
 def stage_passed(status: str) -> bool:
     """Accept a reviewed PASS with an explanatory suffix, never a prefix match."""
+    # Matrix cells may append Markdown evidence links after the status. Parse
+    # the status token itself; never let a later historical PASS override FAIL.
     normalized = status.strip()
-    if normalized.startswith('**') and normalized.endswith('**'):
-        normalized = normalized[2:-2].strip()
+    if normalized.startswith('**'):
+        closing = normalized.rfind('**')
+        if closing > 1:
+            normalized = normalized[2:closing].strip()
     else:
         normalized = re.sub(r'^\*\*(PASS)\*\*', r'\1', normalized)
     return re.fullmatch(r'PASS(?:\s+\(.*\))?', normalized) is not None
@@ -221,6 +225,10 @@ def preflight(test_id, port, load_host='192.168.22.106', load_port=18190, start_
               'После записи runner выключит CH1 и INPUT, проверит OFF и запросит DISCONNECT.\n'
               'НЕ ВКЛЮЧАТЬ ВЫХОДЫ до разрешения H07. Токен:\n'
               f'{approval_token(load_serial_port)}')
+        return
+    if test_id == 'H12':
+        from h12_stage import preflight as h12_preflight
+        h12_preflight(port)
         return
     if test_id == 'H11':
         from h11_stage import preflight as h11_preflight
@@ -701,7 +709,7 @@ def main(argv=None):
     if args.command == 'preflight' or not args.execute:
         print('DRY RUN: порт не открыт, SCPI не отправлены.')
         return 0
-    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09', 'H10', 'H11'):
+    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09', 'H10', 'H11', 'H12'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
     if args.test_id in ('H09', 'H10') and (args.powered or args.high_current) and (
@@ -827,6 +835,12 @@ def main(argv=None):
             print('BLOCKED: H11 requires reviewed H10 result; ports not opened.')
             return 2
         token, runner = approval_token(args.load_serial_port), h11
+    if args.test_id == 'H12':
+        from h12_stage import TOKEN as token, FINAL_TOKEN as final_token, h12
+        if not stage_passed(stages()['H11'][-1]):
+            print('BLOCKED: H12 requires reviewed PASS H11; port not opened.')
+            return 2
+        runner = h12
     if not sys.stdin.isatty():
         print('BLOCKED: требуется интерактивный терминал; пакетный ввод запрещён.')
         return 2
@@ -919,6 +933,9 @@ def main(argv=None):
                                 'V-cap 4.00/4.05/4.10 V; I-cap 0.300/0.400/0.500 A; '
                                 'only CH1 ON, CR40; 180 s acquisition with one 12 s sampling pause'
                                 if args.test_id == 'H07' else
+                                'H12 OFF only: V-set 1/1.5/2 V, I-set 0.100/0.200/0.300 A; '
+                                'V-cap 2/3/4 V; software I-cap 0.300/0.400/0.500 A'
+                                if args.test_id == 'H12' else
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
                  independent_meter=({'model': 'DMM7510', 'host': args.meter_host, 'port': 5025,
                                      'function': 'DCV 10 V, NPLC 1, front terminals'}
