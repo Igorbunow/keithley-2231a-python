@@ -105,6 +105,16 @@ class Keithley2231A:
         channel = _CommandChannel(self)
         self._io = debug_adapter(channel) if debug_adapter is not None else channel
 
+    def _latch_fault(self, *, link_uncertain: bool = False) -> None:
+        """Latch faults consistently; an uncertain link requires a NEW transport.
+
+        An uncertain wire exchange forbids *all* further commands on this
+        connection, including an unverified automatic output-off attempt.
+        """
+        self._faulted, self._armed = True, False
+        if link_uncertain:
+            self._link_uncertain = True
+
     @property
     def debug_transport(self) -> Transport:
         """Expose diagnostic adapter policy state; sending outside dispatch is refused."""
@@ -181,8 +191,7 @@ class Keithley2231A:
             try:
                 answer = self._raw.query(command) if query else self._raw.write(command)
             except BaseException as exc:
-                self._link_uncertain = True
-                self._faulted, self._armed = True, False
+                self._latch_fault(link_uncertain=True)
                 self._trace('io_error', command, exception_type=type(exc).__name__)
                 raise
             if not query:
@@ -247,23 +256,29 @@ class Keithley2231A:
     @property
     def faulted(self) -> bool: return self._faulted
 
-    def _write(self, command: str):
+    def _dispatch_scpi(self, command: str, *, query: bool):
+        """Single guarded adapter dispatch for writes and queries.
+
+        Neither SCPI commands nor transport reads are automatically retried.
+        Adapter exceptions latch a fault; wire exceptions additionally latch
+        the uncertain-link state in _execute().
+        """
         with self._lock:
             self._dispatch_depth += 1
-            try: self._io.write(command)
-            except Exception:
-                self._faulted, self._armed = True, False
+            try:
+                return self._io.query(command) if query else self._io.write(command)
+            except BaseException:
+                self._latch_fault()
                 raise
-            finally: self._dispatch_depth -= 1
+            finally:
+                self._dispatch_depth -= 1
+
+    def _write(self, command: str):
+        self._dispatch_scpi(command, query=False)
 
     def _query(self, command: str) -> str:
-        with self._lock:
-            self._dispatch_depth += 1
-            try: return self._io.query(command)
-            except Exception:
-                self._faulted, self._armed = True, False
-                raise
-            finally: self._dispatch_depth -= 1
+        return self._dispatch_scpi(command, query=True)
+
     def _num(self, command: str) -> float:
         s = self._query(command)
         try:
@@ -286,14 +301,14 @@ class Keithley2231A:
             ans = self._query('*IDN?')
             parts = [part.strip() for part in ans.split(',')]
             if len(parts) != 4 or parts[0].lower() != 'keithley instruments' or parts[1].upper() != '2231A-30-3' or not parts[3]:
-                self._faulted, self._armed = True, False
+                self._latch_fault()
                 raise InstrumentError('Not a valid Keithley 2231A-30-3 identity')
             key = (parts[0].lower(), parts[1].upper(), parts[2])
             if self._expected_serial is not None and parts[2] != self._expected_serial:
-                self._faulted, self._armed = True, False
+                self._latch_fault()
                 raise InstrumentError('Instrument serial number mismatch')
             if self._instrument_key is not None and key != self._instrument_key:
-                self._faulted, self._armed = True, False
+                self._latch_fault()
                 raise InstrumentError('Instrument identity changed during connection')
             self._instrument_key = key
             self._idn = ans
@@ -321,12 +336,26 @@ class Keithley2231A:
         if self._profile is None or not self._armed or self._faulted:
             raise SafetyError('No active validated profile or instrument faulted')
 
+    def _try_confirm_fault_shutdown(self) -> bool:
+        """One shutdown-and-readback route; never reuse an uncertain link."""
+        if self._link_uncertain:
+            return False
+        try:
+            if self._off_confirmed():
+                self._expected_outputs = {ch: False for ch in (1, 2, 3)}
+                return True
+        except Exception:
+            pass
+        return False
+
     def _trip(self, why: str):
-        self._faulted = True
-        self._armed = False
-        try: self._off_confirmed()
-        except Exception: pass
-        raise SafetyError(f'{why}; emergency output-off attempted (not guaranteed)')
+        """Latch a semantic safety fault and report shutdown evidence accurately."""
+        self._latch_fault()
+        if self._link_uncertain:
+            raise SafetyError(f'{why}; UNKNOWN OUTPUT STATE (link uncertain; no retry)')
+        if self._try_confirm_fault_shutdown():
+            raise SafetyError(f'{why}; output OFF confirmed by readback')
+        raise SafetyError(f'{why}; UNKNOWN OUTPUT STATE (shutdown unconfirmed)')
 
     def output_states(self) -> dict[int, bool]:
         """Read all channel ON states without applying a profile or changing outputs.
@@ -342,7 +371,7 @@ class Keithley2231A:
             try:
                 return self._output_states()
             except Exception:
-                self._faulted, self._armed = True, False
+                self._latch_fault()
                 raise
 
     def _output_states(self) -> dict[int, bool]:
@@ -399,7 +428,7 @@ class Keithley2231A:
                     raise SafetyError('A channel remains ON after OUTP 0')
                 self._expected_outputs = {ch: False for ch in (1, 2, 3)}
             except BaseException:
-                self._faulted = True
+                self._latch_fault()
                 raise
 
     def apply_profile(self, profile: Profile, *, confirmed_wiring: str | None = None) -> None:
@@ -476,8 +505,7 @@ class Keithley2231A:
                     self.verify_profile()
             except BaseException:
                 self._profile = None
-                self._armed = False
-                self._faulted = True
+                self._latch_fault()
                 try: self._write('OUTP 0')
                 except Exception: pass
                 raise
@@ -566,8 +594,7 @@ class Keithley2231A:
                 self.verify_profile()
             except BaseException:
                 self._profile = None
-                self._armed = False
-                self._faulted = True
+                self._latch_fault()
                 try: self._write('OUTP 0')
                 except Exception: pass
                 raise
@@ -655,8 +682,7 @@ class Keithley2231A:
                 self.verify_profile()
             except BaseException:
                 self._profile = None
-                self._armed = False
-                self._faulted = True
+                self._latch_fault()
                 try: self._write('OUTP 0')
                 except Exception: pass
                 raise
@@ -1150,17 +1176,38 @@ class Keithley2231A:
         with self._lock: return self._query('SYST:ERR?')
 
     def check_errors(self) -> str:
-        """Consume one error entry and reject any nonzero code or malformed reply."""
+        """Consume exactly one SCPI error; fail closed on unexpected replies.
+
+        A well-formed nonzero SCPI error while armed causes one verified
+        shutdown attempt. A malformed reply can indicate lost framing; no
+        follow-up command is sent on that connection. Never claim OFF unless
+        the instrument has acknowledged and verified it.
+        """
         with self._lock:
             response = self.error()
             try:
                 code, message = response.split(',', 1)
-                clear = int(code.strip()) == 0 and bool(message.strip())
-            except (ValueError, TypeError):
-                clear = False
-            if not clear:
-                self._faulted, self._armed = True, False
-                raise InstrumentError(f'Instrument error: {response}')
+                code = int(code.strip())
+                if not message.strip():
+                    raise ValueError('missing message')
+            except (AttributeError, ValueError, TypeError):
+                self._latch_fault(link_uncertain=True)
+                raise InstrumentError(
+                    f'Malformed SCPI error response: {response!r}; '
+                    'UNKNOWN OUTPUT STATE (link uncertain)')
+            if code != 0:
+                was_armed = self._armed
+                self._latch_fault()
+                if was_armed:
+                    if self._try_confirm_fault_shutdown():
+                        raise InstrumentError(
+                            f'Instrument error: {response}; output OFF confirmed by readback')
+                    raise InstrumentError(
+                        f'Instrument error: {response}; UNKNOWN OUTPUT STATE '
+                        '(shutdown unconfirmed)')
+                raise InstrumentError(
+                    f'Instrument error: {response}; output state not checked '
+                    '(no active profile)')
             return response
 
     def beep(self):

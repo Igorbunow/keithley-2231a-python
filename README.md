@@ -94,6 +94,15 @@ latches the connection as uncertain; neither API reconnects or retries it.
 `debug_adapter` is a qualification policy factory around the same command engine;
 sending directly through that adapter is refused outside driver dispatch.
 
+SCPI error handling (R2.3): `check_errors()` consumes **one** `SYST:ERR?`
+entry. A valid nonzero error disarms the active profile and, if it was armed,
+attempts a verified all-output OFF. It reports `output OFF confirmed` only after
+readback; a failed confirmation is reported as `UNKNOWN OUTPUT STATE`.
+Malformed error replies may indicate a desynchronized stream: the link is
+latched uncertain, with **no further commands or retries** on that connection.
+Without an armed profile, error checking does not change output settings.
+This behavior is SIM TESTED; real-hardware requalification is pending.
+
 H01–H05 use this mechanism and shared checks in `tests/hardware/common.py`.
 Historical hardware reports apply to their recorded source versions; the changed
 path requires H01/H02/H03/H04/H04P replay before H05 proceeds.
