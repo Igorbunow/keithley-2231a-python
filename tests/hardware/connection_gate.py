@@ -48,13 +48,15 @@ def verify_serial_adapter(instrument, available_ports=None):
     raise ValueError(f'USB adapter {instrument.port} is not present in serial-port inventory')
 
 
-def connection_token(bench, stage_id, *, recall=False, powered=False, high_current=False):
-    suffix = ('-RECALL' if recall else '-HIGH-CURRENT' if high_current
+def connection_token(bench, stage_id, *, recall=False, powered=False, high_current=False,
+                     profile_only=False):
+    suffix = ('-PROFILE-ONLY' if profile_only else '-RECALL' if recall else '-HIGH-CURRENT' if high_current
               else '-POWERED' if powered else '')
     return f'CONFIRM BENCH {stage_id}{suffix} SHA256={bench.sha256[:12].upper()}'
 
 
-def connection_card(bench, stage_id, devices, *, recall=False, powered=False, high_current=False):
+def connection_card(bench, stage_id, devices, *, recall=False, powered=False, high_current=False,
+                    profile_only=False):
     lines = [f'ПОДКЛЮЧЕНИЯ ИЗ BENCH CONFIG: {bench.source.name} (SHA256 {bench.sha256})',
              f'Этап: {stage_id}; используются: {", ".join(devices)}']
     for name in devices:
@@ -74,5 +76,6 @@ def connection_card(bench, stage_id, devices, *, recall=False, powered=False, hi
     lines.append('Это подтверждение соединений НЕ разрешает включение выходов и НЕ заменяет '
                  'отдельное подтверждение схемы/нагрузки.')
     lines.append('Общий токен: ' + connection_token(bench, stage_id, recall=recall,
-                                                  powered=powered, high_current=high_current))
+                                                  powered=powered, high_current=high_current,
+                                                  profile_only=profile_only))
     return '\n'.join(lines)

@@ -459,3 +459,13 @@ See [R1 infrastructure notes](docs/R1_INFRASTRUCTURE.md) and its
 ### Shared hardware connection gate (R3.5)
 
 Every interactive hardware qualification run derives its instrument endpoints and USB IDs solely from `config/bench.local.toml`. The shared connection gate prints all participating instrument settings, validates serial VID:PID against OS discovery without opening a port, and asks the operator to confirm the configuration SHA-256 once before the stage-specific wiring/power gate. No manual retyping of serial adapters or endpoints. Network identity is checked by the existing instrument adapters after opening. This does **not** replace operator physical wiring approval or final OFF verification. See `docs/R3_BENCH_CONNECTION_GATE.ru.md`.
+
+### R3.5.2 targeted OFF-only Independent requalification
+
+The hardware qualification runner supports `H02 --profile-only` as a separately
+approved, bounded no-load check of the existing protected Independent profile.
+It reuses the H02 driver/scopes and skips the full H02 front-panel and debug
+limit probes. The limited report is labeled `H02_PROFILE_ONLY` and must not be
+used as evidence of full H02 qualification. See
+[`docs/R3_5_PROFILE_ONLY_REQUALIFICATION.ru.md`](docs/R3_5_PROFILE_ONLY_REQUALIFICATION.ru.md)
+for safety conditions and the non-I/O preflight command.

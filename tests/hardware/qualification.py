@@ -146,7 +146,7 @@ def open_meter(host, evidence):
 def preflight(test_id, port=None, load_host=None, load_port=None, start_channel=1,
               load_transport=None, load_serial_port=None, diagnose_status=False,
               load_connected=False, recall=False, meter_host=None, powered=False,
-              high_current=False):
+              high_current=False, profile_only=False):
     """Print a human-readable card; never contact hardware."""
     bench = current_bench()
     if port is None: port = bench.psu.port
@@ -189,7 +189,8 @@ def preflight(test_id, port=None, load_host=None, load_port=None, start_channel=
             from combined_off_stage import preflight as h09_preflight
             h09_preflight(port)
         return
-    print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
+    if not (test_id == 'H02' and profile_only):
+        print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
     if test_id == 'H08':
         from h08_stage import preflight as h08_preflight
         h08_preflight(port, meter_host)
@@ -233,6 +234,25 @@ def preflight(test_id, port=None, load_host=None, load_port=None, start_channel=
     if test_id == 'H11':
         from h11_stage import preflight as h11_preflight
         h11_preflight(port, load_serial_port, load_transport)
+        return
+    if test_id == 'H02' and profile_only:
+        from profile_stage import H02_CHANNELS, PROFILE_ONLY_TOKEN
+        print('R3.5.2: OFF-only Independent profile verification (NOT full H02).')
+        print(f'Keithley: {port}; параметры из bench config. Все CH OFF; нагрузка INPUT OFF '
+              'и физически отсоединена; клеммы свободны, нет перемычек, DUT и общей шины. '
+              'Output Recall=Off; аварийный сетевой выключатель доступен.')
+        for ch, (v_cap, i_cap, v_set, i_set) in H02_CHANNELS.items():
+            print(f'CH{ch}: V-set={v_set:.2f} V, I-set={i_set:.3f} A; '
+                  f'V-cap={v_cap:.2f} V, software I-cap={i_cap:.3f} A.')
+        print('Применение того же guarded_profile() и тех же проверок readback через '
+              'основной драйвер. Выполняются OUTP 0, смена/подтверждение Independent, '
+              'программирование U/I и ограничений, проверка всех OFF; без OUTP 1, '
+              'без пользовательского panel-edit, debug bypass и ожидаемых SCPI ошибок. '
+              'Уставки сохраняются после проверки, но выходы остаются OFF. '
+              'Нормальная остановка требует подтверждённого OFF; при неуверенной связи '
+              'состояние UNKNOWN, физический останов, без reconnect.\n'
+              f'Подтверждение схемы: {PROFILE_ONLY_TOKEN}\n'
+              'Это частичная переквалификация R3.5.2, не замена полного H02.')
         return
     if test_id == 'H02':
         from profile_stage import (H02_CHANNELS, H02_DEBUG_TOKEN, H02_PANEL_TOKEN,
@@ -659,6 +679,8 @@ def main(argv=None):
                         help='H09/H10 only: separately gated low-power combined-mode qualification')
     parser.add_argument('--high-current', action='store_true',
                         help='H10 only: separately gated 4 A / 8 W Parallel point')
+    parser.add_argument('--profile-only', action='store_true',
+                        help='H02 only: restricted OFF-only Independent profile readback, no panel/debug probes')
     parser.add_argument('--prior-evidence', type=Path, action='append',
                         help='H03 evidence log; repeat once per completed-channel log when resuming')
     mode = parser.add_mutually_exclusive_group()
@@ -677,6 +699,8 @@ def main(argv=None):
     args.load_port = bench.load.network_port
     args.load_transport = bench.load.transport
     args.load_serial_port = bench.load.port
+    if args.profile_only and (args.test_id != 'H02' or args.recall or args.powered or args.high_current):
+        parser.error('--profile-only is restricted to H02')
     if args.recall and args.test_id != 'H06':
         parser.error('--recall requires H06')
     if args.powered and args.test_id not in ('H09', 'H10'):
@@ -745,11 +769,11 @@ def main(argv=None):
                           required_devices(args.test_id, recall=args.recall,
                                            powered=args.powered, high_current=args.high_current),
                           recall=args.recall, powered=args.powered,
-                          high_current=args.high_current))
+                          high_current=args.high_current, profile_only=args.profile_only))
     preflight(args.test_id, args.port, args.load_host, args.load_port,
               args.start_channel, args.load_transport, args.load_serial_port,
               args.diagnose_status, args.load_connected, args.recall, args.meter_host,
-              args.powered, args.high_current)
+              args.powered, args.high_current, args.profile_only)
     if args.test_id == 'H03' and args.start_channel > 1:
         if args.prior_evidence is None:
             parser.error('--prior-evidence is required when resuming H03; repeat for each prior channel log')
@@ -827,8 +851,11 @@ def main(argv=None):
         from h08_stage import approval_token, FINAL_TOKEN as final_token, h08
         token, runner = approval_token(args.meter_host), h08
     if args.test_id == 'H02':
-        from profile_stage import TOKEN as token, FINAL_TOKEN as final_token, h02
-        runner = h02
+        from functools import partial
+        from profile_stage import (TOKEN as h02_token, PROFILE_ONLY_TOKEN,
+                                   FINAL_TOKEN as final_token, h02)
+        token = PROFILE_ONLY_TOKEN if args.profile_only else h02_token
+        runner = partial(h02, profile_only=args.profile_only)
     if args.test_id == 'H04':
         from profile_stage import H04_TOKEN as token, H04_FINAL_TOKEN as final_token, h04
         runner = h04
@@ -896,12 +923,14 @@ def main(argv=None):
     devices = required_devices(args.test_id, recall=args.recall,
                                powered=args.powered, high_current=args.high_current)
     print(connection_card(bench, args.test_id, devices, recall=args.recall,
-                          powered=args.powered, high_current=args.high_current))
+                          powered=args.powered, high_current=args.high_current,
+                          profile_only=args.profile_only))
     if not sys.stdin.isatty():
         print('BLOCKED: требуется интерактивный терминал; пакетный ввод запрещён.')
         return 2
     bench_token = connection_token(bench, args.test_id, recall=args.recall,
-                                   powered=args.powered, high_current=args.high_current)
+                                   powered=args.powered, high_current=args.high_current,
+                                   profile_only=args.profile_only)
     try:
         # USB discovery is read-only; network identity is verified on opening
         # through existing equipment adapters, never assumed from the prompt.
@@ -934,7 +963,8 @@ def main(argv=None):
                            if args.test_id == 'H08' else
                            'independent; CH1/CH2/CH3 negative terminals tied to scope common'
                            if args.test_id == 'H05' else 'independent; no jumpers; no DUT'),
-                 subgroup=('parallel_high_current_cc' if args.high_current else
+                 subgroup=('independent_profile_only' if args.profile_only else
+                           'parallel_high_current_cc' if args.high_current else
                            ('series_powered_cv_cc' if args.test_id == 'H09' else
                             'parallel_powered_cv_cc') if args.powered else
                            'series_off_diagnostic' if args.test_id == 'H09' else
@@ -1011,7 +1041,7 @@ def main(argv=None):
     evidence.add('bench_connection_confirmation', token=bench_token, sha256=bench.sha256,
                  devices=list(devices), serial_os_verified=[name for name in devices
                      if getattr(bench, name).transport == 'serial'])
-    evidence.add('approval', token=token)
+    evidence.add('approval', token=token, variant='profile_only' if args.profile_only else 'full')
     if args.diagnose_status:
         evidence.add('diagnostic_scope', channel=3, wire_trace='status commands only',
                      late_sample_min_s=5.0, selections=(3, 1),
@@ -1060,7 +1090,8 @@ def main(argv=None):
     if not physical_off and outcome == 'PASS': outcome = 'PARTIAL'
     evidence.add('outcome', outcome=outcome, physical_off_confirmed=physical_off,
                  stop_reason=f'STOP after {args.test_id}; next stage requires separate operator approval')
-    report_path = ROOT / f'docs/hardware_reports/{now}_{args.test_id}_qualification.md'
+    report_stage = f'{args.test_id}_PROFILE_ONLY' if args.profile_only else args.test_id
+    report_path = ROOT / f'docs/hardware_reports/{now}_{report_stage}_qualification.md'
     with report_path.open('x', encoding='utf-8') as stream, contextlib.redirect_stdout(stream):
         report(evidence.path)
     print(f'{outcome}; Evidence: {evidence.path}\n'
