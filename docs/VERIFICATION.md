@@ -40,7 +40,7 @@ and [hardware evidence](hardware_reports/2026-10-26T201550.519080Z_H06_qualifica
 | OUT-01 | Individual output enable/disable | SIM TESTED | **HW OBSERVED PASS (H03; each output separately enabled and verified OFF)** | per-channel `CHAN:OUTP?`, KEL103 measurement and live display check; [H03 report](hardware_reports/2026-10-26T174052.170220Z_H03_qualification.md) |
 | OUT-02 | Per-channel timers, remote-on expiry, re-enable and Output Recall | **SIM TESTED (H06 runner; shared driver path)** | **PASS (HW OBSERVED)** — timer expiry/re-enable on CH1–CH3 and four Recall power cycles | 3.0 s timer expiry: CH1 3.051 s, CH2 3.063 s, CH3 3.056 s; each timer-disabled re-enable held 0.5 s. Recall OFF `111→000`; Recall ON `101→101`, `010→010`, `000→000`. 970 clean error-queue replies; final all-off confirmed and Recall OFF restored. [Recall evidence](hardware_reports/2026-10-26T201550.519080Z_H06_qualification.md) · [timer results](hardware_reports/2026-10-26T195235.744227Z_H06_qualification.md) · [first aborted attempt](hardware_reports/2026-10-26T193545.109045Z_H06_qualification.md) |
 | OUT-03 | Series combination control/readback | SIM TESTED (selection aliases, safe-profile recovery, SeriesProfile total setpoint/soft cap, 2/4/40 V powered runner and OFF restoration) | **PASS (HW OBSERVED; 4 powered CV/CC points; CC mode readback caveat)** | CV2/CR40: PSU 1.9946 V/0.0496144 A, KEL103 1.9873 V/0.0493 A/0.0979 W, DMM7510 1.987460 V. CC4/CR12: 2.99667 V/0.248519 A, 2.9830 V/0.2484 A/0.7409 W, DMM 2.985412 V. CV40/CR2000: 39.9985 V/0.0195642 A, 39.991 V/0.0195 A/0.7798 W, DMM 39.993250 V. CC40/CR1600: 36.9841 V/0.0224762 A, 36.990 V/0.0226 A/0.8359 W, DMM 36.989930 V. Operator confirmed all panel modes; 632 `SYST:ERR?` replies were `0, "No error"`; final physical OFF and disconnected wiring confirmed. Library reported `regulation=UNKNOWN` on both CC points because OPER mask 9 and QUES mask 2 conflict; raw masks retained and panel gates required. Series VOLT soft cap is not independent hardware OVP. [OFF diagnostic](hardware_reports/2026-10-26T220642.185652Z_H09_qualification.md) · [passing powered report](hardware_reports/2026-10-27T070018.826475Z_H09_qualification.md) · [preflight](H09_PREFLIGHT.ru.md) |
-| OUT-04 | Parallel combination control/readback | SIM TESTED | **HW UNVERIFIED** | real **external** wiring + dummy load/limits |
+| OUT-04 | Parallel combination control/readback | SIM TESTED | **PARTIAL (HW OBSERVED; 0.1/0.3 A, ≤1 W only)** | CV 3.00 V/CR30: PSU 2.97686 V/0.098758 A, KEL103 2.9732 V/0.0989 A/0.2940 W, DMM7510 2.973603 V. CC 0.300 A/CR5: PSU 1.50514 V/0.299276 A, KEL103 1.4984 V/0.2995 A/0.4487 W, DMM7510 1.501389 V. Displays confirmed; 401 error replies clean; final OFF. Hardware pair voltage limit was disabled, leaving software cap only. ~4 A/8 W point remains pending. [H10 evidence](hardware_reports/2026-10-27T080816.827892Z_H10_qualification.md) |
 | OUT-05 | Tracking and ratio/timer behavior | SIM TESTED (guarded linked voltages, paired timers, DMM7510 runner, failure shutdown) | **PASS (HW OBSERVED; bounded H08 scope)** | 1:1 and 1:2 on CH1/CH2; 12 DMM points and six computed ratios passed; four paired-timer expiries followed the shorter 3 s setting; 3,404 clean PSU error replies; zero diagnostics were OFF-only; [H08 report](hardware_reports/2026-10-26T213656.668407Z_H08_qualification.md) |
 | MET-01 | Read voltage/current/status and inferred CV/CC | SIM TESTED | **HW OBSERVED PASS (current H03; CH3 OPER caveat)** | Six KEL103 comparisons; CH3 OPER stays 8 while QUES distinguishes CV/CC; calibrated DMM accuracy unverified; [H03 report](hardware_reports/2026-10-26T174052.170220Z_H03_qualification.md) |
 | MET-02 | CSV, min/max/mean/stddev, Ah/Wh arithmetic | SIM TESTED (H07 runner: CSV recomputation, real-clock gap model, resets, stop deadline and mismatch shutdown) | **HW OBSERVED PASS (H07; 180 s, 44 samples/channel; one gap/channel excluded from integration; independent CSV statistics/Ah/Wh recomputation and both resets passed; 2,035 clean error-queue replies; final OFF confirmed)** | [passing report](hardware_reports/2026-10-26T205248.277386Z_H07_qualification.md); [first stopped attempt](hardware_reports/2026-10-26T204422.181415Z_H07_qualification.md) |
@@ -82,7 +82,7 @@ were ambiguous. H03 current-runner requalification passed six CV/CC points with 
 initial V/I values and per-channel caps; the runner sets the shared 4.00 V test point only
 with outputs OFF. CH3 retains an OPER status caveat; see the current report. KEL103 USB
 serial control was exercised on hardware in H03; UDP control was separately exercised on
-CH2. H04 is reviewed **PASS for OFF-only scope on the current runner**; the first attempt stopped because the manual panel protection values were still 4 V on all channels, then the corrected attempt passed. H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05 is reviewed **PASS for its bounded power-sequence scope (HW OBSERVED)**; see the report for exact readings and the measurement definition. H06 is reviewed **PASS for timer and Output Recall scopes (HW OBSERVED)**. H07 is reviewed **PASS (HW OBSERVED)** for bounded monitoring and CSV arithmetic. H08 is reviewed **PASS (HW OBSERVED)** for 1:1/1:2 tracking, linked setpoint changes, paired timers and OFF-only zero diagnostics. H09 powered Series is **PASS (HW OBSERVED)** for CV2/CC4/CV40/CC40 with panel confirmation; readback reports `UNKNOWN` on CC due to conflicting instrument status bits. H10–H12/O01/O02 await individual review.
+CH2. H04 is reviewed **PASS for OFF-only scope on the current runner**; the first attempt stopped because the manual panel protection values were still 4 V on all channels, then the corrected attempt passed. H04-Powered is reviewed **PASS for its bounded profile scope (HW OBSERVED)**. H05 is reviewed **PASS for its bounded power-sequence scope (HW OBSERVED)**; see the report for exact readings and the measurement definition. H06 is reviewed **PASS for timer and Output Recall scopes (HW OBSERVED)**. H07 is reviewed **PASS (HW OBSERVED)** for bounded monitoring and CSV arithmetic. H08 is reviewed **PASS (HW OBSERVED)** for 1:1/1:2 tracking, linked setpoint changes, paired timers and OFF-only zero diagnostics. H09 powered Series is **PASS (HW OBSERVED)** for CV2/CC4/CV40/CC40 with panel confirmation; readback reports `UNKNOWN` on CC due to conflicting instrument status bits. H10 is **PARTIAL (HW OBSERVED)**: low-power Parallel CV/CC passed; an additional ~4 A point remains pending. H11–H12/O01/O02 await individual review.
 
 H04 runner preparation is **SIM TESTED**, not hardware verified. The approved offline
 suite `PYTHONPATH=src python -m unittest discover -s tests -v` passed **68/68** after
@@ -138,7 +138,7 @@ first attempt failed its manual panel clamp check: CH1 `VOLT?` returned `1.00 V`
 The corrected attempt explicitly set the panel limits per channel and passed all OFF-only
 checks; see the [current H04 report](hardware_reports/2026-10-26T182004.069364Z_H04_qualification.md)
 and [first failed attempt](hardware_reports/2026-10-26T180828.280308Z_H04_qualification.md).
-H04-Powered and H05 have completed separately; H06 is reviewed PASS for timer and Output Recall. H07 is reviewed PASS (HW OBSERVED) for bounded monitoring and CSV arithmetic. H08 is reviewed PASS (HW OBSERVED) within its tested tracking scope; H09 powered Series passed all four CV/CC points with operator panel confirmation; CC regulation readback remains UNKNOWN due conflicting status bits. H10–H12/O01/O02 remain pending review/approval.
+H04-Powered and H05 have completed separately; H06 is reviewed PASS for timer and Output Recall. H07 is reviewed PASS (HW OBSERVED) for bounded monitoring and CSV arithmetic. H08 is reviewed PASS (HW OBSERVED) within its tested tracking scope; H09 powered Series passed all four CV/CC points with operator panel confirmation; CC regulation readback remains UNKNOWN due conflicting status bits. H10 low-power Parallel is PARTIAL pending the requested ~4 A point; H11–H12/O01/O02 remain pending review/approval.
 
 ## H04-Powered reviewed disposition — current-runner replay, 2026-10-26
 
@@ -490,12 +490,19 @@ fields varied between `1.04-0.01` and `1.04-1.04`; no firmware pin was added. DM
 reported firmware 1.7.18a. Host polling is not physical edge timing, and this test
 does not certify DMM calibration. See the [successful report](hardware_reports/2026-10-26T213656.668407Z_H08_qualification.md).
 
-## H10 OFF diagnostic — 2026-10-27
+## H10 Parallel — 2026-10-27
 
-H10 OFF diagnostics are **PARTIAL (HW OBSERVED)**; the guarded `ParallelProfile`
-and two-point powered runner are **SIM TESTED / HW NOT RUN**.
-The instrument aliases CH2 to CH1 while Parallel is set. On exit CH2's setpoints
-changed, and voltage-limit enable became 0 on both channels. The runner reapplied
-and read back the independent safe profile; all three outputs were OFF. 431 PSU
-error queries were clean. See [H10 evidence](hardware_reports/2026-10-27T074024.558437Z_H10_qualification.md)
-and [preflight](H10_PREFLIGHT.ru.md).
+OFF diagnostics are **PARTIAL (HW OBSERVED)**: the instrument aliases CH2 to CH1
+while Parallel is set; after exit, CH2 settings changed and the voltage-limit
+enable was 0 on both channels. The runner restored and read back the safe
+independent profile, all outputs OFF; 431 PSU error replies were clean.
+
+Powered CV 3.00 V/CR30 and CC 0.300 A/CR5 passed in the bounded ≤1 W scope, with
+Keithley display confirmation and KEL103/DMM7510 comparisons. All 401 error replies
+were `0, "No error"`; final physical OFF and independent profile restoration were
+confirmed. Firmware observed: `1.04-0.01`. Parallel voltage-limit state was 0, so the
+4.00 V profile cap is software-only. A separate ~4 A/8 W test was requested but is
+not implemented or run; branch-current sharing has not been measured. See the
+[powered report](hardware_reports/2026-10-27T080816.827892Z_H10_qualification.md),
+[OFF report](hardware_reports/2026-10-27T074024.558437Z_H10_qualification.md) and
+[operator card](H10_PREFLIGHT.ru.md).
