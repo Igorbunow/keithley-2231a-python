@@ -476,7 +476,7 @@ host-команды включения, согласно меньшей уста
 
 ## OFF-диагностика H10 — 2026-10-27
 
-OFF-диагностика H10 имеет статус **PARTIAL (HW OBSERVED)**; powered Parallel — NOT_RUN.
+OFF-диагностика H10 имеет статус **PARTIAL (HW OBSERVED)**; `ParallelProfile` и powered runner — **SIM TESTED / HW NOT RUN**.
 В Parallel CH2 алиасит CH1. После выхода изменились уставки CH2 и `VOLT:LIM:STAT`
 стал 0 на обоих каналах. Runner восстановил независимый безопасный профиль и
 вычитал его; все выходы OFF. 431 ответа PSU на запрос ошибок чистые. См.

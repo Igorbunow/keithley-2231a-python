@@ -118,8 +118,119 @@ class TestQualification(unittest.TestCase):
             scope.powered_gate = True
             scope._validate('OUTP 1', False)
             scope._validate('OUTP:SER 1', False)
-            with self.assertRaises(ValueError): scope._validate('CHAN:OUTP 1', False)
-            with self.assertRaises(SafetyError): scope._validate('OUTP:PARALLEL 1', False)
+
+    def test_h10_powered_preflight_and_global_on_gate(self):
+        import h10_powered_stage
+        from test_driver import FakeTransport
+        from keithley2231a import SafetyError
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            h10_powered_stage.preflight('/dev/ttyUSB3', load_transport='serial')
+        card = output.getvalue()
+        for detail in ('CH1+ с CH2+', 'CH1− с CH2−', 'INPUT+ к общей плюсовой точке',
+                       'FRONT HI', 'CH3 оставить полностью', 'CR 30 Ω', 'CR 5 Ω',
+                       '4.00 V', 'не аппаратная OVP', 'Равное распределение тока',
+                       h10_powered_stage.approval_token()):
+            self.assertIn(detail, card)
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H10')
+            scope = h10_powered_stage.H10PoweredScope(FakeTransport(), evidence)
+            with self.assertRaises(SafetyError): scope._validate('OUTP 1', False)
+            with self.assertRaises(SafetyError): scope._validate('OUTP:SER 1', False)
+            with self.assertRaises(ValueError): scope._validate('VOLT 5.00', False)
+            scope.powered_gate = True
+            scope._validate('OUTP 1', False)
+            scope._validate('OUTP:PARALLEL 1', False)
+
+    def test_h10_powered_runner_uses_shared_driver_and_checks_cv_cc(self):
+        import h10_powered_stage
+        from test_driver import FakeTransport
+
+        class ParallelSource(FakeTransport):
+            def __init__(self):
+                super().__init__()
+                self.load = None
+
+            def write(self, command):
+                super().write(command)
+                if command == 'OUTP:PARALLEL 1':
+                    self.values[1]['VOLT:LIM:STAT'] = 0.
+                    self.values[2]['VOLT:LIM:STAT'] = 0.
+                elif command == 'OUTP:PARALLEL 0':
+                    self.values[1]['VOLT:LIM:STAT'] = 0.
+                    self.values[2]['VOLT:LIM:STAT'] = 0.
+
+            def actual_pair(self):
+                if not self.flags['OUTP:STAT:ALL'] or self.load is None or self.load.state != 'ON':
+                    return 0., 0.
+                voltage = min(self.values[1]['VOLT'],
+                              self.values[1]['CURR'] * self.load.resistance)
+                return voltage, voltage / self.load.resistance
+
+            def query(self, command):
+                if command == 'MEAS:VOLT?' and self.active_ch == 1:
+                    self.cmds.append(command)
+                    return str(self.actual_pair()[0])
+                if command == 'MEAS:CURR?' and self.active_ch == 1:
+                    self.cmds.append(command)
+                    return str(self.actual_pair()[1])
+                if command == 'MEAS:VOLT?' and self.active_ch == 3:
+                    self.cmds.append(command)
+                    return '0'
+                if command == 'MEAS:CURR?' and self.active_ch == 3:
+                    self.cmds.append(command)
+                    return '0'
+                if command == 'STAT:OPER:INST:ISUM1:COND?':
+                    self.cmds.append(command)
+                    voltage, _ = self.actual_pair()
+                    return ('10' if voltage + .001 < self.values[1]['VOLT'] else '9') \
+                        if self.flags['OUTP:STAT:ALL'] else '0'
+                return super().query(command)
+
+        class Load:
+            port = '/dev/ttyACM0'
+            live = True
+            def __init__(self, source):
+                self.source, self.state, self.resistance, self.closed = source, 'OFF', None, False
+                source.load = self
+            def input_state(self): return self.state
+            def configure_h10_cr(self, resistance): self.resistance = resistance; return resistance
+            def set_input(self, enabled): self.state = 'ON' if enabled else 'OFF'
+            def measurements(self):
+                voltage, current = self.source.actual_pair()
+                return {'kel103_voltage_v': voltage, 'kel103_current_a': current,
+                        'kel103_power_w': voltage * current}
+            def close(self): self.closed = True
+
+        class Meter:
+            live = True
+            def __init__(self, source): self.source, self.closed, self.range_v = source, False, None
+            def configure_voltage(self, range_v=10): self.range_v = range_v
+            def measure(self): return {'voltage_v': self.source.actual_pair()[0]}
+            def close(self): self.closed = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H10')
+            source = ParallelSource()
+            load, meter = Load(source), Meter(source)
+            observed = []
+            def gate(token, prompt, adapter=None): observed.append(token)
+            with patch.object(h10_powered_stage, 'operator_gate', side_effect=gate), \
+                 patch.object(h10_powered_stage.time, 'sleep'):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    outcome = h10_powered_stage.h10_powered(source, evidence, load, meter)
+            self.assertEqual(outcome, 'PASS', '\n'.join(
+                line for line in evidence.path.read_text().splitlines()
+                if 'stage_error' in line or 'query_outcome' in line))
+            self.assertEqual(observed, ['CONFIRM H10 DISPLAY PSU=CV KEL=CR INPUT=ON',
+                                        'CONFIRM H10 DISPLAY PSU=CC KEL=CR INPUT=ON',
+                                        h10_powered_stage.FINAL_TOKEN])
+            self.assertEqual(source.flags['OUTP:PARALLEL'], 0.)
+            self.assertEqual(source.flags['OUTP:STAT:ALL'], 0.)
+            self.assertEqual(load.state, 'OFF')
+            self.assertTrue(source.closed and load.closed and meter.closed)
+            self.assertEqual(len([r for r in map(json.loads, evidence.path.read_text().splitlines())
+                                  if r['event'] == 'parallel_measurement_sample']), 8)
+            self.assert_driver_path(evidence, source)
 
     def test_h09_powered_runner_reuses_driver_for_cv_cc_and_restores_all_off(self):
         import h09_powered_stage

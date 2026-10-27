@@ -1,0 +1,241 @@
+"""Bounded powered Parallel qualification for H10.
+
+@file h10_powered_stage.py
+@author Project contributors
+@date 2026-10-27
+@version 0.2.0
+@brief Verify low-power aggregate CV and CC operation with independent meters.
+@details All PSU commands use the library dispatcher and a strict stage adapter.
+"""
+from __future__ import annotations
+
+import math
+import re
+import time
+
+from common import StageAdapter, operator_gate, require_outputs
+from keithley2231a import (ChannelProfile, Keithley2231A, ParallelProfile,
+                           Profile, SafetyError)
+
+METER_HOST = '192.168.22.112'
+LOAD_PORT = '/dev/ttyACM0'
+FINAL_TOKEN = 'CONFIRM H10 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF DMM=DISCONNECTED NO_JUMPERS'
+
+
+def approval_token(meter_host=METER_HOST, load_serial_port=LOAD_PORT):
+    return (f'CONFIRM H10 POWERED PARALLEL ALL_OFF '
+            f'JUMPERS=CH1+->CH2+_CH1-->CH2- LOAD=KEL103_USB={load_serial_port} '
+            f'CR=30,5 DMM7510={meter_host}:5025 FRONT=DCV10 CH3=OPEN RECALL=OFF '
+            'CAP=4V_0.500A POWER<=1W')
+
+
+def preflight(port, meter_host=METER_HOST, load_serial_port=LOAD_PORT,
+              load_transport='serial'):
+    if load_transport != 'serial':
+        print('H10 Powered requires the reviewed KEL103 USB link; no hardware accessed.')
+        return
+    token = approval_token(meter_host, load_serial_port)
+    print(f'Keithley: {port}, USB–TTL 9600 8N1. KEL103 USB: {load_serial_port}, '
+          '115200 8N1. DMM7510: '
+          f'{meter_host}:5025 raw TCP, SCPI, front terminals, DCV 10 V, NPLC 1.\n'
+          'До начала: CH1/CH2/CH3 OFF; KEL103 INPUT OFF; Output Recall OFF; '
+          'сетевой выключатель Keithley доступен. Осциллограф отключён, земли каналов '
+          'и все прежние перемычки сняты.\n'
+          'Точная схема (только при всех OFF): двумя короткими изолированными проводами '
+          'с подходящим сечением соединить CH1+ с CH2+ и CH1− с CH2−. Не соединять '
+          'плюс с минусом. KEL103 подключить INPUT+ к общей плюсовой точке CH1+/CH2+, '
+          'INPUT− к общей минусовой точке CH1−/CH2−. DMM7510: FRONT HI к общей плюсовой '
+          'точке, FRONT LO к общей минусовой; задние клеммы и токовые входы не использовать. '
+          'CH3 оставить полностью без проводов и нагрузки.\n'
+          'Runner применит ParallelProfile при выключенных выходах: пара 3.00 V, '
+          'начальный суммарный лимит 0.100 A, software caps 4.00 V / 0.500 A; '
+          'CH3=0.00 V / 0.100 A. Аппаратный voltage-limit пары после Parallel OFF '
+          '(по наблюдённой H10 OFF-диагностике), поэтому 4.00 V — программный предел, '
+          'не аппаратная OVP. Максимум запланированной нагрузки — 1 W.\n'
+          'CV: KEL103 CR 30 Ω, 3.00 V / 0.100 A (примерно 0.30 W). Затем PSU OFF и '
+          'KEL INPUT OFF. CC: CR 5 Ω, напряжение 3.00 V, суммарный ток 0.300 A '
+          '(примерно 1.5 V / 0.45 W). После каждой точки runner автоматически снимет '
+          'PSU, KEL103 и DMM7510 показания и остановится для проверки надписи CV/CC '
+          'на дисплее Keithley. Равное распределение тока между выходными клеммами '
+          'этим тестом не доказывается. Не менять провода при включённом PSU.\n'
+          'После обеих точек runner выключит PSU и KEL INPUT; при необходимости '
+          'остановится для отключения KEL103, DMM7510 и обеих параллельных перемычек.\n'
+          f'Подтверждение точной схемы и одного прохода:\n{token}\n'
+          f'Финальное подтверждение всех OFF и пустых клемм:\n{FINAL_TOKEN}')
+
+
+class H10PoweredScope(StageAdapter):
+    """Whitelist only bounded profile configuration and two low-power points."""
+    MAX_COMMANDS = 3000
+    MAX_SECONDS = 240
+    _QUERY = re.compile(
+        r'^(?:\*IDN\?|SYST:ERR\?|INST:NSEL\?|CHAN:OUTP\?|OUTP:STAT:ALL\?|'
+        r'OUTP:(?:SER|PARALLEL|TRAC)\?|OUTP:TIM:STAT\?|'
+        r'STAT:(?:OPER|QUES):INST:ISUM[13]:COND\?|'
+        r'VOLT\?|CURR\?|VOLT:LIM\?|VOLT:LIM:STAT\?|MEAS:(?:VOLT|CURR)\?)$')
+    _WRITE = re.compile(
+        r'^(?:SYST:(?:REM|LOC)|OUTP 0|OUTP 1|OUTP:(?:SER|PARALLEL|TRAC) [01]|'
+        r'INST:NSEL [123]|CHAN:OUTP 0|OUTP:TIM:STAT 0|'
+        r'VOLT (?:0|0\.00|1\.00|1\.50|2\.00|3\.00)|CURR (?:0|0\.100|0\.200|0\.300)|'
+        r'VOLT:LIM (?:2\.00|3\.00|4\.00)|VOLT:LIM:STAT 1)$')
+    _CLEANUP_QUERY = re.compile(
+        r'^(?:\*IDN\?|SYST:ERR\?|OUTP:(?:SER|PARALLEL)\?|OUTP:STAT:ALL\?|'
+        r'INST:NSEL\?|CHAN:OUTP\?)$')
+    _CLEANUP_WRITE = re.compile(
+        r'^(?:SYST:(?:REM|LOC)|OUTP 0|OUTP:PARALLEL 0|CHAN:OUTP 0|INST:NSEL [123])$')
+
+    def _validate(self, command, query):
+        super()._validate(command, query)
+        if not query and command == 'OUTP 1' and not getattr(self, 'powered_gate', False):
+            raise SafetyError('H10 global output ON requires the powered setup gate')
+        if not query and command in ('OUTP:SER 1', 'OUTP:TRAC 1'):
+            raise SafetyError('H10 permits Parallel mode only')
+
+
+def _parallel_profile():
+    return ParallelProfile('H10 bounded external Parallel', 4.00, .500, 3.00, .100,
+                           ChannelProfile(4.00, .500, 0.00, .100),
+                           expected_regulation='auto', lock_front_panel=False,
+                           verify_every_s=3600.0)
+
+
+def _safe_profile():
+    return Profile('H10 safe independent exit', (
+        ChannelProfile(2.00, .300, 1.00, .100),
+        ChannelProfile(3.00, .400, 1.50, .200),
+        ChannelProfile(4.00, .500, 2.00, .300)), lock_front_panel=False)
+
+
+def _point(dev, load, meter, evidence, mode, resistance, current):
+    dev.set_channel(1, voltage=3.00, current=current)
+    if abs(load.configure_h10_cr(float(resistance)) - resistance) > .001:
+        raise SafetyError('KEL103 resistance readback mismatch')
+    load.set_input(True)
+    dev.combined_outputs(True, confirm_all_channels_safe=True)
+    time.sleep(.5)
+    values = []
+    for number in range(1, 5):
+        source = dev.read_channel(1)
+        ch3 = dev.read_channel(3)
+        kel = load.measurements()
+        dmm = meter.measure()
+        sample_values = (source.voltage_v, source.current_a, ch3.voltage_v,
+                         ch3.current_a, kel['kel103_voltage_v'],
+                         kel['kel103_current_a'], kel['kel103_power_w'], dmm['voltage_v'])
+        if any(not math.isfinite(value) for value in sample_values):
+            raise SafetyError('Nonfinite Parallel measurement')
+        if not source.enabled or source.label != 'CH1+CH2':
+            raise SafetyError('Parallel combined output readback is not ON')
+        if not ch3.enabled or abs(ch3.voltage_v) > .05 or abs(ch3.current_a) > .03:
+            raise SafetyError(f'Unloaded CH3 is not at the safe zero setpoint: {ch3}')
+        if kel['kel103_power_w'] > 1.00:
+            raise SafetyError('H10 load exceeded the 1 W measurement ceiling')
+        if (abs(source.voltage_v - dmm['voltage_v']) > .10 or
+                abs(kel['kel103_voltage_v'] - dmm['voltage_v']) > .10):
+            raise SafetyError('PSU, KEL103 and DMM7510 voltage readings disagree')
+        if abs(source.current_a - kel['kel103_current_a']) > .03:
+            raise SafetyError('Parallel aggregate current disagrees with KEL103 by >30 mA')
+        wanted_mode = mode.upper()
+        if source.regulation not in (wanted_mode, 'UNKNOWN'):
+            raise SafetyError(f'Parallel regulation mismatch: expected {mode}, got {source.regulation}')
+        row = {'sample': number, 'psu_voltage_v': source.voltage_v,
+               'psu_current_a': source.current_a, 'psu_regulation': source.regulation,
+               'kel_voltage_v': kel['kel103_voltage_v'],
+               'kel_current_a': kel['kel103_current_a'], 'kel_power_w': kel['kel103_power_w'],
+               'dmm_voltage_v': dmm['voltage_v'], 'ch3_voltage_v': ch3.voltage_v,
+               'ch3_current_a': ch3.current_a}
+        values.append(row)
+        evidence.add('parallel_measurement_sample', point=mode, resistance_ohm=resistance, **row)
+        print(f"{mode}: PSU {row['psu_voltage_v']:.4f} V / {row['psu_current_a']:.4f} A "
+              f"({row['psu_regulation']}); KEL {row['kel_voltage_v']:.4f} V / "
+              f"{row['kel_current_a']:.4f} A / {row['kel_power_w']:.4f} W; "
+              f"DMM {row['dmm_voltage_v']:.4f} V")
+    last = values[-1]
+    previous = values[-2]
+    if (abs(last['psu_voltage_v'] - previous['psu_voltage_v']) > .03 or
+            abs(last['psu_current_a'] - previous['psu_current_a']) > .003):
+        raise SafetyError('Parallel readings did not stabilize across final samples')
+    return last
+
+
+def h10_powered(transport, evidence, load, meter):
+    """Run H10 CV/CC, with all commands routed through the Keithley driver."""
+    token = approval_token(load_serial_port=getattr(load, 'port', LOAD_PORT))
+    dev = Keithley2231A(transport, debug=True,
+                       debug_trace=lambda record: evidence.add('driver_trace', trace=record),
+                       debug_adapter=lambda channel: H10PoweredScope(channel, evidence))
+    io = dev.debug_transport
+    outcome, reason = 'ABORTED', 'incomplete H10 powered Parallel qualification'
+    try:
+        dev.identity()
+        baseline = dev.diagnostic_query('SYST:ERR?')
+        if int(baseline.split(',', 1)[0]) != 0:
+            raise SafetyError(f'Pre-existing PSU error: {baseline}')
+        require_outputs(dev)
+        if load.input_state() != 'OFF':
+            raise SafetyError('KEL103 INPUT must be OFF before H10 setup')
+        meter.configure_voltage(range_v=10)
+        evidence.add('powered_stage_authorization', token=token,
+                     source='interactive gate before instrument ports opened')
+        io.powered_gate = True
+        dev.apply_profile(_parallel_profile(), confirmed_wiring='parallel')
+        require_outputs(dev)
+
+        _point(dev, load, meter, evidence, 'CV', 30.0, .100)
+        operator_gate('CONFIRM H10 DISPLAY PSU=CV KEL=CR INPUT=ON',
+                      'Сверьте дисплей Keithley: Parallel/CV, около 3.00 V и 0.100 A. '
+                      'KEL103: CR 30.0 Ω, INPUT ON. Автоматические показания PSU, '
+                      'KEL103 и DMM7510 записаны.', io)
+        evidence.add('operator_display_review', point='CV', outcome='confirmed')
+        dev.combined_outputs(False)
+        require_outputs(dev)
+        load.set_input(False)
+
+        _point(dev, load, meter, evidence, 'CC', 5.0, .300)
+        operator_gate('CONFIRM H10 DISPLAY PSU=CC KEL=CR INPUT=ON',
+                      'Сверьте дисплей Keithley: Parallel/CC, примерно 1.50 V и 0.300 A. '
+                      'KEL103: CR 5.0 Ω, INPUT ON. Автоматические показания PSU, '
+                      'KEL103 и DMM7510 записаны.', io)
+        evidence.add('operator_display_review', point='CC', outcome='confirmed')
+        dev.combined_outputs(False)
+        require_outputs(dev)
+        load.set_input(False)
+        io.powered_gate = False
+        operator_gate(FINAL_TOKEN,
+                      'Все выходы Keithley OFF, KEL103 INPUT OFF. Отключите KEL103 и '
+                      'DMM7510 от общей пары, затем снимите обе перемычки CH1+/CH2+ '
+                      'и CH1−/CH2−. Подтвердите пустые клеммы и отсутствие проводов.', io)
+        evidence.add('operator_gate', token=FINAL_TOKEN, action='disconnect_parallel_wiring')
+        dev.emergency_off()
+        dev.apply_profile(_safe_profile())
+        require_outputs(dev)
+        dev.diagnostic_write('SYST:LOC')
+        outcome, reason = 'PASS', 'bounded external Parallel CV and CC points passed'
+    except BaseException as exc:
+        outcome = ('ABORTED' if not io.live or isinstance(exc, (
+            OSError, TimeoutError, KeyboardInterrupt, InterruptedError)) else 'FAIL')
+        reason = f'H10 powered stopped: {type(exc).__name__}: {exc}; verify all outputs OFF'
+        evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc),
+                     live_link=io.live)
+        if io.live:
+            try:
+                io.cleanup = True
+                dev.emergency_off()
+                require_outputs(dev)
+                dev.diagnostic_write('SYST:LOC')
+            except BaseException:
+                outcome, reason = 'ABORTED', 'shutdown unconfirmed; UNKNOWN OUTPUT STATE'
+        try:
+            if getattr(load, 'live', False): load.set_input(False)
+        except BaseException:
+            outcome, reason = 'ABORTED', 'KEL103 INPUT shutdown unconfirmed'
+    finally:
+        for instrument in (transport, load, meter):
+            try: instrument.close()
+            except BaseException:
+                outcome, reason = 'ABORTED', 'instrument close failed; manual OFF required'
+        evidence.add('query_outcome', outcome=outcome, stop_reason=reason,
+                     firmware=evidence.firmware,
+                     verification='HW OBSERVED' if outcome == 'PASS' else 'HW UNVERIFIED',
+                     scope='external Parallel; CV 3 V / CR30 and CC 0.300 A / CR5; <=1 W')
+    return outcome

@@ -492,7 +492,8 @@ does not certify DMM calibration. See the [successful report](hardware_reports/2
 
 ## H10 OFF diagnostic — 2026-10-27
 
-H10 OFF diagnostics are **PARTIAL (HW OBSERVED)**; powered Parallel remains NOT_RUN.
+H10 OFF diagnostics are **PARTIAL (HW OBSERVED)**; the guarded `ParallelProfile`
+and two-point powered runner are **SIM TESTED / HW NOT RUN**.
 The instrument aliases CH2 to CH1 while Parallel is set. On exit CH2's setpoints
 changed, and voltage-limit enable became 0 on both channels. The runner reapplied
 and read back the independent safe profile; all three outputs were OFF. 431 PSU
