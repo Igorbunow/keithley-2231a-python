@@ -505,3 +505,7 @@ execution remains blocked** until a separate reviewed integration. See
 
 R3.5.7 adds a separate interactive CLI route, `--single-channel-cvcc --execute --allow-single-cvcc-on`, with config-bound connection/wiring gates, two separate CH1-ON approvals and strictly reviewed evidence. The legacy three-channel H03 remains unchanged. Do not energize hardware until the updated patch and offline regression suite have been reviewed. See [`docs/R3_5_7_H03_SINGLE_CLI.ru.md`](docs/R3_5_7_H03_SINGLE_CLI.ru.md).
 - [R3.5.8 Powered H03 SCPI & display audit](docs/R3_5_8_POWERED_H03_AUDIT.ru.md) — readable Keithley/KEL U/I/P, bounded live confirmation, separate full-H03 ON gates.
+
+### OFF-only Aux/channel selection diagnostic (R3.5.11)
+
+A separate, physically gated H01 variant can correlate `*IDN?` Main/Aux revision with CH1/CH2/CH3 while all outputs remain OFF. Read-only preflight: `python3 tools/hw_qualify.py preflight H01 --aux-revision-diagnostic --config config/bench.local.toml`. See `docs/R3_5_11_AUX_CHANNEL_OFF_DIAGNOSTIC.ru.md`; no routine auto-execution.

@@ -276,6 +276,70 @@ def audit_full_h03_records(records: list[dict]) -> dict:
                 historical_deviations=caveats, issues=issues)
 
 
+def audit_aux_revision_records(records: list[dict]) -> dict:
+    """Review the independent OFF-only channel/version experiment from saved events."""
+    from collections import Counter
+    import re
+    issues = []
+    if not records or {r.get('test_id') for r in records} != {'H01_AUX_REVISION'}:
+        raise ValueError('Expected H01_AUX_REVISION evidence only')
+    wire = [(i,r['trace']['command']) for i,r in enumerate(records)
+            if r.get('event') == 'driver_trace' and r.get('trace',{}).get('event') in ('write','query')]
+    cmds = [c for _,c in wire]
+    sent = [r.get('command') for r in records if r.get('event') in ('query','write')]
+    if not cmds or Counter(cmds) != Counter(sent):
+        issues.append('Driver wire trace and adapter send records differ')
+    for i,command in enumerate(cmds):
+        if command not in ('SYST:ERR?', 'SYST:LOC') and (i+1 >= len(cmds) or cmds[i+1] != 'SYST:ERR?'):
+            issues.append(f'Missing automatic SYST:ERR? after command #{i+1}')
+        if command == 'SYST:ERR?' and i and cmds[i-1] == command:
+            issues.append(f'Adjacent SYST:ERR? at command #{i+1}')
+        if '?' not in command and command not in ('SYST:REM','SYST:LOC') and not re.fullmatch(r'INST:NSEL [123]', command):
+            issues.append(f'Forbidden state-changing command #{i+1}: {command}')
+    checks = [r for r in records if r.get('event')=='read' and r.get('command')=='SYST:ERR?']
+    if len(checks) != cmds.count('SYST:ERR?'):
+        issues.append('Error queue evidence count differs from wire')
+    for r in checks:
+        if not re.fullmatch(r'0\s*,.+', str(r.get('response',''))):
+            issues.append('Unexpected instrument SCPI error or malformed reply')
+    for r in records:
+        if r.get('event') != 'read': continue
+        command,answer = r.get('command'),str(r.get('response','')).strip()
+        if command in ('CHAN:OUTP?', 'OUTP:STAT:ALL?') and answer != '0':
+            issues.append(f'Output not OFF in readback: {command} {answer!r}')
+        if re.fullmatch(r'STAT:OPER:INST:ISUM[123]:COND\?', command or ''):
+            if not re.fullmatch(r'[0-9]{1,5}',answer) or int(answer)>65535 or int(answer)&8:
+                issues.append(f'Invalid or active output status in {command}')
+        if command == '*IDN?' and '[REDACTED]' not in answer:
+            issues.append('Identity serial was not redacted')
+    plan = (1,1,2,2,3,3,1,3,2,1)
+    samples = [(i,r) for i,r in enumerate(records) if r.get('event')=='aux_channel_observation']
+    if [s.get('selected_channel') for _,s in samples] != list(plan) or len(samples)!=len(plan):
+        issues.append('Missing or out-of-order channel observations')
+    for j,(row_idx,row) in enumerate(samples):
+        if (row.get('index') != j or row.get('output_off_verified') is not True or
+                not isinstance(row.get('revision'),str) or not row['revision']):
+            issues.append(f'Invalid channel observation #{j+1}')
+        prior_idn = next((r for r in reversed(records[:row_idx]) if r.get('event')=='read' and r.get('command')=='*IDN?'), None)
+        prior_sel = next((r for r in reversed(records[:row_idx]) if r.get('event')=='read' and r.get('command')=='INST:NSEL?'), None)
+        if (prior_idn is None or prior_sel is None or
+                prior_sel.get('response') != str(row.get('selected_channel')) or
+                not str(prior_idn.get('response','')).strip().endswith(', '+row.get('revision',''))):
+            issues.append(f'Observation #{j+1} does not match verified selection/identity')
+    if len([r for r in records if r.get('event')=='read' and r.get('command')=='CHAN:OUTP?']) < 16:
+        issues.append('Missing initial/final CHAN:OUTP? OFF sweeps')
+    if len([r for r in records if r.get('event')=='bench_connection_confirmation']) != 1 or len([r for r in records if r.get('event')=='approval']) != 1:
+        issues.append('Missing or repeated bench/physical gate')
+    core = [r for r in records if r.get('event')=='query_outcome']
+    final = [r for r in records if r.get('event')=='outcome']
+    if len(core)!=1 or core[0].get('outcome')!='PASS' or len(final)!=1 or final[0].get('outcome')!='PASS' or final[0].get('physical_off_confirmed') is not True:
+        issues.append('Missing verified PASS and final physical OFF confirmation')
+    return dict(test_id='H01_AUX_REVISION', status='FAIL' if issues else 'PASS',
+                wire_commands=len(cmds), error_polls=len(checks), observed_error_codes=[],
+                aux_drift_events=sum(r.get('event')=='firmware_revision_drift' for r in records),
+                historical_deviations=[], issues=issues)
+
+
 def audit(path: Path, *, acknowledge_historical_h02_panel_poll: bool = False) -> dict:
     """Audit a saved run; optionally acknowledge exactly one known pre-fix H02 poll.
 
@@ -286,6 +350,8 @@ def audit(path: Path, *, acknowledge_historical_h02_panel_poll: bool = False) ->
     if not records:
         raise ValueError('Empty evidence')
     stages = {item.get('test_id') for item in records}
+    if stages == {'H01_AUX_REVISION'}:
+        return audit_aux_revision_records(records)
     if stages == {'H03_SINGLE_CVCC'}:
         return audit_single_records(records)
     if stages == {'H03'}:
@@ -355,7 +421,7 @@ def audit(path: Path, *, acknowledge_historical_h02_panel_poll: bool = False) ->
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('evidence', type=Path, nargs='+', help='H01/H02/H03/H03_SINGLE_CVCC events.jsonl files')
+    parser.add_argument('evidence', type=Path, nargs='+', help='H01/H01_AUX_REVISION/H02/H03/H03_SINGLE_CVCC events.jsonl files')
     parser.add_argument('--acknowledge-historical-h02-panel-poll', action='store_true',
                         help='Only for saved pre-fix FULL H02: explicitly acknowledge the '
                              'one known adjacent SYST:ERR? after manual panel SYST:REM; '

@@ -49,14 +49,16 @@ def verify_serial_adapter(instrument, available_ports=None):
 
 
 def connection_token(bench, stage_id, *, recall=False, powered=False, high_current=False,
-                     profile_only=False, single_channel_cvcc=False):
-    suffix = ('-SINGLE-CVCC' if single_channel_cvcc else '-PROFILE-ONLY' if profile_only else '-RECALL' if recall else '-HIGH-CURRENT' if high_current
+                     profile_only=False, single_channel_cvcc=False,
+                     aux_revision_diagnostic=False):
+    suffix = ('-AUX-REVISION' if aux_revision_diagnostic else '-SINGLE-CVCC' if single_channel_cvcc else '-PROFILE-ONLY' if profile_only else '-RECALL' if recall else '-HIGH-CURRENT' if high_current
               else '-POWERED' if powered else '')
     return f'CONFIRM BENCH {stage_id}{suffix} SHA256={bench.sha256[:12].upper()}'
 
 
 def connection_card(bench, stage_id, devices, *, recall=False, powered=False, high_current=False,
-                    profile_only=False, single_channel_cvcc=False):
+                    profile_only=False, single_channel_cvcc=False,
+                    aux_revision_diagnostic=False):
     lines = [f'ПОДКЛЮЧЕНИЯ ИЗ BENCH CONFIG: {bench.source.name} (SHA256 {bench.sha256})',
              f'Этап: {stage_id}; используются: {", ".join(devices)}']
     for name in devices:
@@ -78,5 +80,6 @@ def connection_card(bench, stage_id, devices, *, recall=False, powered=False, hi
     lines.append('Общий токен: ' + connection_token(bench, stage_id, recall=recall,
                                                   powered=powered, high_current=high_current,
                                                   profile_only=profile_only,
-                                                  single_channel_cvcc=single_channel_cvcc))
+                                                  single_channel_cvcc=single_channel_cvcc,
+                                                  aux_revision_diagnostic=aux_revision_diagnostic))
     return '\n'.join(lines)

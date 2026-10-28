@@ -691,6 +691,8 @@ def main(argv=None):
                         help='H10 only: separately gated 4 A / 8 W Parallel point')
     parser.add_argument('--single-channel-cvcc', action='store_true',
                         help='H03 CH1-only CV/CC; gated live runner or dry-run (full H03 unchanged)')
+    parser.add_argument('--aux-revision-diagnostic', action='store_true',
+                        help='H01 only: separate OFF-only, selected-channel *IDN? correlation')
     parser.add_argument('--allow-single-cvcc-on', action='store_true',
                         help='H03 CH1 ONLY: additional explicit powered-run opt-in; no effect on full H03')
     parser.add_argument('--profile-only', action='store_true',
@@ -713,6 +715,13 @@ def main(argv=None):
     args.load_port = bench.load.network_port
     args.load_transport = bench.load.transport
     args.load_serial_port = bench.load.port
+    if args.aux_revision_diagnostic and (args.test_id != 'H01' or
+                                          args.start_channel != 1 or args.single_channel_cvcc or
+                                          args.allow_single_cvcc_on or args.profile_only or
+                                          args.recall or args.powered or args.high_current or
+                                          args.diagnose_status or args.load_connected or
+                                          args.prior_evidence):
+        parser.error('--aux-revision-diagnostic is an exclusive H01 OFF-only variant')
     if args.single_channel_cvcc and (args.test_id != 'H03' or args.start_channel != 1 or
                                      args.profile_only or args.recall or args.powered or
                                      args.high_current or args.diagnose_status or args.load_connected or
@@ -788,6 +797,13 @@ def main(argv=None):
               'Этот CLI однопроходный; другой работающий процесс остановите Ctrl-C. Не переподключаться автоматически.')
         return 0
     if args.test_id is None: parser.error('preflight/run requires one test ID')
+    if args.aux_revision_diagnostic:
+        from aux_revision_stage import preflight as aux_preflight, run_cli as aux_run
+        if args.command in ('preflight', 'run'):
+            aux_preflight(bench)
+            if args.command == 'run' and args.execute:
+                return aux_run(bench)
+            return 0
     if args.single_channel_cvcc:
         from single_cvcc_preflight import describe
         from single_cvcc_cli import run_h03_single_cli
