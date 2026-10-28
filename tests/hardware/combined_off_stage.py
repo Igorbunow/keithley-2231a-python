@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from common import StageAdapter, channel_snapshot, require_outputs, selected_settings
+from common import ShutdownEvidence, StageAdapter, channel_snapshot, require_outputs, selected_settings
 from keithley2231a import ChannelProfile, Keithley2231A, Profile, SafetyError
 
 def tokens(test_id):
@@ -69,30 +69,6 @@ class CombinedOffScope(StageAdapter):
             rf'^(?:SYST:(?:REM|LOC)|OUTP 0|OUTP:{mode} 0|INST:NSEL [123]|'
             r'CHAN:OUTP 0|OUTP:TIM:STAT 0)$')
         self._CLEANUP_QUERY = self._QUERY
-
-
-class _ShutdownEvidence:
-    """Preserve bounded OFF SCPI if the evidence filesystem stops accepting writes.
-
-    Never promote an incomplete trace to PARTIAL/PASS.  Suppress only evidence
-    failures *during emergency cleanup*, not transport or instrument errors.
-    """
-    def __init__(self, target):
-        self.target = target
-        self.cleanup = False
-        self.lost = False
-
-    def __getattr__(self, name):
-        return getattr(self.target, name)
-
-    def add(self, event, **fields):
-        try:
-            return self.target.add(event, **fields)
-        except BaseException:
-            self.lost = True
-            if not self.cleanup:
-                raise
-            return {'response': fields.get('response', '')} if event == 'read' else {}
 
 
 def _combined_off_emergency(dev, io, mode):
@@ -169,7 +145,7 @@ def run_combined_off(transport, evidence, test_id='H09'):
     """Investigate OFF-only semantics; powered qualification remains pending."""
     tokens(test_id)
     mode = 'SER' if test_id == 'H09' else 'PARALLEL'
-    evidence = _ShutdownEvidence(evidence)
+    evidence = ShutdownEvidence(evidence)
     dev = Keithley2231A(transport, debug=True,
         debug_trace=lambda record: evidence.add('driver_trace', trace=record),
         debug_adapter=lambda channel: CombinedOffScope(channel, evidence, mode))

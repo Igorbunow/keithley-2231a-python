@@ -11,7 +11,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from keithley2231a import SafetyError
-from h07_stage import _check_live_measurements, _release_h07_instruments, h07
+from h07_stage import _check_live_measurements, h07
+from common import release_psu_and_load
 from qualification import Evidence
 from test_driver import FakeTransport
 
@@ -101,8 +102,8 @@ class H07GuardTests(unittest.TestCase):
         psu, load, evidence = PSU(), Load(), EvidenceSink()
         io_adapter = SimpleNamespace(live=psu_live, cleanup=False)
         response = {1: bool(off_readback), 2: False, 3: False}
-        with patch('h07_stage.require_outputs', return_value=response):
-            failures = _release_h07_instruments(psu, io_adapter, load, evidence)
+        with patch('common.require_outputs', return_value=response):
+            failures = release_psu_and_load(psu, io_adapter, load, evidence)
         return failures, psu, load, evidence
 
     def test_independent_off_both_success(self):

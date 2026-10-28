@@ -15,7 +15,8 @@ import csv
 import math
 import re
 
-from common import StageAdapter, operator_gate, require_outputs
+from common import (ShutdownEvidence, StageAdapter, operator_gate,
+                    release_psu_and_load, require_outputs)
 from keithley2231a import (ChannelProfile, Keithley2231A, Profile, SafetyError,
                            voltage_sweep)
 
@@ -103,12 +104,18 @@ def profile_evidence(profile):
 
 def h11(transport, evidence, load):
     """Run one CR40 staircase and always shut down through the library path."""
+    original_evidence = evidence
+    evidence = ShutdownEvidence(original_evidence)
+    # The real KEL103 adapter writes evidence before sending its USB command.
+    # Those writes must not block emergency INPUT OFF.
+    if getattr(load, 'evidence', None) is original_evidence:
+        load.evidence = evidence
     dev = Keithley2231A(
         transport, debug=True,
         debug_trace=lambda record: evidence.add('driver_trace', trace=record),
         debug_adapter=lambda channel: H11Scope(channel, evidence))
     io = dev.debug_transport
-    outcome = 'ABORTED'
+    outcome, reason = 'ABORTED', 'incomplete H11 qualification'
     try:
         identity = dev.identity()
         if '2231A-30-3' not in identity or 'KEL103' not in load.identify().upper():
@@ -138,6 +145,9 @@ def h11(transport, evidence, load):
                       'Короткие провода; перемычек и осциллографа нет. '
                       'Runner задаст CR 40 Ω и токовый предел 0.040 A.', io)
         evidence.add('operator_gate', token='CONFIRM H11 CONNECT CH1 ALL_OFF LOAD=OFF')
+        require_outputs(dev)
+        if load.input_state() != 'OFF':
+            raise SafetyError('KEL103 INPUT must remain OFF until configured')
         if abs(load.configure_cr(40.0) - 40.0) > .01:
             raise SafetyError('KEL103 CR 40 Ω readback mismatch')
         load.set_input(True)
@@ -189,27 +199,53 @@ def h11(transport, evidence, load):
         load.set_input(False)
         if load.input_state() != 'OFF':
             raise SafetyError('KEL103 INPUT failed to turn OFF')
-        outcome = 'PASS'
-    except Exception as exc:
-        evidence.add('stage_error', exception_type=type(exc).__name__, detail=str(exc))
-        print(f'H11 остановлен: {type(exc).__name__}: {exc}')
-        outcome = 'ABORTED'
-    finally:
-        if dev.armed:
-            try:
-                dev.emergency_off()
-            except Exception as exc:
-                evidence.add('shutdown_error', exception_type=type(exc).__name__)
-                outcome = 'ABORTED'
+        outcome, reason = 'PASS', 'four CV/CC points, KEL comparison and CSV verified'
+    except BaseException as exc:
+        outcome = ('ABORTED' if not io.live or not getattr(load, 'live', True) or
+                   isinstance(exc, (OSError, TimeoutError, KeyboardInterrupt,
+                                    InterruptedError, EOFError)) else 'FAIL')
+        reason = f'H11 stopped: {type(exc).__name__}: {exc}; verify physical OFF'
+        print(reason)
         try:
-            load.set_input(False)
-        except Exception as exc:
-            evidence.add('load_shutdown_error', exception_type=type(exc).__name__)
+            evidence.add('stage_error', exception_type=type(exc).__name__,
+                         detail=str(exc), psu_live=io.live,
+                         load_live=getattr(load, 'live', True))
+        except BaseException:
             outcome = 'ABORTED'
+            reason += '; evidence write failed'
+    finally:
+        # Emergency SCPI and INPUT OFF must work even when evidence is unavailable.
+        # A previous library fault can disarm the driver while physical ON is
+        # still possible, so never predicate this step on dev.armed.
+        evidence.cleanup = True
+        failures = release_psu_and_load(dev, io, load, evidence)
+        if failures:
+            outcome = 'ABORTED'
+            reason += '; ' + '; '.join(failures)
+        # qualification.py owns the final physical DISCONNECT token after
+        # the stage returns. Do not request the same operator confirmation twice.
+        # A PASS here means electrically confirmed OFF, not yet physical removal.
+        if io.live and not failures:
+            try:
+                dev.diagnostic_write('SYST:LOC')
+            except BaseException as exc:
+                outcome = 'ABORTED'
+                reason += f'; SYST:LOC unconfirmed: {type(exc).__name__}'
+        for instrument in (transport, load):
+            try:
+                instrument.close()
+            except BaseException as exc:
+                outcome = 'ABORTED'
+                reason += f'; instrument close failed: {type(exc).__name__}'
+        if evidence.lost:
+            outcome = 'ABORTED'
+            reason += '; evidence incomplete; manual review required'
+        # Recorded outcome is not authoritative if its own evidence write fails.
         try:
-            states = require_outputs(dev)
-            evidence.add('final_output_states', outputs=states)
-        except Exception as exc:
-            evidence.add('final_output_check_error', exception_type=type(exc).__name__)
+            evidence.add('query_outcome', outcome=outcome, stop_reason=reason,
+                         verification='HW OBSERVED' if outcome == 'PASS' else 'HW UNVERIFIED')
+        except BaseException:
+            outcome = 'ABORTED'
+        if evidence.lost:
             outcome = 'ABORTED'
     return outcome

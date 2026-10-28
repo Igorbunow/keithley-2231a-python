@@ -14,7 +14,8 @@ import math
 import re
 import time
 
-from common import StageAdapter, channel_snapshot, operator_gate, require_outputs
+from common import (ShutdownEvidence, StageAdapter, channel_snapshot, operator_gate,
+                    require_outputs)
 from keithley2231a import ChannelProfile, Keithley2231A, LimitsError, Profile, SafetyError
 
 FINAL_TOKEN = 'CONFIRM H08 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF DMM=DISCONNECTED'
@@ -210,26 +211,6 @@ def _timer_check(dev, meter, evidence, measured_channel, pair):
     dev.tracking_timers(None, None)
 
 
-class _ShutdownEvidence:
-    """Keep emergency SCPI independent of evidence storage availability.
-
-    A lost record never qualifies as PASS; while cleanup is in progress the
-    driver can still send its bounded emergency OFF/readback sequence.
-    """
-    def __init__(self, target):
-        self.target, self.path = target, target.path
-        self.cleanup, self.lost = False, False
-
-    def add(self, event, **fields):
-        try:
-            return self.target.add(event, **fields)
-        except BaseException:
-            self.lost = True
-            if not self.cleanup:
-                raise
-            return {'response': fields.get('response', '')} if event == 'read' else {}
-
-
 def _h08_emergency_shutdown(dev, io, evidence):
     """One live-link OFF attempt, independently of evidence and DMM failures.
 
@@ -262,7 +243,7 @@ def _h08_emergency_shutdown(dev, io, evidence):
 def h08(transport, evidence, meter):
     """Two meter positions, each with both voltage ratios and both timer orders."""
     original_evidence = evidence
-    evidence = _ShutdownEvidence(original_evidence)
+    evidence = ShutdownEvidence(original_evidence)
     if getattr(meter, 'evidence', None) is original_evidence:
         meter.evidence = evidence
     dev = Keithley2231A(transport, debug=True,

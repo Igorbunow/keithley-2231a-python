@@ -7,8 +7,9 @@ CR 40 Ω. Настоящий диод не подключается. Runner вы
 
 ## Подготовка
 
-- Keithley 2231A-30-3 подключён к `/dev/ttyUSB3`, UART 9600 8N1; KEL103 подключена
-  по USB к `/dev/ttyACM0`, 115200 8N1.
+- Keithley 2231A-30-3 подключён через UART 9600 8N1; KEL103 подключена по USB,
+  115200 8N1. Фактические порты и USB VID:PID берутся только из
+  `config/bench.local.toml` и проверяются Connection Gate.
 - Все выходы PSU выключены, вход KEL103 выключен, Output Recall выключен.
 - Нагрузка отсоединена от клемм; перемычки, общая шина, осциллограф и DMM сняты.
 - Выход сетевого выключателя Keithley доступен.
@@ -46,7 +47,10 @@ PYTHONPATH=src:tests/hardware python3 tools/hw_qualify.py preflight H11 --config
 CONFIRM H11 INDEPENDENT ALL_OFF LOAD=KEL103 DISCONNECTED USB=/dev/ttyACM0 BAUD=115200 RECALL=OFF CH1=V0.50_I0.040_VCAP2.00_ICAP0.100 CH2=V1.50_I0.200_VCAP3.00_ICAP0.200 CH3=V2.00_I0.300_VCAP4.00_ICAP0.300 CR=40OHM SWEEP=0.50,1.00,1.50,2.00 I_LIMIT=0.040A STOP=CC
 ```
 
-После автоматического отключения PSU/KEL входа физически отсоединить KEL103 от CH1.
+После автоматического отключения и подтверждённых readback PSU/KEL runner
+запрашивает отдельное подтверждение физического отсоединения обоих проводов
+KEL103 от CH1. При неопределённой связи или отказе evidence PASS невозможен;
+оба прибора останавливаются независимо, без автоматического reconnect.
 Затем подтвердить пустые клеммы и OFF:
 
 ```text

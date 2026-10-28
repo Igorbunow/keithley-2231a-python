@@ -19,7 +19,8 @@ import re
 import statistics
 import time
 
-from common import StageAdapter, channel_snapshot, operator_gate, require_outputs
+from common import (ShutdownEvidence, StageAdapter, channel_snapshot, operator_gate,
+                    release_psu_and_load, require_outputs)
 from keithley2231a import Acquisition, ChannelProfile, Keithley2231A, Profile, SafetyError
 
 DURATION_S = 180.0
@@ -164,78 +165,10 @@ def _check_live_measurements(readings, values):
         raise SafetyError('H07 Keithley/KEL103 U/I/P measurement mismatch')
 
 
-def _release_h07_instruments(dev, io, load, evidence):
-    """Independently attempt PSU and KEL OFF, with no retries on uncertain links.
-
-    No evidence failure may suppress either instrument's shutdown attempt.
-    Each still-live link is used at most once for the emergency OFF sequence.
-    """
-    failures = []
-    records = []
-    if io.live:
-        try:
-            io.cleanup = True
-            dev.emergency_off()
-            if any(require_outputs(dev).values()):
-                raise SafetyError('Keithley OFF readback mismatch')
-        except BaseException as exc:
-            failures.append(f'Keithley OFF unconfirmed: {type(exc).__name__}')
-            records.append(('Keithley', type(exc).__name__))
-    else:
-        failures.append('Keithley link uncertain; manual OFF required')
-        records.append(('Keithley', 'link uncertain'))
-
-    if getattr(load, 'live', True):
-        try:
-            if load.input_state() != 'OFF':
-                load.set_input(False)
-            if load.input_state() != 'OFF':
-                raise SafetyError('KEL103 INPUT OFF readback mismatch')
-        except BaseException as exc:
-            failures.append(f'KEL103 INPUT OFF unconfirmed: {type(exc).__name__}')
-            records.append(('KEL103', type(exc).__name__))
-    else:
-        failures.append('KEL103 link uncertain; manual INPUT OFF required')
-        records.append(('KEL103', 'link uncertain'))
-
-    for instrument, classification in records:
-        try:
-            evidence.add('cleanup_error', instrument=instrument,
-                         classification=classification, outcome='UNKNOWN')
-        except BaseException:
-            pass
-    return failures
-
-
-class _ShutdownEvidence:
-    """Do not allow a failed evidence sink to suppress OFF at either instrument.
-
-    During normal execution errors propagate, so no qualification PASS can be
-    produced with missing evidence. During emergency cleanup they are recorded
-    as lost, but instrumentation is allowed to send the actual OFF commands.
-    """
-    def __init__(self, target):
-        self.target = target
-        self.path = target.path
-        self.cleanup = False
-        self.lost = False
-
-    def add(self, event, **fields):
-        try:
-            return self.target.add(event, **fields)
-        except BaseException:
-            self.lost = True
-            if not self.cleanup:
-                raise
-            # StageAdapter displays a redacted response from this record.
-            # No firmware/serial reads are allowed in the cleanup scope.
-            return {'response': fields.get('response', '')} if event == 'read' else {}
-
-
 def h07(transport, evidence, load):
     """Acquire three minutes, shut down, verify persisted data and test both resets."""
     original_evidence = evidence
-    evidence = _ShutdownEvidence(original_evidence)
+    evidence = ShutdownEvidence(original_evidence)
     # The physical KEL103 adapter logs before sending USB commands, too. Its
     # logging must not be permitted to block an emergency INPUT OFF.
     if getattr(load, 'evidence', None) is original_evidence:
@@ -347,7 +280,7 @@ def h07(transport, evidence, load):
             outcome = 'ABORTED'
             reason += '; evidence write failed'
         evidence.cleanup = True
-        failures = _release_h07_instruments(dev, io, load, evidence)
+        failures = release_psu_and_load(dev, io, load, evidence)
         if failures:
             outcome = 'ABORTED'
             reason += '; ' + '; '.join(failures)

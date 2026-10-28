@@ -141,6 +141,75 @@ class StageAdapter:
     def close(self): self.transport.close()
 
 
+class ShutdownEvidence:
+    """Keep emergency SCPI and independent equipment OFF attempts alive on log failure.
+
+    Normal logging remains strict: missing evidence prevents PASS. Only the
+    bounded cleanup path may suppress an evidence error, while marking the run
+    incomplete. The reply record retains the response for the SCPI dispatcher.
+    """
+    def __init__(self, target):
+        self.target = target
+        self.cleanup = False
+        self.lost = False
+
+    def __getattr__(self, name):
+        return getattr(self.target, name)
+
+    def add(self, event, **fields):
+        try:
+            return self.target.add(event, **fields)
+        except BaseException:
+            self.lost = True
+            if not self.cleanup:
+                raise
+            return {'response': fields.get('response', '')} if event == 'read' else {}
+
+
+def release_psu_and_load(dev, io, load, evidence):
+    """Independent one-shot PSU and load OFF, with authoritative readbacks.
+
+    Never issue more I/O on a link already classified as uncertain. Evidence
+    failure cannot suppress either device's OFF attempt or fabricate OFF.
+    Return actionable failures rather than trusting driver armed-state flags.
+    """
+    failures = []
+    records = []
+    if io.live:
+        try:
+            io.cleanup = True
+            dev.emergency_off()
+            if any(require_outputs(dev).values()):
+                raise SafetyError('Keithley OFF readback mismatch')
+        except BaseException as exc:
+            failures.append(f'Keithley OFF unconfirmed: {type(exc).__name__}')
+            records.append(('Keithley', type(exc).__name__))
+    else:
+        failures.append('Keithley link uncertain; manual OFF required')
+        records.append(('Keithley', 'link uncertain'))
+
+    if getattr(load, 'live', True):
+        try:
+            if load.input_state() != 'OFF':
+                load.set_input(False)
+            if load.input_state() != 'OFF':
+                raise SafetyError('KEL103 INPUT OFF readback mismatch')
+        except BaseException as exc:
+            failures.append(f'KEL103 INPUT OFF unconfirmed: {type(exc).__name__}')
+            records.append(('KEL103', type(exc).__name__))
+    else:
+        failures.append('KEL103 link uncertain; manual INPUT OFF required')
+        records.append(('KEL103', 'link uncertain'))
+
+    for instrument, classification in records:
+        try:
+            evidence.add('cleanup_error', instrument=instrument,
+                         classification=classification, outcome='UNKNOWN')
+        except BaseException:
+            pass
+    return failures
+
+
 def require_outputs(dev, expected=None, *, settle_timeout_s=0.0):
     """Check validated ON bits, optionally waiting for a known ON-bit update.
 
