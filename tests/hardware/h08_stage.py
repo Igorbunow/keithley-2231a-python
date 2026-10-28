@@ -59,8 +59,9 @@ def preflight(port, host=None):
           'DMM: *IDN?, SYST:ERR?, ROUT:TERM?, *RST, SENS:FUNC/VOLT, READ?; без смены языка.\n'
           'Все ответы/измерения пишутся; PSU serial и DMM serial редактируются в evidence.\n'
           'Бюджет PSU 16000 команд/600 s без операторского ожидания; DMM timeout 5 s.\n'
-          'При ошибке STOP; попытка OFF по живому PSU, без reconnect. При потере связи\n'
-          'выключить Keithley сетевым выключателем и вручную проверить выходы.\n'
+          'При ошибке DMM/evidence STOP; независимая попытка PSU OFF по достоверной связи,\n'
+          'поканальный readback, затем сброс/чтение трёх таймеров. Без reconnect/retry.\n'
+          'При потере связи PSU или сбое OFF: ручной сетевой OFF и проверка выходов.\n'
           'Финал: independent, все OFF, таймеры OFF, local; DISCONNECT DMM и физический OFF.\n'
           'НЕ ВКЛЮЧАТЬ ВЫХОДЫ до отдельного разрешения H08. Токен:\n'
           f'{approval_token(host)}')
@@ -83,6 +84,9 @@ class H08Scope(StageAdapter):
         r'VOLT:LIM (?:2\.00|3\.00|4\.00)|VOLT:LIM:STAT 1)$')
     _CLEANUP_WRITE = re.compile(
         r'^(?:SYST:(?:REM|LOC)|OUTP 0|OUTP:TRAC 0|OUTP:TIM:STAT 0|INST:NSEL [123]|CHAN:OUTP 0)$')
+    _CLEANUP_QUERY = re.compile(
+        r'^(?:\*IDN\?|SYST:ERR\?|OUTP:SER\?|INST:NSEL\?|CHAN:OUTP\?|'
+        r'OUTP:TIM:STAT\?|STAT:OPER:INST:ISUM[123]:COND\?)$')
 
     def _validate(self, command, query):
         super()._validate(command, query)
@@ -112,7 +116,7 @@ def _arm(dev, ratio):
 
 def _meter_voltage(meter):
     value = meter.measure()['voltage_v']
-    if not isinstance(value, (float, int)) or not math.isfinite(value):
+    if type(value) not in (float, int) or not math.isfinite(value):
         raise SafetyError('Invalid independent voltage reading')
     return value
 
@@ -206,8 +210,61 @@ def _timer_check(dev, meter, evidence, measured_channel, pair):
     dev.tracking_timers(None, None)
 
 
+class _ShutdownEvidence:
+    """Keep emergency SCPI independent of evidence storage availability.
+
+    A lost record never qualifies as PASS; while cleanup is in progress the
+    driver can still send its bounded emergency OFF/readback sequence.
+    """
+    def __init__(self, target):
+        self.target, self.path = target, target.path
+        self.cleanup, self.lost = False, False
+
+    def add(self, event, **fields):
+        try:
+            return self.target.add(event, **fields)
+        except BaseException:
+            self.lost = True
+            if not self.cleanup:
+                raise
+            return {'response': fields.get('response', '')} if event == 'read' else {}
+
+
+def _h08_emergency_shutdown(dev, io, evidence):
+    """One live-link OFF attempt, independently of evidence and DMM failures.
+
+    Reset and *read back* each timer only after confirmed global OFF; do not
+    retry after uncertain PSU I/O.  Fail closed if any cleanup step is lost.
+    """
+    if not io.live:
+        return 'Keithley link uncertain; manual OFF required'
+    try:
+        io.cleanup = True
+        dev.emergency_off()
+        require_outputs(dev)
+        dev.debug_bypass_profile = True
+        try:
+            dev.diagnostic_write('OUTP:TRAC 0')
+            for channel in (1, 2, 3):
+                dev.diagnostic_write(f'INST:NSEL {channel}')
+                dev.diagnostic_write('OUTP:TIM:STAT 0')
+                if dev.diagnostic_query('OUTP:TIM:STAT?').strip() != '0':
+                    raise SafetyError(f'CH{channel} timer OFF unconfirmed')
+        finally:
+            dev.debug_bypass_profile = False
+        require_outputs(dev)
+        dev.diagnostic_write('SYST:LOC')
+        return None
+    except BaseException as exc:
+        return f'Keithley shutdown/timer reset unconfirmed: {type(exc).__name__}; manual OFF required'
+
+
 def h08(transport, evidence, meter):
     """Two meter positions, each with both voltage ratios and both timer orders."""
+    original_evidence = evidence
+    evidence = _ShutdownEvidence(original_evidence)
+    if getattr(meter, 'evidence', None) is original_evidence:
+        meter.evidence = evidence
     dev = Keithley2231A(transport, debug=True,
         debug_trace=lambda record: evidence.add('driver_trace', trace=record),
         debug_adapter=lambda channel: H08Scope(channel, evidence))
@@ -303,28 +360,29 @@ def h08(transport, evidence, meter):
         outcome = ('ABORTED' if not io.live or isinstance(exc, (
             OSError, TimeoutError, KeyboardInterrupt, InterruptedError)) else 'FAIL')
         reason = f'H08 stopped: {type(exc).__name__}: {exc}; verify all outputs OFF'
-        evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc), live_link=io.live)
-        if io.live:
-            try:
-                io.cleanup = True
-                dev.emergency_off()
-                require_outputs(dev)
-                dev.debug_bypass_profile = True
-                try:
-                    dev.diagnostic_write('OUTP:TRAC 0')
-                    for channel in (1, 2, 3):
-                        dev.diagnostic_write(f'INST:NSEL {channel}')
-                        dev.diagnostic_write('OUTP:TIM:STAT 0')
-                finally: dev.debug_bypass_profile = False
-                dev.diagnostic_write('SYST:LOC')
-            except BaseException:
-                outcome, reason = 'ABORTED', 'shutdown unconfirmed; UNKNOWN OUTPUT STATE'
+        # Report writer failures must never prevent the physical OFF attempt.
+        evidence.cleanup = True
+        evidence.add('stage_error', exception_type=type(exc).__name__,
+                     message=str(exc), live_link=io.live)
+        failure = _h08_emergency_shutdown(dev, io, evidence)
+        if failure:
+            outcome, reason = 'ABORTED', failure
     finally:
+        # Closing the DMM TCP socket is independent of any PSU shutdown result.
         for instrument in (transport, meter):
-            try: instrument.close()
+            try:
+                instrument.close()
             except BaseException:
                 outcome, reason = 'ABORTED', 'instrument close failed; manual OFF required'
-        evidence.add('query_outcome', outcome=outcome, stop_reason=reason,
-                     firmware=evidence.firmware,
-                     verification='HW OBSERVED' if outcome == 'PASS' else 'HW UNVERIFIED')
+        if evidence.lost:
+            outcome, reason = 'ABORTED', 'H08 evidence incomplete; check physical OFF'
+        # Loss of the final result record cannot turn a run into a false PASS.
+        try:
+            evidence.add('query_outcome', outcome=outcome, stop_reason=reason,
+                         firmware=evidence.target.firmware,
+                         verification='HW OBSERVED' if outcome == 'PASS' else 'HW UNVERIFIED')
+        except BaseException:
+            outcome = 'ABORTED'
+        if evidence.lost:
+            outcome = 'ABORTED'
     return outcome
