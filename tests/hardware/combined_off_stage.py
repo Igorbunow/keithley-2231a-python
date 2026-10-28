@@ -66,8 +66,80 @@ class CombinedOffScope(StageAdapter):
             r'VOLT (?:0|1\.00|1\.50|2\.00)|CURR (?:0|0\.100|0\.200|0\.300)|'
             r'VOLT:LIM (?:2\.00|3\.00|4\.00)|VOLT:LIM:STAT 1)$')
         self._CLEANUP_WRITE = re.compile(
-            rf'^(?:SYST:(?:REM|LOC)|OUTP 0|OUTP:{mode} 0|INST:NSEL [123]|CHAN:OUTP 0)$')
+            rf'^(?:SYST:(?:REM|LOC)|OUTP 0|OUTP:{mode} 0|INST:NSEL [123]|'
+            r'CHAN:OUTP 0|OUTP:TIM:STAT 0)$')
         self._CLEANUP_QUERY = self._QUERY
+
+
+class _ShutdownEvidence:
+    """Preserve bounded OFF SCPI if the evidence filesystem stops accepting writes.
+
+    Never promote an incomplete trace to PARTIAL/PASS.  Suppress only evidence
+    failures *during emergency cleanup*, not transport or instrument errors.
+    """
+    def __init__(self, target):
+        self.target = target
+        self.cleanup = False
+        self.lost = False
+
+    def __getattr__(self, name):
+        return getattr(self.target, name)
+
+    def add(self, event, **fields):
+        try:
+            return self.target.add(event, **fields)
+        except BaseException:
+            self.lost = True
+            if not self.cleanup:
+                raise
+            return {'response': fields.get('response', '')} if event == 'read' else {}
+
+
+def _combined_off_emergency(dev, io, mode):
+    """One bounded, confirmed shutdown. Never retry an uncertain SCPI link."""
+    if not io.live:
+        return 'PSU transport uncertain; physical mains OFF required'
+    io.cleanup = True
+    try:
+        dev.debug_bypass_profile = True
+        try:
+            # Combined channel selections can alias: first use the global OFF
+            # register while the current combined addressing is still active.
+            dev.diagnostic_write('OUTP 0')
+            if dev.diagnostic_query('OUTP:STAT:ALL?').strip() != '0':
+                raise SafetyError('Global output OFF unconfirmed in combined mode')
+            dev.diagnostic_write(f'OUTP:{mode} 0')
+            if dev.diagnostic_query(f'OUTP:{mode}?').strip() != '0':
+                raise SafetyError(f'{mode} mode OFF unconfirmed')
+            dev.emergency_off()
+            require_outputs(dev)
+            for ch in (1, 2, 3):
+                dev.diagnostic_write(f'INST:NSEL {ch}')
+                dev.diagnostic_write('OUTP:TIM:STAT 0')
+                if dev.diagnostic_query('OUTP:TIM:STAT?').strip() != '0':
+                    raise SafetyError(f'CH{ch} timer OFF unconfirmed')
+            require_outputs(dev)
+            dev.diagnostic_write('SYST:LOC')
+        finally:
+            dev.debug_bypass_profile = False
+        return None
+    except BaseException as exc:
+        return f'Shutdown/mode/timer confirmation failed ({type(exc).__name__}); manual OFF required'
+
+
+def _verify_final_off(dev, mode):
+    """Explicit independent, outputs, timer readbacks before a PARTIAL outcome."""
+    for flag in ('SER', 'PARALLEL', 'TRAC'):
+        if dev.diagnostic_query(f'OUTP:{flag}?').strip() != '0':
+            raise SafetyError(f'Combined mode {flag} remained active')
+    require_outputs(dev)
+    for ch in (1, 2, 3):
+        dev.diagnostic_write(f'INST:NSEL {ch}')
+        if dev.diagnostic_query('INST:NSEL?').strip() != str(ch):
+            raise SafetyError(f'CH{ch} selection unconfirmed in final state')
+        if dev.diagnostic_query('OUTP:TIM:STAT?').strip() != '0':
+            raise SafetyError(f'CH{ch} timer remains armed')
+    require_outputs(dev)
 
 
 def _snapshot(dev, evidence, phase, combined, mode):
@@ -97,6 +169,7 @@ def run_combined_off(transport, evidence, test_id='H09'):
     """Investigate OFF-only semantics; powered qualification remains pending."""
     tokens(test_id)
     mode = 'SER' if test_id == 'H09' else 'PARALLEL'
+    evidence = _ShutdownEvidence(evidence)
     dev = Keithley2231A(transport, debug=True,
         debug_trace=lambda record: evidence.add('driver_trace', trace=record),
         debug_adapter=lambda channel: CombinedOffScope(channel, evidence, mode))
@@ -148,6 +221,7 @@ def run_combined_off(transport, evidence, test_id='H09'):
                                                          else .00049 if key == 'CURR?' else 0)
                for ch in before for key in keys):
             raise SafetyError('Independent safe profile did not restore exactly')
+        _verify_final_off(dev, mode)
         dev.diagnostic_write('SYST:LOC')
         outcome, reason = 'PARTIAL', (
             f'{mode} OFF diagnostic complete; raw register semantics recorded; '
@@ -156,26 +230,28 @@ def run_combined_off(transport, evidence, test_id='H09'):
         outcome = ('ABORTED' if not io.live or isinstance(exc, (
             OSError, TimeoutError, KeyboardInterrupt, InterruptedError)) else 'FAIL')
         reason = f'{test_id} OFF diagnostic stopped: {type(exc).__name__}: {exc}'
-        evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc), live_link=io.live)
-        if io.live:
-            try:
-                io.cleanup = True
-                dev.debug_bypass_profile = True
-                # Global OFF is safe even when channel selection is aliased.
-                # Restore independent addressing before confirming individual OFF.
-                dev.diagnostic_write('OUTP 0')
-                dev.diagnostic_write(f'OUTP:{mode} 0')
-                dev.debug_bypass_profile = False
-                dev.emergency_off()
-                require_outputs(dev)
-                dev.diagnostic_write('SYST:LOC')
-            except BaseException:
-                outcome, reason = 'ABORTED', 'shutdown unconfirmed; UNKNOWN OUTPUT STATE'
+        # Mark as cleanup before logging the error: the filesystem may have
+        # failed, and no logging exception may suppress live-link OFF.
+        evidence.cleanup = True
+        evidence.add('stage_error', exception_type=type(exc).__name__,
+                     message=str(exc), live_link=io.live)
+        failure = _combined_off_emergency(dev, io, mode)
+        if failure:
+            outcome, reason = 'ABORTED', failure
     finally:
-        try: transport.close()
+        try:
+            transport.close()
         except BaseException:
             outcome, reason = 'ABORTED', 'close failed; manual OFF check required'
+        # A missing outcome record or any missing wire/event record means the
+        # evidence is incomplete even if the instrument is confirmed OFF.
+        if evidence.lost:
+            outcome = 'ABORTED'
+            reason += '; evidence recording incomplete'
+        evidence.cleanup = True
         evidence.add('query_outcome', outcome=outcome, stop_reason=reason,
                      firmware=evidence.firmware, verification='HW UNVERIFIED',
                      scope='OFF diagnostic only; no external wiring or powered measurements')
+        if evidence.lost:
+            outcome = 'ABORTED'
     return outcome
