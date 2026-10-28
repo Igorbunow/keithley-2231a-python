@@ -934,6 +934,13 @@ class TestQualification(unittest.TestCase):
 
             def query(self, command):
                 self._expire()
+                if command == 'MEAS:CURR?':
+                    # Model the actual 22-ohm load, not FakeTransport's generic
+                    # half-of-current-limit placeholder (which breaks CH2 U/I/P).
+                    self.cmds.append(command)
+                    values = self.values[self.active_ch]
+                    return str(values['VOLT'] / 22.0 if
+                               values['CHAN:OUTP'] and load.input == 'ON' else 0.0)
                 return super().query(command)
 
         class Load:

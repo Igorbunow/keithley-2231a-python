@@ -75,7 +75,8 @@ def _profile():
         verify_every_s=3600.0, access='control')
 
 
-def _check_load(load, channel, source_voltage_v, enabled):
+def _check_load(load, channel, source_voltage_v, enabled, *,
+                source_current_a=None, source_power_w=None):
     load.target_channel = channel
     values = load.measurements()
     voltage = values['kel103_voltage_v']
@@ -84,11 +85,19 @@ def _check_load(load, channel, source_voltage_v, enabled):
     if not all(math.isfinite(value) and value >= 0 for value in (voltage, current, power)):
         raise SafetyError('KEL103 returned an invalid measurement')
     if enabled:
+        sources = (source_voltage_v, source_current_a, source_power_w)
+        if any(value is None or isinstance(value, bool) or
+               not isinstance(value, (int, float)) or
+               not math.isfinite(value) or value < 0 for value in sources):
+            raise SafetyError(f'CH{channel} invalid Keithley U/I/P')
         expected_current = source_voltage_v / 22.0
         if (abs(voltage - source_voltage_v) > 0.06 or
                 abs(current - expected_current) > 0.03 or
-                abs(power - voltage * current) > 0.31):
-            raise SafetyError(f'CH{channel} Keithley/KEL103 readings disagree')
+                abs(current - source_current_a) > 0.03 or
+                abs(power - voltage * current) > 0.025 or
+                abs(source_power_w - source_voltage_v * source_current_a) > 0.025 or
+                abs(power - source_power_w) > 0.025):
+            raise SafetyError(f'CH{channel} Keithley/KEL103 U/I/P disagreement')
         if current < 0.01:
             raise SafetyError(f'CH{channel} load current is too low while enabled')
     elif voltage > 0.10 or current > 0.01 or power > 0.01:
@@ -109,6 +118,69 @@ def _wait_timer_off(dev, channel, started, evidence):
             return elapsed
         time.sleep(0.10)
     raise TimeoutError(f'CH{channel} output timer did not turn the output OFF')
+
+
+def _release_h06_instruments(dev, io, load, evidence):
+    """Independently establish PSU and KEL OFF; clear timers only after PSU OFF.
+
+    Do not send commands to a link whose response/transport is uncertain.
+    Evidence failures cannot prevent independent physical OFF attempts.
+    """
+    failures = []
+    records = []
+    psu_off = False
+    if io.live:
+        try:
+            io.cleanup = True
+            dev.emergency_off()
+            if any(require_outputs(dev).values()):
+                raise SafetyError('PSU OFF readback mismatch')
+            psu_off = True
+        except BaseException as exc:
+            failures.append(f'Keithley OFF unconfirmed: {type(exc).__name__}')
+            records.append(('Keithley', type(exc).__name__))
+    else:
+        failures.append('Keithley link uncertain; manual OFF required')
+        records.append(('Keithley', 'link uncertain'))
+
+    if getattr(load, 'live', True):
+        try:
+            if load.input_state() != 'OFF':
+                load.set_input(False)
+            if load.input_state() != 'OFF':
+                raise SafetyError('KEL103 INPUT OFF readback mismatch')
+        except BaseException as exc:
+            failures.append(f'KEL103 INPUT OFF unconfirmed: {type(exc).__name__}')
+            records.append(('KEL103', type(exc).__name__))
+    else:
+        failures.append('KEL103 link uncertain; manual INPUT OFF required')
+        records.append(('KEL103', 'link uncertain'))
+
+    if psu_off and io.live:
+        try:
+            # Profile was disarmed by emergency_off(); no output-ON is permitted.
+            dev.debug_bypass_profile = True
+            try:
+                for channel in (1, 2, 3):
+                    dev.diagnostic_write(f'INST:NSEL {channel}')
+                    dev.diagnostic_write('OUTP:TIM:STAT 0')
+                    if dev._bool(dev.diagnostic_query('OUTP:TIM:STAT?')):
+                        raise SafetyError(f'CH{channel} timer still enabled')
+            finally:
+                dev.debug_bypass_profile = False
+            dev.diagnostic_write('SYST:LOC')
+        except BaseException as exc:
+            failures.append(f'Keithley timers/Local unconfirmed: {type(exc).__name__}')
+            records.append(('Keithley timers/Local', type(exc).__name__))
+    else:
+        failures.append('Keithley timers not verified OFF; manual review required')
+
+    for instrument, error in records:
+        try:
+            evidence.add('cleanup_error', instrument=instrument, reason=error)
+        except BaseException:
+            pass
+    return failures
 
 
 def h06(transport, evidence, load):
@@ -175,7 +247,9 @@ def h06(transport, evidence, load):
             source = dev.read_channel(channel)
             if not source.enabled:
                 raise SafetyError(f'CH{channel} failed to turn ON')
-            live_load = _check_load(load, channel, source.voltage_v, source.enabled)
+            live_load = _check_load(load, channel, source.voltage_v, source.enabled,
+                                    source_current_a=source.current_a,
+                                    source_power_w=source.power_w)
             evidence.add('timer_live_measurement', channel=channel,
                          keithley_voltage_v=source.voltage_v,
                          keithley_current_a=source.current_a,
@@ -193,7 +267,9 @@ def h06(transport, evidence, load):
             time.sleep(0.50)
             require_outputs(dev, {ch: ch == channel for ch in (1, 2, 3)})
             reenabled = dev.read_channel(channel)
-            _check_load(load, channel, reenabled.voltage_v, reenabled.enabled)
+            _check_load(load, channel, reenabled.voltage_v, reenabled.enabled,
+                        source_current_a=reenabled.current_a,
+                        source_power_w=reenabled.power_w)
             evidence.add('timer_reenable', channel=channel, timer='OFF',
                          output_state='ON', stable_s=0.50,
                          voltage_v=reenabled.voltage_v, current_a=reenabled.current_a)
@@ -224,28 +300,15 @@ def h06(transport, evidence, load):
         outcome = ('ABORTED' if not io.live or isinstance(
             exc, (TimeoutError, KeyboardInterrupt, InterruptedError)) else 'FAIL')
         reason = f'H06 stopped: {type(exc).__name__}: {exc}; verify outputs and load OFF'
-        evidence.add('stage_error', exception_type=type(exc).__name__,
-                     message=str(exc), live_link=io.live)
-        if io.live:
-            try:
-                # Keep emergency traffic inside the adapter's shutdown allow-list.
-                io.cleanup = True
-                dev.emergency_off()
-                require_outputs(dev)
-                if getattr(load, 'live', True):
-                    load.set_input(False)
-                # The public timer API requires an armed profile. After emergency_off
-                # disarms it, use the explicit debug bypass through the same driver
-                # dispatch; H06Scope still restricts this to timer OFF and channel select.
-                dev.debug_bypass_profile = True
-                for channel in (1, 2, 3):
-                    dev.diagnostic_write(f'INST:NSEL {channel}')
-                    dev.diagnostic_write('OUTP:TIM:STAT 0')
-                dev.debug_bypass_profile = False
-                dev.diagnostic_write('SYST:LOC')
-            except BaseException:
-                outcome, reason = 'ABORTED', 'shutdown unconfirmed; UNKNOWN OUTPUT/LOAD/TIMER STATE'
-                evidence.add('cleanup_error', outcome='UNKNOWN')
+        try:
+            evidence.add('stage_error', exception_type=type(exc).__name__,
+                         message=str(exc), live_link=io.live)
+        except BaseException:
+            pass
+        failures = _release_h06_instruments(dev, io, load, evidence)
+        if failures:
+            outcome, reason = ('ABORTED', 'shutdown/timers unconfirmed; manual OFF required: '
+                               + '; '.join(failures))
     finally:
         try: transport.close()
         except BaseException:

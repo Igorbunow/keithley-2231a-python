@@ -115,7 +115,9 @@ def recall(transport, evidence, reopen):
         serial = identity.split(',')[2].strip()
         if not serial:
             raise SafetyError('Recall cycles require a nonempty instrument serial binding')
-        require_outputs(dev)
+        initial = require_outputs(dev)
+        if any(initial.values()):
+            raise SafetyError(f'Recall requires all outputs OFF before any profile setup: {initial}')
         for mode in ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?'):
             if dev._bool(dev.diagnostic_query(mode)):
                 raise SafetyError('Recall qualification requires Independent mode')
@@ -196,7 +198,10 @@ def recall(transport, evidence, reopen):
         reason = f'Output Recall stopped: {type(exc).__name__}: {exc}'
         outcome = ('ABORTED' if isinstance(exc, (KeyboardInterrupt, InterruptedError, EOFError))
                    else 'FAIL')
-        evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc))
+        try:
+            evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc))
+        except BaseException:
+            pass  # Filesystem errors cannot suppress the safe-OFF path.
         print(reason)
         if transport is None or dev is None or not matched or not dev.debug_transport.live:
             outcome = 'ABORTED'
@@ -210,8 +215,11 @@ def recall(transport, evidence, reopen):
                 dev.diagnostic_write('SYST:LOC')
             except BaseException as off_error:
                 outcome = 'ABORTED'
-                evidence.add('cleanup_error', exception_type=type(off_error).__name__,
-                             message=str(off_error))
+                try:
+                    evidence.add('cleanup_error', exception_type=type(off_error).__name__,
+                                 message=str(off_error))
+                except BaseException:
+                    pass
     finally:
         if transport is not None:
             try: transport.close()
