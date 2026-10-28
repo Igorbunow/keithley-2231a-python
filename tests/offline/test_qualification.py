@@ -1095,7 +1095,7 @@ class TestQualification(unittest.TestCase):
             def input_state(self): return 'ON' if self.enabled else 'OFF'
             def configure_cr(self, resistance): pass
             def set_input(self, enabled): self.enabled = enabled
-            def measurements(self): return {'kel103_voltage_v': 1.0, 'kel103_current_a': 0.045}
+            def measurements(self): return {'kel103_voltage_v': 1.0, 'kel103_current_a': 0.045, 'kel103_power_w': 0.045}
             def close(self): pass
 
         class Scope:
@@ -2296,3 +2296,100 @@ class TestQualification(unittest.TestCase):
             self.assertIn('"response": "0.099"', record)
             self.assertIn('"response": "Keithley instruments, 2231A-30-3, [REDACTED], 1.04-0.01"',
                           record)
+
+
+class TestKEL103FailClosedMalformedReply(unittest.TestCase):
+    """A malformed response must poison the KEL103 link before any next I/O."""
+
+    @staticmethod
+    def fake_load(replies):
+        from equipment.kel103 import _KEL103Core
+
+        class FakeLoad(_KEL103Core):
+            def __init__(self):
+                self._init_state(None)
+                self.responses = iter(replies)
+                self.commands = []
+
+            def _request(self, command):
+                self.commands.append(command)
+                return next(self.responses)
+
+            def _send(self, command):
+                self.commands.append(command)
+
+        return FakeLoad()
+
+    def test_malformed_input_state_latches_unknown_link(self):
+        from keithley2231a import SafetyError
+        for reply in ('???', '1', 'NaN', 'ON\x00OFF'):
+            with self.subTest(reply=reply):
+                load = self.fake_load([reply, 'OFF'])
+                with contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(SafetyError, 'manual OFF required'):
+                        load.input_state()
+                self.assertFalse(load.live)
+                with self.assertRaises(OSError): load.input_state()
+                with self.assertRaises(OSError): load.set_input(False)
+                self.assertEqual(load.commands, [':INP?'])
+
+    def test_malformed_numeric_measurement_latches_unknown_link(self):
+        from keithley2231a import SafetyError
+        for bad in ('NaN V', 'Inf V', '-1V', 'invalid', '0.7A'):
+            with self.subTest(bad=bad):
+                load = self.fake_load([bad, 'OFF'])
+                with contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(SafetyError, 'manual OFF required'):
+                        load.measurements()
+                self.assertFalse(load.live)
+                with self.assertRaises(OSError): load.input_state()
+                self.assertEqual(load.commands, [':MEAS:VOLT?'])
+
+    def test_invalid_resistance_readback_latches_before_input_on(self):
+        from keithley2231a import SafetyError
+        load = self.fake_load(['OFF', 'CR', 'CR', 'NaN OHM'])
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(SafetyError, 'manual OFF required'):
+                load.configure_cr(22.0)
+        self.assertFalse(load.live)
+        self.assertEqual(load.commands, [':INP?', ':FUNC CR', ':FUNC?',
+                                         ':RES 22OHM', ':FUNC?', ':RES?'])
+        with self.assertRaises(OSError): load.input_state()
+        self.assertEqual(len(load.commands), 6)
+
+    def test_valid_unexpected_on_remains_recoverable(self):
+        from keithley2231a import SafetyError
+        load = self.fake_load(['ON', 'OFF'])
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SafetyError): load.configure_cr(22.0)
+            self.assertTrue(load.live)
+            load.set_input(False)
+        self.assertTrue(load.live)
+        self.assertEqual(load.commands, [':INP?', ':INP OFF', ':INP?'])
+
+    def test_h05_malformed_load_reply_stops_load_link_but_shuts_down_psu(self):
+        from h05_stage import h05
+        from test_driver import FakeTransport
+        from tests.offline.test_h05_powered_guard import Scope
+        from qualification import Evidence
+        responses = ['KORAD-KEL103 V3.30', 'OFF', 'OFF', 'CR', 'CR',
+                     '22.000OHM', 'OFF', 'ON', 'NaN V']
+        load = self.fake_load(responses)
+        load.close = lambda: None
+        raw = FakeTransport()
+        scope = Scope()
+        with tempfile.TemporaryDirectory() as temp:
+            evidence = Evidence(Path(temp) / 'events.jsonl', 'H05')
+            load.evidence = evidence
+            with patch('equipment.factory.open_scope', return_value=scope), \
+                    patch('keithley2231a.device.time.sleep'), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                result = h05(raw, evidence, load)
+            history = [json.loads(s) for s in evidence.path.read_text().splitlines()]
+        self.assertEqual(result, 'ABORTED')
+        self.assertFalse(load.live)
+        self.assertEqual(load.commands[-1], ':MEAS:VOLT?')
+        self.assertEqual(load.commands.count(':INP OFF'), 0)  # poisoned link: no retry
+        self.assertFalse(any(raw.values[ch]['CHAN:OUTP'] for ch in (1, 2, 3)))
+        self.assertIn('OUTP 0', raw.cmds)  # independent PSU shutdown
+        self.assertTrue(any(e['event'] == 'kel103_invalid_reply' for e in history))

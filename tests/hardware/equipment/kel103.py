@@ -70,20 +70,32 @@ class _KEL103Core:
             raise SafetyError('unexpected electronic-load identity')
         return identity
 
+    def _invalid_reply(self, command):
+        # An unexpected/malformed reply can desynchronize the USB/UDP stream.
+        # Never issue another command on that connection, including INPUT OFF;
+        # the other instrument must still be shut down independently.
+        self.live = False
+        self._event('kel103_invalid_reply', command=command,
+                    classification='UNKNOWN LOAD INPUT STATE; no follow-up I/O')
+        raise SafetyError(f'Invalid KEL103 reply to {command}; '
+                          'UNKNOWN LOAD INPUT STATE (no retry; manual OFF required)')
+
     def input_state(self):
         state = self.query(':INP?').upper()
         if state not in ('ON', 'OFF'):
-            raise SafetyError(f'invalid KEL103 input state: {state}')
+            self._invalid_reply(':INP?')
         return state
 
-    @staticmethod
-    def _quantity(response, unit):
-        text = response.strip()
-        if text.upper().endswith(unit):
-            text = text[:-len(unit)].strip()
-        value = float(text)
-        if not math.isfinite(value) or value < 0:
-            raise SafetyError(f'invalid KEL103 measurement: {response}')
+    def _quantity(self, response, unit, command):
+        try:
+            text = response.strip()
+            if text.upper().endswith(unit):
+                text = text[:-len(unit)].strip()
+            value = float(text)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError('non-finite or negative numeric reply')
+        except (ValueError, AttributeError, TypeError, OverflowError):
+            self._invalid_reply(command)
         return value
 
     def configure_cr(self, resistance_ohm):
@@ -100,7 +112,7 @@ class _KEL103Core:
         self.write(f':RES {resistance_ohm:g}OHM')
         if self.query(':FUNC?').upper() != 'CR':
             raise SafetyError('KEL103 left CR mode while setting resistance')
-        actual = self._quantity(self.query(':RES?'), 'OHM')
+        actual = self._quantity(self.query(':RES?'), 'OHM', ':RES?')
         if abs(actual - resistance_ohm) > 0.001:
             raise SafetyError(f'KEL103 CR readback mismatch: {actual} Ω')
         self.verified_resistance = resistance_ohm
@@ -123,9 +135,9 @@ class _KEL103Core:
     def measurements(self):
         """Read the three independent KEL103 live measurement values."""
         return {
-            'kel103_voltage_v': self._quantity(self.query(':MEAS:VOLT?'), 'V'),
-            'kel103_current_a': self._quantity(self.query(':MEAS:CURR?'), 'A'),
-            'kel103_power_w': self._quantity(self.query(':MEAS:POW?'), 'W'),
+            'kel103_voltage_v': self._quantity(self.query(':MEAS:VOLT?'), 'V', ':MEAS:VOLT?'),
+            'kel103_current_a': self._quantity(self.query(':MEAS:CURR?'), 'A', ':MEAS:CURR?'),
+            'kel103_power_w': self._quantity(self.query(':MEAS:POW?'), 'W', ':MEAS:POW?'),
         }
 
 

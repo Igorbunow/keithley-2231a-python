@@ -111,7 +111,13 @@ class Evidence:
                 and not event.startswith('kel103_')):
             parts = fields['response'].split(',')
             if len(parts) == 4:
-                if not event.startswith('dmm7510_'):
+                # Only PSU-owned identity events may update PSU firmware metadata.
+                # Other *IDN? responses (scope/DMM) still need serial redaction,
+                # but must NEVER be interpreted as a Keithley 2231A revision.
+                psu_identity = (event in ('read', 'psu_identity')
+                                and parts[0].strip().casefold() in ('keithley', 'keithley instruments')
+                                and parts[1].strip().casefold() == '2231a-30-3')
+                if psu_identity:
                     observed = parts[3].strip()
                     if self.firmware is not None and observed != self.firmware:
                         revision_change = (self.firmware, observed)

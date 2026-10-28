@@ -527,3 +527,7 @@ reports/hardware/<timestamp>_H04P/events.jsonl`. Historical H04P evidence
 with a 0.31 W acceptance field is reported `PASS_WITH_REVIEW_NOTES`, even
 when every measurement passes today's tighter independent check. No automatic
 hardware approval or re-energizing follows from an offline PASS.
+
+### R3.5.15 H05 guard refinement
+
+For the fixed H05 1 V power_only run, the runner now checks KEL103 and Keithley live U/I/P, demands positive KEL103 OFF readback, and verifies a real 0-to-1 V excursion rather than accepting small relative-only scope edges. Evidence logging and scope-open failures cannot suppress PSU/load shutdown attempts. The physical common-return/oscilloscope-ground wiring and all setpoints are unchanged. See `docs/H05_PREFLIGHT.ru.md`.

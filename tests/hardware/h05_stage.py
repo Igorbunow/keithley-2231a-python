@@ -39,6 +39,44 @@ def transitions(rows, threshold=0.5):
     return edges
 
 
+def validate_rail(rows, channel):
+    """Require finite, rising timestamps and actual 0->1 V rail excursion."""
+    if len(rows) < 2 or any(not math.isfinite(t) or not math.isfinite(v)
+                            for t, v in rows):
+        raise SafetyError(f'H05 CH{channel} waveform has missing/non-finite samples')
+    if any(b[0] <= a[0] for a, b in zip(rows, rows[1:])):
+        raise SafetyError(f'H05 CH{channel} waveform time axis is not increasing')
+    low, high = min(v for _, v in rows), max(v for _, v in rows)
+    if not -0.20 <= low <= 0.20 or not 0.80 <= high <= 1.20:
+        raise SafetyError(f'H05 CH{channel} voltage rail outside 0/1 V envelope: '
+                          f'low={low}, high={high}')
+    return {'low_v': low, 'high_v': high}
+
+
+def verify_load_measurement(source, measurement):
+    """Independently validate the fixed CR22 CH1 load and source readings."""
+    keys = ('kel103_voltage_v', 'kel103_current_a', 'kel103_power_w')
+    if any(key not in measurement for key in keys):
+        raise SafetyError('H05 incomplete KEL103 measurement')
+    values = [measurement[key] for key in keys]
+    if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in values):
+        raise SafetyError('H05 invalid KEL103 numeric measurement')
+    voltage, current, power = values
+    for key in ('voltage_v', 'current_a', 'power_w'):
+        value = source[key]
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise SafetyError('H05 invalid PSU numeric measurement')
+    if (abs(voltage - source['voltage_v']) > 0.06 or
+            abs(current - source['current_a']) > 0.03 or
+            abs(power - voltage * current) > 0.025 or
+            abs(power - source['power_w']) > 0.025 or
+            abs(current - voltage / 22.0) > 0.020):
+        raise SafetyError('H05 Keithley/KEL103 live measurement disagreement')
+    return {'delta_voltage_v': abs(voltage - source['voltage_v']),
+            'delta_current_a': abs(current - source['current_a']),
+            'delta_power_w': abs(power - source['power_w'])}
+
+
 def qualified_transitions(rows):
     """Find full-rail edges at 10% rise/90% fall, qualified by the opposite rail.
 
@@ -134,7 +172,7 @@ def h05(transport, evidence, load):
     io = dev.debug_transport
     from equipment.factory import open_scope
     from bench_config import current_bench
-    scope = open_scope(current_bench(), evidence)
+    scope = None
     outcome = 'ABORTED'
     try:
         identity = dev.identity()
@@ -182,6 +220,7 @@ def h05(transport, evidence, load):
         evidence.add('api_guards', set_channel='REJECTED_NO_SCPI',
                      timer='REJECTED_NO_SCPI', sequence='REJECTED_NO_SCPI',
                      direct_output='REJECTED_NO_SCPI', outcome='PASS')
+        scope = open_scope(current_bench(), evidence)
         scope_configuration = scope.configure()
         evidence.add('scope_configuration', **scope_configuration)
         for channel in (1, 2, 3):
@@ -210,14 +249,21 @@ def h05(transport, evidence, load):
         evidence.add('all_channels_on_readback', channels=psu_readings)
         load_measurement = load.measurements()
         evidence.add('kel103_all_channels_on_measurement', **load_measurement)
+        evidence.add('live_measurement_comparison',
+                     **verify_load_measurement(psu_readings[1], load_measurement))
         dev.power_off()
         off_finished = time.monotonic()
         evidence.add('sequence_call_timing', power_on_duration_s=on_finished-started,
                      power_off_duration_s=off_finished-on_finished)
         load.set_input(False)
+        if load.input_state() != 'OFF':
+            raise SafetyError('H05 KEL103 INPUT OFF readback failed')
         evidence.add('kel103_input', state='OFF')
         waveforms = scope.collect()
         midpoint_crossings = {channel: transitions(rows) for channel, rows in waveforms.items()}
+        envelopes = {channel: validate_rail(rows, channel)
+                     for channel, rows in waveforms.items()}
+        evidence.add('scope_voltage_envelopes', channels=envelopes)
         per_channel = {channel: qualified_transitions(rows)
                        for channel, rows in waveforms.items()}
         time_axes = [tuple(t for t, _ in waveforms[channel]) for channel in (1, 2, 3)]
@@ -252,11 +298,17 @@ def h05(transport, evidence, load):
         error = dev.error()
         if not error.startswith('0,'):
             raise SafetyError(f'PSU error queue not clear: {error}')
+        final_load_state = load.input_state()
+        if final_load_state != 'OFF':
+            raise SafetyError(f'H05 KEL103 INPUT not OFF at final check: {final_load_state}')
         evidence.add('final_status', output_masks=states, error_queue=error,
-                     kel103_input=load.input_state())
+                     kel103_input=final_load_state)
         outcome = 'PASS'
     except BaseException as exc:
-        evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc))
+        try:
+            evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc))
+        except BaseException:
+            pass  # Evidence failure must not bypass independent physical OFF attempts.
         print(f'H05 stopped: {type(exc).__name__}: {exc}')
         try:
             if load.input_state() != 'OFF': load.set_input(False)
@@ -267,13 +319,19 @@ def h05(transport, evidence, load):
                 dev.emergency_off()
                 dev.diagnostic_write('SYST:LOC')
         except BaseException as off_error:
-            evidence.add('shutdown_error', exception_type=type(off_error).__name__, message=str(off_error))
+            try:
+                evidence.add('shutdown_error', exception_type=type(off_error).__name__, message=str(off_error))
+            except BaseException:
+                pass
         try:
-            if scope.number('ACQUIRE:STATE?') != 0:
+            if scope is not None and scope.number('ACQUIRE:STATE?') != 0:
                 scope.command('ACQUIRE:STATE STOP')
         except BaseException as scope_error:
-            evidence.add('scope_stop_error', exception_type=type(scope_error).__name__,
-                         message=str(scope_error))
+            try:
+                evidence.add('scope_stop_error', exception_type=type(scope_error).__name__,
+                             message=str(scope_error))
+            except BaseException:
+                pass
         outcome = 'ABORTED'
     finally:
         try:
