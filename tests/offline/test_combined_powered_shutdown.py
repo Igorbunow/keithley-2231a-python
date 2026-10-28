@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -158,6 +159,88 @@ class PoweredCombinedShutdownTests(unittest.TestCase):
         self.assertEqual(load.state, 'OFF')
         self.assertTrue(src.closed and load.closed and meter.closed)
         self.assertTrue(evidence.lost)
+
+    def run_recovery(self, *, psu_live=True, load_live=True,
+                     psu_off_failure=False, load_off_failure=False,
+                     gate_failure=False, lost_evidence=False,
+                     disk_fails_during_recovery=False, original_outcome='FAIL'):
+        with tempfile.TemporaryDirectory() as temp:
+            raw = FailEvidence(Path(temp) / 'events.jsonl', 'H09')
+            evidence = ShutdownEvidence(raw)
+            source = Source(fail_off=psu_off_failure, live=psu_live)
+            load = Load(raw, fail_off=load_off_failure, live=load_live)
+            meter = Meter()
+            steps = []
+            def recover():
+                # A real H09/H10 callback asks for physical disconnection here.
+                steps.append(('gate', source.output_on, load.state,
+                              source.link.cleanup))
+                self.assertFalse(source.output_on)
+                self.assertEqual(load.state, 'OFF')
+                self.assertFalse(source.link.cleanup)
+                if gate_failure:
+                    raise InterruptedError('operator refused jumper removal')
+                if disk_fails_during_recovery:
+                    raw.broken = True
+                    evidence.add('operator_gate', action='physical disconnect verified')
+                steps.append(('independent',))
+            raw.broken = lost_evidence
+            with contextlib.redirect_stdout(io.StringIO()):
+                outcome = finish_combined_powered(
+                    source, source.link, load, meter, source, evidence,
+                    outcome=original_outcome, reason='injected DMM voltage mismatch',
+                    scope='combined fault injection', recover_independent=recover)
+            history = [] if lost_evidence else [json.loads(x) for x in
+                raw.path.read_text(encoding='utf-8').splitlines()]
+            return outcome, source, load, meter, history, steps
+
+    def test_measuring_failure_recovers_only_after_off_on_both_links(self):
+        outcome, src, load, meter, history, steps = self.run_recovery()
+        self.assertEqual(outcome, 'FAIL')  # original measurement failure retained
+        self.assertEqual(steps, [('gate', False, 'OFF', False), ('independent',)])
+        self.assertTrue(src.closed and load.closed and meter.closed)
+        self.assertEqual(src.calls.count('emergency_off'), 2)
+        self.assertIn(('topology_restore', 'VERIFIED_INDEPENDENT'),
+            [(e['event'], e.get('state')) for e in history])
+        self.assertEqual(history[-1]['outcome'], 'FAIL')
+        self.assertIn('DMM voltage mismatch', history[-1]['stop_reason'])
+
+    def test_topology_gate_must_not_run_if_any_off_or_link_unknown(self):
+        for kwargs in ({'psu_off_failure': True}, {'load_off_failure': True},
+                       {'psu_live': False}, {'load_live': False},
+                       {'lost_evidence': True}):
+            with self.subTest(kwargs=kwargs):
+                outcome, _, _, _, history, steps = self.run_recovery(**kwargs)
+                self.assertEqual(outcome, 'ABORTED')
+                self.assertEqual(steps, [])
+                if history:
+                    self.assertIn(('topology_restore', 'NOT_ATTEMPTED'),
+                        [(e['event'], e.get('state')) for e in history])
+
+    def test_refused_physical_disconnection_does_not_switch_topology(self):
+        outcome, src, load, _, history, steps = self.run_recovery(gate_failure=True)
+        self.assertEqual(outcome, 'ABORTED')
+        self.assertEqual(steps, [('gate', False, 'OFF', False)])
+        self.assertFalse(src.output_on)
+        self.assertEqual(load.state, 'OFF')
+        self.assertIn(('topology_restore', 'UNVERIFIED'),
+            [(e['event'], e.get('state')) for e in history])
+
+    def test_disk_failure_mid_recovery_blocks_nonoff_profile_commands(self):
+        outcome, src, load, _, history, steps = self.run_recovery(
+            disk_fails_during_recovery=True)
+        self.assertEqual(outcome, 'ABORTED')
+        self.assertEqual(steps, [('gate', False, 'OFF', False)])
+        self.assertFalse(src.output_on)
+        self.assertEqual(load.state, 'OFF')
+        self.assertEqual(src.calls.count('emergency_off'), 2)
+
+    def test_normal_success_does_not_repeat_physical_gate(self):
+        outcome, _, _, _, history, steps = self.run_recovery(original_outcome='PASS')
+        self.assertEqual(outcome, 'PASS')
+        self.assertEqual(steps, [])
+        self.assertIn(('topology_restore', 'VERIFIED_INDEPENDENT'),
+            [(e['event'], e.get('state')) for e in history])
 
     def test_final_outcome_record_failure_cannot_report_pass(self):
         result, src, load, _, evidence, _ = self.run_case(fail_final_record=True)

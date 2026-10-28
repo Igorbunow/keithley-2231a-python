@@ -217,19 +217,90 @@ def release_psu_and_load(dev, io, load, evidence):
 
 
 def finish_combined_powered(dev, io, load, meter, transport, evidence, *, outcome,
-                            reason, scope):
+                            reason, scope, recover_independent=None):
     """Finalize either powered H09 or H10 using the same fail-closed shutdown.
 
     An OFF command alone is insufficient: check Keithley output readbacks and
     KEL103 INPUT readback independently, even if profile state was disarmed.
     Preserve UNKNOWN if a link or its evidence is no longer trustworthy.
+    Failed combined-mode stages may recover their topology ONLY after verified
+    electrical OFF and a fresh operator confirmation that external wires were
+    removed; the callback never runs on uncertain links or failed evidence.
     """
     evidence.cleanup = True
     failures = release_psu_and_load(dev, io, load, evidence)
+    off_verified = not failures
+    try:
+        evidence.add('electrical_shutdown', phase='initial',
+                     state='VERIFIED_OFF' if off_verified else 'UNKNOWN',
+                     devices=['Keithley', 'KEL103'], failures=list(failures))
+    except BaseException:
+        outcome = 'ABORTED'
     if failures:
         outcome = 'ABORTED'
         reason += '; ' + '; '.join(failures)
-    if io.live and not failures:
+    if recover_independent is not None:
+        if outcome == 'PASS':
+            # The normal path already applied and verified Independent after
+            # operator-confirmed jumper removal inside the powered runner.
+            try:
+                evidence.add('topology_restore', state='VERIFIED_INDEPENDENT',
+                             source='normal runner path')
+            except BaseException:
+                outcome = 'ABORTED'
+        elif off_verified and io.live and getattr(load, 'live', True) and not evidence.lost:
+            try:
+                # The complete independent profile needs its bounded SCPI scope;
+                # OFF cleanup-only scope would reject its safety readbacks.
+                # Never bypass a genuinely exhausted command/time budget.
+                # Recovery is not shutdown: all profile evidence must remain
+                # strict; a disk failure must halt further non-OFF commands.
+                evidence.cleanup = False
+                io.cleanup = False
+                io.powered_gate = False
+                if hasattr(io, 'high_current_gate'):
+                    io.high_current_gate = False
+                recover_independent()
+                evidence.add('topology_restore', state='VERIFIED_INDEPENDENT',
+                             source='abnormal path, physical disconnect confirmed')
+                reason += '; Independent restored after confirmed physical disconnect'
+            except BaseException as exc:
+                outcome = 'ABORTED'
+                reason += f'; Independent NOT VERIFIED: {type(exc).__name__}: {exc}'
+                try:
+                    evidence.add('topology_restore', state='UNVERIFIED',
+                                 error_type=type(exc).__name__, error=str(exc))
+                except BaseException:
+                    pass
+                print('STOP: topology NOT VERIFIED; leave all outputs OFF; '
+                      'manual Independent recovery only after wires removed')
+            finally:
+                io.cleanup = True
+                evidence.cleanup = True
+            # A profile transition can fail part-way; try the bounded OFF path
+            # once more on each link still known live, without reconnect/retry.
+            further_failures = release_psu_and_load(dev, io, load, evidence)
+            try:
+                evidence.add('electrical_shutdown', phase='post_recovery',
+                             state='UNKNOWN' if further_failures else 'VERIFIED_OFF',
+                             devices=['Keithley', 'KEL103'], failures=list(further_failures))
+            except BaseException:
+                outcome = 'ABORTED'
+            if further_failures:
+                outcome = 'ABORTED'
+                failures.extend(further_failures)
+                reason += '; post-recovery OFF: ' + '; '.join(further_failures)
+        else:
+            outcome = 'ABORTED'
+            reason += '; Independent NOT VERIFIED: no safe conditions for physical recovery gate'
+            try:
+                evidence.add('topology_restore', state='NOT_ATTEMPTED',
+                             reason='OFF/link/evidence precondition unverified')
+            except BaseException:
+                pass
+            print('STOP: topology NOT VERIFIED; do not remove wiring unless '
+                  'physical OFF independently established')
+    if io.live and not failures and not evidence.lost:
         try:
             dev.diagnostic_write('SYST:LOC')
         except BaseException as exc:

@@ -319,9 +319,27 @@ def _run_parallel_powered(transport, evidence, load, meter, *, high_current):
             outcome = 'ABORTED'
             reason += '; evidence write failed'
     finally:
+        def recover_independent():
+            # Both rails must read OFF before the physical jumper gate.
+            operator_gate(FINAL_TOKEN,
+                'АВАРИЙНОЕ ЗАВЕРШЕНИЕ H10: PSU ALL OFF и KEL103 INPUT OFF подтверждены. '
+                'Отключите нагрузку и DMM, снимите ОБЕ параллельные перемычки '
+                'CH1+/CH2+ и CH1−/CH2−. Только затем подтвердите NO_JUMPERS; '
+                'восстановление Independent не включает выходы.',
+                io, powered_timeout_s=120)
+            evidence.add('operator_gate', token=FINAL_TOKEN,
+                         action='abnormal_disconnect_parallel_wiring')
+            dev.apply_profile(_safe_profile(), confirmed_wiring='independent')
+            require_outputs(dev)
+            if any(dev._bool(dev.diagnostic_query(query)) for query in
+                   ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?')):
+                raise SafetyError('Independent mode readback mismatch after H10 recovery')
+            if load.input_state() != 'OFF':
+                raise SafetyError('KEL103 INPUT OFF lost during H10 recovery')
+
         outcome = finish_combined_powered(
             dev, io, load, meter, transport, evidence, outcome=outcome,
-            reason=reason,
+            reason=reason, recover_independent=recover_independent,
             scope=('external Parallel; CC 4.000 A / CR0.50; approx. 2 V / 8 W; <=10 W'
                    if high_current else
                    'external Parallel; CV 3 V / CR30 and CC 0.300 A / CR5; <=1 W'))

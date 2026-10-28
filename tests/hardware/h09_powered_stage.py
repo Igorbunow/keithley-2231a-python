@@ -343,8 +343,27 @@ def h09_powered(transport, evidence, load, meter):
             outcome = 'ABORTED'
             reason += '; evidence write failed'
     finally:
+        def recover_independent():
+            # Called ONLY after PSU + load independently read back OFF.
+            # Never clear Series while the external jumper is still attached.
+            operator_gate(FINAL_TOKEN,
+                'АВАРИЙНОЕ ЗАВЕРШЕНИЕ H09: выходы PSU и INPUT нагрузки подтверждены OFF. '
+                'Снимите KEL103, DMM7510 и перемычку CH1−↔CH2+. '
+                'Только после фактического отключения проводов подтвердите NO_JUMPERS; '
+                'тогда программа восстановит Independent без включения выходов.',
+                io, powered_timeout_s=120)
+            evidence.add('operator_gate', token=FINAL_TOKEN,
+                         action='abnormal_disconnect_series_wiring')
+            dev.apply_profile(_safe_independent_profile(), confirmed_wiring='independent')
+            require_outputs(dev)
+            if any(dev._bool(dev.diagnostic_query(query)) for query in
+                   ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?')):
+                raise SafetyError('Independent mode readback mismatch after H09 recovery')
+            if load.input_state() != 'OFF':
+                raise SafetyError('KEL103 INPUT OFF lost during H09 recovery')
+
         outcome = finish_combined_powered(
             dev, io, load, meter, transport, evidence, outcome=outcome,
-            reason=reason,
+            reason=reason, recover_independent=recover_independent,
             scope='external CH1+CH2 Series; CV/CC points at 2 V, 4 V, and 40 V profiles')
     return outcome
