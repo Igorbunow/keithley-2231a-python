@@ -126,8 +126,120 @@ def verify_csv(path, expected, *, max_gap_s):
     return result
 
 
+def _numeric(value, name, *, nonnegative=True):
+    """Reject malformed/nonfinite telemetry before comparisons (including NaN)."""
+    if type(value) not in (int, float) or not math.isfinite(value) or (nonnegative and value < 0):
+        raise SafetyError(f'H07 invalid {name}: expected finite numeric reading')
+    return value
+
+
+def _check_live_measurements(readings, values):
+    """Compare U, I, P of the load and source at each monitor scan.
+
+    Source P is computed from separately sampled U and I, not an independent
+    Keithley MEAS:POW? observation. The KEL103 power is a separate readback.
+    """
+    _check(len(readings) == 3, 'H07 must read exactly CH1, CH2 and CH3')
+    for channel, sample in enumerate(readings, start=1):
+        for key in ('voltage_v', 'current_a', 'power_w'):
+            _numeric(getattr(sample, key), f'CH{channel} {key}', nonnegative=channel == 1)
+    source = readings[0]
+    if not source.enabled or source.regulation != 'CV':
+        raise SafetyError('H07 CH1 must remain ON in CV')
+    for ch, sample in enumerate(readings[1:], start=2):
+        if (sample.enabled or abs(sample.voltage_v) > 0.10 or
+                abs(sample.current_a) > 0.01 or abs(sample.power_w) > 0.01):
+            raise SafetyError(f'H07 CH{ch} must remain OFF')
+    v = _numeric(values['kel103_voltage_v'], 'KEL103 voltage')
+    i = _numeric(values['kel103_current_a'], 'KEL103 current')
+    p = _numeric(values['kel103_power_w'], 'KEL103 power')
+    # A 25 mW power tolerance is conservative against observed H04P/H06
+    # differences (few mW), while rejecting the former 310 mW false PASS.
+    if (abs(v - 4.00) > 0.06 or abs(i - 0.100) > 0.03 or
+            abs(v - source.voltage_v) > 0.06 or
+            abs(i - source.current_a) > 0.03 or
+            abs(p - v * i) > 0.025 or
+            abs(source.power_w - source.voltage_v * source.current_a) > 0.025 or
+            abs(p - source.power_w) > 0.025):
+        raise SafetyError('H07 Keithley/KEL103 U/I/P measurement mismatch')
+
+
+def _release_h07_instruments(dev, io, load, evidence):
+    """Independently attempt PSU and KEL OFF, with no retries on uncertain links.
+
+    No evidence failure may suppress either instrument's shutdown attempt.
+    Each still-live link is used at most once for the emergency OFF sequence.
+    """
+    failures = []
+    records = []
+    if io.live:
+        try:
+            io.cleanup = True
+            dev.emergency_off()
+            if any(require_outputs(dev).values()):
+                raise SafetyError('Keithley OFF readback mismatch')
+        except BaseException as exc:
+            failures.append(f'Keithley OFF unconfirmed: {type(exc).__name__}')
+            records.append(('Keithley', type(exc).__name__))
+    else:
+        failures.append('Keithley link uncertain; manual OFF required')
+        records.append(('Keithley', 'link uncertain'))
+
+    if getattr(load, 'live', True):
+        try:
+            if load.input_state() != 'OFF':
+                load.set_input(False)
+            if load.input_state() != 'OFF':
+                raise SafetyError('KEL103 INPUT OFF readback mismatch')
+        except BaseException as exc:
+            failures.append(f'KEL103 INPUT OFF unconfirmed: {type(exc).__name__}')
+            records.append(('KEL103', type(exc).__name__))
+    else:
+        failures.append('KEL103 link uncertain; manual INPUT OFF required')
+        records.append(('KEL103', 'link uncertain'))
+
+    for instrument, classification in records:
+        try:
+            evidence.add('cleanup_error', instrument=instrument,
+                         classification=classification, outcome='UNKNOWN')
+        except BaseException:
+            pass
+    return failures
+
+
+class _ShutdownEvidence:
+    """Do not allow a failed evidence sink to suppress OFF at either instrument.
+
+    During normal execution errors propagate, so no qualification PASS can be
+    produced with missing evidence. During emergency cleanup they are recorded
+    as lost, but instrumentation is allowed to send the actual OFF commands.
+    """
+    def __init__(self, target):
+        self.target = target
+        self.path = target.path
+        self.cleanup = False
+        self.lost = False
+
+    def add(self, event, **fields):
+        try:
+            return self.target.add(event, **fields)
+        except BaseException:
+            self.lost = True
+            if not self.cleanup:
+                raise
+            # StageAdapter displays a redacted response from this record.
+            # No firmware/serial reads are allowed in the cleanup scope.
+            return {'response': fields.get('response', '')} if event == 'read' else {}
+
+
 def h07(transport, evidence, load):
     """Acquire three minutes, shut down, verify persisted data and test both resets."""
+    original_evidence = evidence
+    evidence = _ShutdownEvidence(original_evidence)
+    # The physical KEL103 adapter logs before sending USB commands, too. Its
+    # logging must not be permitted to block an emergency INPUT OFF.
+    if getattr(load, 'evidence', None) is original_evidence:
+        load.evidence = evidence
     dev = Keithley2231A(transport, debug=True,
                          debug_trace=lambda record: evidence.add('driver_trace', trace=record),
                          debug_adapter=lambda channel: H07Scope(channel, evidence))
@@ -174,20 +286,8 @@ def h07(transport, evidence, load):
         def observe(readings):
             nonlocal scans
             scans += 1
-            source = readings[0]
-            if not source.enabled or source.regulation != 'CV':
-                raise SafetyError('H07 CH1 must remain ON in CV')
-            if any(r.enabled or abs(r.voltage_v) > .10 or abs(r.current_a) > .01
-                   for r in readings[1:]):
-                raise SafetyError('H07 inactive channel is not OFF')
             values = load.measurements()
-            v, i, p = (values[key] for key in (
-                'kel103_voltage_v', 'kel103_current_a', 'kel103_power_w'))
-            if (not all(math.isfinite(x) and x >= 0 for x in (v, i, p)) or
-                    abs(v - 4.0) > .06 or abs(i - .100) > .03 or
-                    abs(v - source.voltage_v) > .06 or
-                    abs(i - source.current_a) > .03 or abs(p - v * i) > .31):
-                raise SafetyError('H07 Keithley/KEL103 measurement mismatch')
+            _check_live_measurements(readings, values)
             evidence.add('monitor_sample', scan=scans,
                          readings=[asdict(r) for r in readings], **values)
             if scans == 10:
@@ -196,9 +296,12 @@ def h07(transport, evidence, load):
                 time.sleep(GAP_PAUSE_S)
 
         acquisition.run(duration_s=DURATION_S, on_sample=observe)
+        # Both links must reach independently confirmed OFF before file/stats work.
         dev.output(1, False)
         require_outputs(dev)
         load.set_input(False)
+        if load.input_state() != 'OFF':
+            raise SafetyError('KEL103 INPUT OFF readback mismatch')
         dev.verify_profile()
         expected = {str(ch): stats.as_dict() for ch, stats in acquisition.stats.items()}
         recomputed = verify_csv(csv_path, expected, max_gap_s=MAX_GAP_S)
@@ -232,29 +335,39 @@ def h07(transport, evidence, load):
         dev.diagnostic_write('SYST:LOC')
         outcome, reason = 'PASS', 'CSV, statistics, timestamp integration, gap and resets verified'
     except BaseException as exc:
-        outcome = ('ABORTED' if not io.live or isinstance(
-            exc, (TimeoutError, KeyboardInterrupt, InterruptedError)) else 'FAIL')
+        outcome = ('ABORTED' if not io.live or not getattr(load, 'live', True) or
+                   isinstance(exc, (TimeoutError, KeyboardInterrupt, InterruptedError))
+                   else 'FAIL')
         reason = f'H07 stopped: {type(exc).__name__}: {exc}; verify physical OFF'
-        evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc), live_link=io.live)
-        if io.live:
+        try:
+            evidence.add('stage_error', exception_type=type(exc).__name__,
+                         message=str(exc), live_link=io.live)
+        except BaseException:
+            # A full disk or a broken evidence sink must never prevent OFF.
+            outcome = 'ABORTED'
+            reason += '; evidence write failed'
+        evidence.cleanup = True
+        failures = _release_h07_instruments(dev, io, load, evidence)
+        if failures:
+            outcome = 'ABORTED'
+            reason += '; ' + '; '.join(failures)
+        if io.live and not failures:
             try:
-                io.cleanup = True
-                dev.emergency_off()
-                require_outputs(dev)
                 dev.diagnostic_write('SYST:LOC')
             except BaseException:
-                outcome, reason = 'ABORTED', 'UNKNOWN OUTPUT STATE; manual OFF required'
-                evidence.add('cleanup_error', device='Keithley', outcome='UNKNOWN')
-        if getattr(load, 'live', True):
-            try: load.set_input(False)
-            except BaseException:
-                outcome, reason = 'ABORTED', 'UNKNOWN LOAD STATE; manual INPUT OFF required'
-                evidence.add('cleanup_error', device='KEL103', outcome='UNKNOWN')
+                outcome, reason = 'ABORTED', 'SYST:LOC unconfirmed; manual OFF required'
     finally:
         for device in (transport, load):
-            try: device.close()
+            try:
+                device.close()
             except BaseException:
                 outcome, reason = 'ABORTED', 'transport close failed; manual OFF required'
-        evidence.add('query_outcome', outcome=outcome, stop_reason=reason,
-                     verification='HW OBSERVED' if outcome == 'PASS' else 'HW UNVERIFIED')
+        if evidence.lost:
+            outcome = 'ABORTED'
+            reason += '; evidence sink failed; manual review required'
+        try:
+            evidence.add('query_outcome', outcome=outcome, stop_reason=reason,
+                         verification='HW OBSERVED' if outcome == 'PASS' else 'HW UNVERIFIED')
+        except BaseException:
+            outcome = 'ABORTED'  # Persisted evidence could not confirm a PASS.
     return outcome
