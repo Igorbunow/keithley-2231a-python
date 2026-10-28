@@ -1492,6 +1492,7 @@ class TestQualification(unittest.TestCase):
                 for mode, resistance in (('CV', '40.0'), ('CC', '12.0')):
                     answers.extend((
                         f'CONFIRM H03 CH{channel} {mode} CR={resistance} CONNECTED PSU=OFF',
+                        f'CONFIRM H03 CH{channel} {mode} ENABLE PSU=CH{channel}_ONLY KEL=CR{resistance}',
                         f'CONFIRM H03 DISPLAY CH{channel} PSU={mode} KEL=CR INPUT=ON',
                         f'CONFIRM H03 CH{channel} {mode} PSU=OFF LOAD=OFF'))
             return answers
@@ -1697,9 +1698,11 @@ class TestQualification(unittest.TestCase):
             evidence = q.Evidence(Path(tmp) / 'resume_ch3.jsonl', 'H03')
             answers = (
                 'CONFIRM H03 CH3 CV CR=40.0 CONNECTED PSU=OFF',
+                'CONFIRM H03 CH3 CV ENABLE PSU=CH3_ONLY KEL=CR40.0',
                 'CONFIRM H03 DISPLAY CH3 PSU=CV KEL=CR INPUT=ON',
                 'CONFIRM H03 CH3 CV PSU=OFF LOAD=OFF',
                 'CONFIRM H03 CH3 CC CR=12.0 CONNECTED PSU=OFF',
+                'CONFIRM H03 CH3 CC ENABLE PSU=CH3_ONLY KEL=CR12.0',
                 'CONFIRM H03 DISPLAY CH3 PSU=CC KEL=CR INPUT=ON',
                 'CONFIRM H03 CH3 CC PSU=OFF LOAD=OFF',
             )
@@ -1716,7 +1719,7 @@ class TestQualification(unittest.TestCase):
             fake.channel3_status_override = 8
             load = LoadFake()
             evidence = q.Evidence(Path(tmp) / 'status_diagnosis.jsonl', 'H03')
-            answers = operator_answers()[-6:]
+            answers = operator_answers()[-8:]
             with patch('builtins.input', side_effect=answers), \
                     patch('channel_stage.time.sleep'), \
                     contextlib.redirect_stdout(io.StringIO()):

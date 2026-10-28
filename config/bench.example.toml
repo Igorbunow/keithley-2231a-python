@@ -37,3 +37,20 @@ transport = "escope_http"
 host = "192.168.22.105"
 network_port = 80
 timeout_s = 10.0
+
+# Optional explicitly reviewed scenario block for bench.local.toml ONLY.
+# Copy and uncomment the entire block before CH1-only H03 preflight; all values
+# are scenario inputs; hard-coded safety ceilings in the parser cannot be raised.
+# [qualification.h03_single_cvcc]
+# channel = 1
+# initial_voltage_v = [1.00, 1.50, 2.00]
+# initial_current_a = [0.100, 0.200, 0.300]
+# voltage_cap_v = [4.00, 4.05, 4.10]
+# current_cap_a = [0.300, 0.400, 0.500]
+# cv_voltage_v = 4.00
+# cv_current_limit_a = 0.300
+# cv_resistance_ohm = 40.0
+# cc_voltage_v = 4.00
+# cc_current_limit_a = 0.250
+# cc_resistance_ohm = 12.0
+# max_power_w = 1.20

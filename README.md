@@ -5,7 +5,7 @@
 **Python control library for the Keithley 2231A-30-3 three-channel DC power supply.**
 Provides SCPI over USB–TTL UART, optional transparent TCP–UART bridges, immutable safety profiles, per-channel sequencing, measurement logs/statistics, DC voltage sweeps (including I–V curves).
 
-> **Experimental software / hardware qualification in progress.** A successful simulator/CI run does not validate an output command on a real instrument. Physical qualification records list the instrument's menu firmware as Main 1.04 / Aux 0.01; raw `*IDN?` revision fields have returned both `1.04-1.04` and `1.04-0.01`. Firmware is reported and recorded, not hard-coded as an API compatibility gate. See [verification matrix](docs/VERIFICATION.md) before powering a DUT. This is NOT a safety-rated protection system.
+> **Experimental software / hardware qualification in progress.** A successful simulator/CI run does not validate an output command on a real instrument. The operator reports the panel alternating Main 1.04 / Aux 1.04 and Main 1.04 / Aux 1.01; hardware SCPI evidence separately contains `*IDN?` revisions `1.04-1.04` and `1.04-0.01`. The cause of this difference is not established; preserve exact observations, without conflating 1.01 and 0.01. Firmware is reported and recorded, not hard-coded as an API compatibility gate. See [verification matrix](docs/VERIFICATION.md) before powering a DUT. This is NOT a safety-rated protection system.
 
 **Version:** 0.2.1.dev0 · **Python:** 3.10+ · **License:** [MIT](LICENSE) · **Manufacturer affiliation:** none (independent community project).
 
@@ -47,6 +47,22 @@ print(psu.instrument_key)  # stable manufacturer/model/serial tuple
 Omit `expected_serial` when serial binding is not needed. Firmware behavior remains
 qualification-specific: record the version shown in the instrument menu and the raw
 `*IDN?` revision in every hardware report; a new revision still needs hardware review.
+
+**Observed on one 2231A-30-3 (13 qualification runs, October 2026):** the same
+physical supply returned `1.04-1.04` and `1.04-0.01` from `*IDN?`, including
+within individual runs. Main stayed `1.04`; the manufacturer, model, serial,
+SCPI communication and validated output behavior did not change. The operator
+also observed `Aux 1.01` on the panel (not present in the saved SCPI replies).
+The observed revision change is **diagnostic-only**, not a profile or safety
+fault. Preserve the literal response and log the transition. A separate error
+in identity, transport, setpoints, status or protection **must still fail**.
+
+All five observed within-run changes followed a channel sweep ending at CH3;
+H01 readings associated with CH1 stayed at `Aux 1.04`. This is a useful
+**correlation, not a proven channel-dependent firmware property**. No vendor
+erratum or independent field report of this exact alternation has been found.
+See `docs/R3_5_9_CH3_STATUS_AND_AUX_REVISION_REVIEW.ru.md` for the evidence,
+limits and an OFF-only diagnostic proposal. Do not treat `0.01` as `1.01`.
 
 [Keithley/Tektronix official reference manual (PDF)](https://download.tek.com/manual/077100401_Referencemanual.pdf) · [Upstream product documentation](https://www.tek.com/en/tektronix-and-keithley-dc-power-supplies/keithley-2220-2230-2231-series-manual-0)
 
@@ -204,8 +220,8 @@ The R3.4 tests are fully offline; target hardware re-qualification remains R3.5.
 ## CH3 status workaround and limitations
 
 CH3 remains available through the normal profile, `set_channel(3, ...)`,
-`output(3, ...)` and `read_channel(3)` APIs. On the tested instrument (menu Main 1.04 /
-Aux 0.01), its operation condition reports **8** in both CV and CC: the ON bit
+`output(3, ...)` and `read_channel(3)` APIs. In the full H03 hardware trace from 2026-10-28 (SCPI Main 1.04 /
+Aux 1.04), its operation condition reports **8** in both CV and CC: the ON bit
 is present but the documented mode bits are absent. Its questionable condition
 correctly reports **1 (CV)** or **2 (CC)**. The library accepts an unambiguous mode
 from either condition register when the other has no mode bits. No opt-in or
@@ -478,3 +494,14 @@ error-queue polls. Malformed diagnostic replies now fail closed without any
 further I/O, and observed Main/Aux revision changes are explicitly recorded
 in evidence as observations only (never as an identity bypass). See
 [`docs/R3_5_SCPI_SEQUENCE_AND_FIRMWARE_AUDIT.ru.md`](docs/R3_5_SCPI_SEQUENCE_AND_FIRMWARE_AUDIT.ru.md).
+
+R3.5.5 added validated `[qualification.h03_single_cvcc]` and a separate CH1-only planning card. The original R3.5.5 stage intentionally blocked live execution. See `docs/R3_5_5_H03_SINGLE_CHANNEL_CONFIG.ru.md`.
+
+R3.5.6 adds an offline-tested CH1-only CV/CC runner core in
+`tests/hardware/single_cvcc_stage.py` with strict CH1 output scope, a
+config-derived point and simulated success/failure wire tests. **CLI live
+execution remains blocked** until a separate reviewed integration. See
+`docs/R3_5_6_H03_SINGLE_RUNNER_OFFLINE.ru.md`.
+
+R3.5.7 adds a separate interactive CLI route, `--single-channel-cvcc --execute --allow-single-cvcc-on`, with config-bound connection/wiring gates, two separate CH1-ON approvals and strictly reviewed evidence. The legacy three-channel H03 remains unchanged. Do not energize hardware until the updated patch and offline regression suite have been reviewed. See [`docs/R3_5_7_H03_SINGLE_CLI.ru.md`](docs/R3_5_7_H03_SINGLE_CLI.ru.md).
+- [R3.5.8 Powered H03 SCPI & display audit](docs/R3_5_8_POWERED_H03_AUDIT.ru.md) — readable Keithley/KEL U/I/P, bounded live confirmation, separate full-H03 ON gates.

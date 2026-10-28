@@ -13,6 +13,9 @@ from __future__ import annotations
 import math
 import re
 import time
+import builtins
+import select
+import sys
 
 from keithley2231a import SafetyError
 
@@ -194,14 +197,45 @@ def channel_snapshot(dev, channel, *, measured=False, select=True):
     return values
 
 
-def operator_gate(token, prompt, adapter=None):
-    """Wait for a valid operator action without recording mistyped confirmations."""
+def operator_gate(token, prompt, adapter=None, *, powered_timeout_s=None):
+    """Operator gate; when energized, bound the whole confirmation window.
+
+    Only the native interactive POSIX TTY path can use a timed read. Offline
+    mocks use their injected input implementation and never touch real ports.
+    A timeout raises so the caller can run its existing live-link OFF cleanup.
+    """
     print(prompt)
+    deadline = None
+    if powered_timeout_s is not None:
+        if not (isinstance(powered_timeout_s, (int, float)) and
+                math.isfinite(powered_timeout_s) and 0 < powered_timeout_s <= 120):
+            raise ValueError('Powered operator gate requires a bounded 1..120 s timeout')
+        deadline = time.monotonic() + powered_timeout_s
     while True:
         try:
-            read = adapter.operator_input if adapter is not None else input
-            answer = read(f'Подтверждение:\n{token}\n> ').strip()
+            if deadline is not None and getattr(builtins.input, '__module__', '') == 'builtins':
+                if not sys.stdin.isatty():
+                    raise InterruptedError('powered gate requires an interactive TTY')
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError('powered display confirmation timed out')
+                sys.stdout.write(f'Подтверждение:\n{token}\n> ')
+                sys.stdout.flush()
+                ready, _, _ = select.select([sys.stdin], [], [], remaining)
+                if not ready:
+                    raise TimeoutError('powered display confirmation timed out')
+                answer = sys.stdin.readline().strip()
+                if not answer:
+                    raise InterruptedError('powered display confirmation EOF')
+            else:
+                # Unit-test input mocks: no TTY read, no timer adjustment.
+                read = adapter.operator_input if adapter is not None else input
+                answer = read(f'Подтверждение:\n{token}\n> ').strip()
+                if deadline is not None and time.monotonic() > deadline:
+                    raise TimeoutError('powered display confirmation timed out')
         except (EOFError, KeyboardInterrupt):
             raise InterruptedError('operator gate interrupted')
         if answer == token: return
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError('powered display confirmation timed out')
         print('Подтверждение не распознано; ожидаю повторный ввод. Для остановки — Ctrl-C.')

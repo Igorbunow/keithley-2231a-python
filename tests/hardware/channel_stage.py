@@ -16,6 +16,7 @@ import re
 import time
 
 from common import StageAdapter, operator_gate, require_outputs
+from powered_display import comparison_table
 from equipment.kel103 import KEL103UDP, KEL103Serial
 
 from keithley2231a import ChannelProfile, Keithley2231A, Profile, SafetyError
@@ -113,12 +114,17 @@ class H03Scope(StageAdapter):
 
 
 def _display_gate(evidence, channel, mode, readings, io):
-    """Require independent panel confirmation against the network readbacks."""
+    """Show BOTH instruments' numeric readings, then require bounded panel verification."""
     token = f'CONFIRM H03 DISPLAY CH{channel} PSU={mode} KEL=CR INPUT=ON'
-    operator_gate(token, f"Проверьте на Keithley режим {mode}; на KEL103 — CR, INPUT ON. "
-          f"Сверьте дисплей KEL103 с сетевыми показаниями "
-          f"{readings['kel103_voltage_v']:.4f} V / {readings['kel103_current_a']:.4f} A / "
-          f"{readings['kel103_power_w']:.4f} W. При любом расхождении не подтверждайте.", io)
+    view = comparison_table(channel, mode,
+            psu_v=readings['keithley_voltage_v'], psu_i=readings['keithley_current_a'],
+            psu_p=readings['keithley_power_api_w'],
+            kel_v=readings['kel103_voltage_v'], kel_i=readings['kel103_current_a'],
+            kel_p=readings['kel103_power_w'],
+            psu_scpi_p=readings['keithley_power_scpi_w'])
+    operator_gate(token, view + '\nCheck PSU panel regulation ' + mode +
+                  '; any mismatch means abort (Ctrl-C).', io,
+                  powered_timeout_s=120)
     evidence.add('operator_display_confirmation', token=token, channel=channel,
                  keithley_panel_mode=mode, kel103_panel_mode='CR', kel103_panel_input='ON',
                  kel103_display_matches_remote=True)
@@ -226,8 +232,17 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False,
                              other_channels='OFF', psu_output='OFF')
                 load.configure_cr(float(resistance))
                 load.set_input(True)
+                if load.input_state() != 'ON':
+                    raise SafetyError('KEL103 INPUT ON verification failed before PSU enable')
                 evidence.add('kel103_setup_verified', channel=channel, mode=mode,
                              resistance_ohm=float(resistance), input_state='ON')
+                enable_gate = (f'CONFIRM H03 CH{channel} {mode} ENABLE '
+                               f'PSU=CH{channel}_ONLY KEL=CR{resistance}')
+                operator_gate(enable_gate,
+                              f'KEL103 INPUT ON and CR {resistance} Ohm verified. '
+                              f'Approve exactly one CH{channel} output ON; all other channels OFF.', io)
+                evidence.add('operator_gate', token=enable_gate, channel=channel,
+                             mode=mode, authorized_output=f'CH{channel} only')
                 io.authorized_channel = channel
                 dev.output(channel, True)
                 output_started = time.monotonic()
@@ -276,9 +291,18 @@ def h03(transport, evidence, load, start_channel=1, diagnose_status=False,
                     raise SafetyError('KEL103 power differs from V*I by more than its 300 W full-scale tolerance')
                 if abs(scpi_power - sample.power_w) > power_tolerance_w:
                     raise SafetyError('MEAS:POW? differs from measured U*I by more than 0.31 W')
+                if (channel == 3 and raw_status & 8 and not raw_status & 3 and
+                        questionable_status & 3 in (1, 2)):
+                    print(f'NOTICE CH3 {mode}: STAT:OPER={raw_status} has ON but no CV/CC bit; '
+                          f'STAT:QUES={questionable_status} supplies the regulation mode. '
+                          'Check the Keithley panel explicitly; this is recorded as a status caveat.')
                 # In a diagnostic status mismatch, preserve independent panel
                 # evidence before failing the point and shutting down.
-                _display_gate(evidence, channel, mode, observed, io)
+                _display_gate(evidence, channel, mode, dict(observed,
+                               keithley_voltage_v=sample.voltage_v,
+                               keithley_current_a=sample.current_a,
+                               keithley_power_api_w=sample.power_w,
+                               keithley_power_scpi_w=scpi_power), io)
                 if diagnose_status:
                     # Directed second sample, not a retry of a failed command.
                     remaining = 5.0 - (time.monotonic() - output_started)

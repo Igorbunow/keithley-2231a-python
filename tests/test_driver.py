@@ -379,6 +379,49 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(fake.cmds[-1], 'STAT:OPER:INST:ISUM1:COND?')
         self.assertTrue(dev.faulted)
 
+    def test_status_masks_reject_float_rounding_and_out_of_range_without_next_scpi(self):
+        # The old _uint() already rejected 1.5, but not decimal strings that
+        # lose their fractional part during float conversion.
+        for command, malformed in (
+                ('STAT:OPER:INST:ISUM3:COND?', '1.0000000000000001'),
+                ('STAT:OPER:INST:ISUM3:COND?', '256'),
+                ('STAT:QUES:INST:ISUM3:COND?', '2.0000000000000001'),
+                ('STAT:QUES:INST:ISUM3:COND?', '999999'),
+                ('STAT:OPER:INST:ISUM3:COND?', '-1'),
+                ('STAT:OPER:INST:ISUM3:COND?', 'NaN'),
+                ('STAT:OPER:INST:ISUM3:COND?', '9' * 5000)):
+            with self.subTest(command=command, raw=malformed[:25]):
+                class BadRegister(FakeTransport):
+                    def query(self, sent):
+                        reply = super().query(sent)
+                        return malformed if sent == command else reply
+
+                fake = BadRegister()
+                dev = Keithley2231A(fake)
+                dev.apply_profile(profile(), confirmed_wiring='independent')
+                dev.output(3, True)
+                with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE'):
+                    dev.read_channel(3)
+                self.assertEqual(fake.cmds[-1], command)
+                self.assertTrue(dev.faulted)
+                self.assertFalse(dev.armed)
+                self.assertTrue(fake.values[3]['CHAN:OUTP'])
+
+    def test_status_api_byte_must_be_bounded_integer(self):
+        class BadStatus(FakeTransport):
+            def query(self, command):
+                answer = super().query(command)
+                return '256' if command == '*STB?' else answer
+
+        fake = BadStatus()
+        dev = Keithley2231A(fake)
+        dev.apply_profile(profile(), confirmed_wiring='independent')
+        with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE'):
+            dev.status()
+        self.assertEqual(fake.cmds[-1], '*STB?')
+        self.assertTrue(dev.faulted)
+        self.assertFalse(dev.armed)
+
     def test_scpi_error_shutdown_is_checked_and_never_retried(self):
         class ErrorReply(FakeTransport):
             def query(self, command):
@@ -1052,6 +1095,36 @@ class TestDevice(unittest.TestCase):
         self.assertNotEqual(first, dev.instrument_id)
         self.assertEqual(dev.instrument_key,
                          ('keithley instruments', '2231A-30-3', 'TEST'))
+        dev.apply_profile(profile(), confirmed_wiring='independent')
+        self.assertTrue(dev.armed)
+
+    def test_aux_version_drift_is_nonblocking_with_stable_physical_identity(self):
+        # Some real qualification runs changed 1.04 -> 0.01 after a CH3 sweep.
+        # Model that correlation without declaring it a firmware contract.
+        fake = FakeTransport()
+        original = fake.query
+        versions = {1: '1.04-1.04', 2: '1.04-1.04', 3: '1.04-0.01'}
+        def correlated_reply(cmd):
+            if cmd == '*IDN?':
+                return ('Keithley instruments, 2231A-30-3, TEST, '
+                        + versions[fake.active_ch])
+            return original(cmd)
+        fake.query = correlated_reply
+        dev = Keithley2231A(fake)
+        key = ('keithley instruments', '2231A-30-3', 'TEST')
+        self.assertTrue(dev.identity().endswith('1.04-1.04'))
+        dev.remote()
+        dev._select(3)
+        self.assertTrue(dev.identity().endswith('1.04-0.01'))
+        self.assertEqual(dev.instrument_key, key)
+        # Do not silently normalize the separately reported panel value 1.01.
+        versions[3] = '1.04-1.01'
+        self.assertTrue(dev.identity().endswith('1.04-1.01'))
+        self.assertEqual(dev.instrument_key, key)
+        dev._select(1)
+        self.assertTrue(dev.identity().endswith('1.04-1.04'))
+        self.assertEqual(dev.instrument_key, key)
+        self.assertFalse(dev.faulted)
         dev.apply_profile(profile(), confirmed_wiring='independent')
         self.assertTrue(dev.armed)
 

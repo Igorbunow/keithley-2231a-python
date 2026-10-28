@@ -32,7 +32,7 @@ class _CommandChannel:
 class Reading:
     """Sequential channel readback, not an atomic instrument snapshot.
 
-    Main 1.04 / Aux 0.01 has been observed to omit CH3 OPER CV/CC bits.
+    On the tested 2231A, CH3 OPER may omit CV/CC bits (H03 evidence).
     An unambiguous QUES condition mode remains usable when OPER has no mode.
     ``regulation_source`` identifies the supporting register(s): operation,
     questionable, both, or None for OFF, UNKNOWN or skipped regulation checks.
@@ -393,12 +393,22 @@ class Keithley2231A:
             self._malformed_value(f'Unexpected response to {command}: {s!r}')
         return val
 
-    def _uint(self, command: str) -> int:
-        """Parse integer-valued SCPI register/channel replies without truncation."""
-        value = self._num(command)
-        if not value.is_integer() or value < 0:
-            self._malformed_value(f'Invalid unsigned integer response to {command}: {value!r}')
-        return int(value)
+    def _uint(self, command: str, *, maximum: int = 65535) -> int:
+        """Read bounded SCPI unsigned integers without floating-point conversion.
+
+        Integer register replies are not measurements: parsing via float can
+        round non-integral text (e.g. 1.0000000000000001) into a valid bit.
+        Refuse malformed/oversized values as an uncertain link, without retry
+        or any subsequent command on that transport.
+        """
+        raw = self._query(command)
+        if (not isinstance(raw, str) or
+                re.fullmatch(r'[0-9]{1,5}', raw.strip()) is None):
+            self._malformed_value(f'Invalid unsigned integer response to {command}: {raw!r}')
+        value = int(raw.strip())
+        if value > maximum:
+            self._malformed_value(f'Out-of-range unsigned integer response to {command}: {raw!r}')
+        return value
 
     def _bool(self, value: str) -> bool:
         if isinstance(value, str):
@@ -408,7 +418,16 @@ class Keithley2231A:
         self._malformed_value(f'Invalid boolean response: {value!r}')
 
     def identity(self) -> str:
-        """Return the latest raw *IDN? reply; firmware revision is not device identity."""
+        """Return the latest raw *IDN? reply, preserving Main/Aux text verbatim.
+
+        On a qualified 2231A-30-3, the Aux field has changed between 1.04
+        and 0.01 while manufacturer, model and serial stayed constant. The
+        front panel has also shown a different Aux revision. Such revision
+        drift is a non-blocking *observation*, not proof of a new instrument
+        or of a firmware update. Selection-dependent display behavior is a
+        hypothesis, not a vendor-documented property. Do not normalize 0.01
+        to 1.01 or suppress independent I/O, status or identity failures.
+        """
         with self._lock:
             ans = self._query('*IDN?')
             parts = [part.strip() for part in ans.split(',')]
@@ -1247,8 +1266,8 @@ class Keithley2231A:
                 questionable_mask = None
                 regulation_source = None
                 if with_regulation:
-                    operation_mask = self._uint(f'STAT:OPER:INST:ISUM{ch}:COND?')
-                    questionable_mask = self._uint(f'STAT:QUES:INST:ISUM{ch}:COND?')
+                    operation_mask = self._uint(f'STAT:OPER:INST:ISUM{ch}:COND?', maximum=255)
+                    questionable_mask = self._uint(f'STAT:QUES:INST:ISUM{ch}:COND?', maximum=255)
 
                     def decode_regulation(mask: int) -> str | None:
                         cv, cc = bool(mask & 1), bool(mask & 2)
@@ -1314,7 +1333,7 @@ class Keithley2231A:
             self._require_ready()
             try:
                 return {'identity': self._idn, 'scpi_version': self._query('SYST:VERS?'),
-                        'status_byte': self._uint('*STB?'),
+                        'status_byte': self._uint('*STB?', maximum=255),
                         'questionable_condition': self._uint('STAT:QUES:COND?'),
                         'operation_condition': self._uint('STAT:OPER:COND?')}
             except Exception as exc:

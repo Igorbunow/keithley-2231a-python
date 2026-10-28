@@ -421,3 +421,8 @@ from keithley2231a import TcpTransport
 повреждённого диагностического ответа. Изменения поля Aux сохраняются как
 наблюдение, без отмены проверки производителя/модели/серийного номера.
 См. [R3_5_SCPI_SEQUENCE_AND_FIRMWARE_AUDIT.ru.md](R3_5_SCPI_SEQUENCE_AND_FIRMWARE_AUDIT.ru.md).
+
+- [R3.5.5 — H03 CH1 config-only preflight](R3_5_5_H03_SINGLE_CHANNEL_CONFIG.ru.md) — исходный этап без аппаратного запуска.
+- [R3.5.6 — ядро H03 CH1](R3_5_6_H03_SINGLE_RUNNER_OFFLINE.ru.md) — моделируемый runner.
+- [R3.5.7 — интеграция H03_SINGLE_CVCC CLI](R3_5_7_H03_SINGLE_CLI.ru.md) — отдельный контролируемый powered-маршрут и offline-аудит.
+- [R3.5.8: H03 SCPI и визуальная сверка](R3_5_8_POWERED_H03_AUDIT.ru.md) — отдельный ON-допуск и контроль времени при активном выходе.

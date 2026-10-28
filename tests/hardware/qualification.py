@@ -689,6 +689,10 @@ def main(argv=None):
                         help='H09/H10 only: separately gated low-power combined-mode qualification')
     parser.add_argument('--high-current', action='store_true',
                         help='H10 only: separately gated 4 A / 8 W Parallel point')
+    parser.add_argument('--single-channel-cvcc', action='store_true',
+                        help='H03 CH1-only CV/CC; gated live runner or dry-run (full H03 unchanged)')
+    parser.add_argument('--allow-single-cvcc-on', action='store_true',
+                        help='H03 CH1 ONLY: additional explicit powered-run opt-in; no effect on full H03')
     parser.add_argument('--profile-only', action='store_true',
                         help='H02 only: restricted OFF-only Independent profile readback, no panel/debug probes')
     parser.add_argument('--prior-evidence', type=Path, action='append',
@@ -709,6 +713,16 @@ def main(argv=None):
     args.load_port = bench.load.network_port
     args.load_transport = bench.load.transport
     args.load_serial_port = bench.load.port
+    if args.single_channel_cvcc and (args.test_id != 'H03' or args.start_channel != 1 or
+                                     args.profile_only or args.recall or args.powered or
+                                     args.high_current or args.diagnose_status or args.load_connected or
+                                     args.prior_evidence):
+        parser.error('--single-channel-cvcc only supports H03 CH1 with no other stage variants')
+    if args.allow_single_cvcc_on and (not args.single_channel_cvcc or
+                                      args.command != 'run' or not args.execute):
+        parser.error('--allow-single-cvcc-on requires run H03 --single-channel-cvcc --execute')
+    if args.single_channel_cvcc and bench.h03_single_cvcc is None:
+        parser.error('H03 single CV/CC requires [qualification.h03_single_cvcc] in --config TOML')
     if args.profile_only and (args.test_id != 'H02' or args.recall or args.powered or args.high_current):
         parser.error('--profile-only is restricted to H02')
     if args.recall and args.test_id != 'H06':
@@ -774,6 +788,22 @@ def main(argv=None):
               'Этот CLI однопроходный; другой работающий процесс остановите Ctrl-C. Не переподключаться автоматически.')
         return 0
     if args.test_id is None: parser.error('preflight/run requires one test ID')
+    if args.single_channel_cvcc:
+        from single_cvcc_preflight import describe
+        from single_cvcc_cli import run_h03_single_cli
+        print(describe(bench, execution_supported=True))
+        if args.command == 'run' and args.execute:
+            if not args.allow_single_cvcc_on:
+                print('BLOCKED: explicitly add --allow-single-cvcc-on after review; no ports opened.')
+                return 2
+            # Distinct function, independent evidence namespace and two gates.
+            # Never flow through the original 3-channel H03 dispatcher below.
+            return run_h03_single_cli(bench)
+        if args.command in ('run', 'preflight'):
+            print(connection_card(bench, 'H03', required_devices('H03'),
+                                  single_channel_cvcc=True))
+            print('DRY RUN: порты не открыты; SCPI не отправлены; H03 full не запускается.')
+            return 0
     if args.command == 'preflight' or not args.execute:
         print(connection_card(bench, args.test_id,
                           required_devices(args.test_id, recall=args.recall,
