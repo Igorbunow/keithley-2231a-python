@@ -438,6 +438,11 @@ class TestQualification(unittest.TestCase):
             observed = []
             def gate(token, prompt, adapter=None):
                 observed.append(token)
+                if token == h09_powered_stage.HIGH_VOLTAGE_TOKEN:
+                    self.assertEqual(source.flags['OUTP:STAT:ALL'], 0.)
+                    self.assertEqual(load.state, 'OFF')
+                    self.assertNotIn('VOLT 40.00', source.cmds)
+                    self.assertEqual(meter.range_v, 100)
                 meter.voltage = {
                     'CONFIRM H09 DISPLAY PSU=CV KEL=CR INPUT=ON': 2.0,
                     'CONFIRM H09 DISPLAY PSU=CC KEL=CR INPUT=ON': 3.0,
@@ -451,6 +456,7 @@ class TestQualification(unittest.TestCase):
             self.assertEqual(result, 'PASS', evidence.path.read_text()[-1600:])
             self.assertEqual(observed, ['CONFIRM H09 DISPLAY PSU=CV KEL=CR INPUT=ON',
                                         'CONFIRM H09 DISPLAY PSU=CC KEL=CR INPUT=ON',
+                                        h09_powered_stage.HIGH_VOLTAGE_TOKEN,
                                         'CONFIRM H09 DISPLAY PSU=CV40 KEL=CR INPUT=ON',
                                         'CONFIRM H09 DISPLAY PSU=CC40 KEL=CR INPUT=ON',
                                         h09_powered_stage.FINAL_TOKEN])

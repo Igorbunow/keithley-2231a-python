@@ -14,12 +14,14 @@ import math
 import re
 import time
 
-from common import StageAdapter, operator_gate, require_outputs
+from common import (ShutdownEvidence, StageAdapter, finish_combined_powered,
+                    operator_gate, require_outputs)
 from bench_config import current_bench
 from keithley2231a import (ChannelProfile, Keithley2231A, Profile, SafetyError,
                            SeriesProfile)
 
 FINAL_TOKEN = 'CONFIRM H09 CH1=OFF CH2=OFF CH3=OFF LOAD=OFF DMM=DISCONNECTED NO_JUMPERS'
+HIGH_VOLTAGE_TOKEN = 'CONFIRM H09 SERIES40 LOW_CV_CC=PASS ALL_OFF LOAD=OFF DMM=DCV100 CH3=OPEN RECALL=OFF'
 MEASUREMENT_ROUNDS = 6
 STABLE_PAIRS_REQUIRED = 2
 
@@ -81,6 +83,8 @@ def preflight(port, args_meter_host=None, load_transport=None,
           'NO_JUMPERS. Runner восстановит безопасный независимый профиль; физически '
           'не менять соединения при включённом выходе. При любой ошибке: STOP, не '
           'переставлять провода; runner попробует PSU/KEL OFF только по живой связи.\n'
+          f'После низковольтных CV/CC и подтверждённого OFF runner отдельно запросит\n'
+          f'{HIGH_VOLTAGE_TOKEN}\n'
           f'Точный допуск на подключение и один powered проход:\n{approval_token(args_meter_host, load_serial_port)}\n'
           f'Финальная проверка после отключения проводов: {FINAL_TOKEN}')
 
@@ -234,6 +238,7 @@ def _point(dev, load, meter, evidence, mode, resistance, voltage, current):
 
 def h09_powered(transport, evidence, load, meter):
     """Run four bounded externally loaded Series points, then restore independent OFF."""
+    evidence = ShutdownEvidence(evidence)
     dev = Keithley2231A(transport, debug=True,
         debug_trace=lambda record: evidence.add('driver_trace', trace=record),
         debug_adapter=lambda channel: H09PoweredScope(channel, evidence))
@@ -279,6 +284,17 @@ def h09_powered(transport, evidence, load, meter):
         require_outputs(dev)
         load.set_input(False)
         dev.emergency_off()
+        require_outputs(dev)
+        if load.input_state() != 'OFF':
+            raise SafetyError('KEL103 INPUT OFF required before 40 V authorization')
+        operator_gate(HIGH_VOLTAGE_TOKEN,
+            'Низковольтные CV/CC завершены. Сверьте результаты и физическую Series-схему. '
+            'Keithley ALL OFF, KEL103 INPUT OFF, DMM7510 FRONT DCV100, CH3 свободен. '
+            'Следующее включение повысит суммарную уставку до 40 V; у объединённого '
+            'канала нет независимой аппаратной OVP. При сомнениях остановите испытание.', io)
+        evidence.add('operator_high_voltage_authorization', token=HIGH_VOLTAGE_TOKEN,
+                     low_voltage_completed=True, outputs_off_verified=True,
+                     load_off_verified=True)
         dev.apply_profile(_series_40v_profile(), confirmed_wiring='series')
         require_outputs(dev)
         _point(dev, load, meter, evidence, 'CV', 2000.0, 40.00, .025)
@@ -301,6 +317,8 @@ def h09_powered(transport, evidence, load, meter):
         dev.combined_outputs(False)
         require_outputs(dev)
         load.set_input(False)
+        if load.input_state() != 'OFF':
+            raise SafetyError('KEL103 INPUT OFF unconfirmed before physical disconnection')
         io.powered_gate = False
         operator_gate(FINAL_TOKEN,
             'Все PSU OFF, KEL103 INPUT OFF. Снимите KEL103 и DMM7510 с выходных клемм '
@@ -314,30 +332,19 @@ def h09_powered(transport, evidence, load, meter):
         dev.diagnostic_write('SYST:LOC')
         outcome, reason = 'PASS', 'external Series CV/CC passed at 2 V, 4 V, and 40 V profiles'
     except BaseException as exc:
-        outcome = ('ABORTED' if not io.live or isinstance(exc, (
-            OSError, TimeoutError, KeyboardInterrupt, InterruptedError)) else 'FAIL')
+        outcome = ('ABORTED' if not io.live or not getattr(load, 'live', True) or
+                   isinstance(exc, (OSError, TimeoutError, KeyboardInterrupt,
+                                    InterruptedError, EOFError)) else 'FAIL')
         reason = f'H09 powered stopped: {type(exc).__name__}: {exc}; verify all outputs OFF'
-        evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc),
-                     live_link=io.live)
-        if io.live:
-            try:
-                io.cleanup = True
-                dev.emergency_off()
-                require_outputs(dev)
-                dev.diagnostic_write('SYST:LOC')
-            except BaseException:
-                outcome, reason = 'ABORTED', 'shutdown unconfirmed; UNKNOWN OUTPUT STATE'
         try:
-            if getattr(load, 'live', False): load.set_input(False)
+            evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc),
+                         psu_live=io.live, load_live=getattr(load, 'live', True))
         except BaseException:
-            outcome, reason = 'ABORTED', 'KEL103 INPUT shutdown unconfirmed'
+            outcome = 'ABORTED'
+            reason += '; evidence write failed'
     finally:
-        for instrument in (transport, load, meter):
-            try: instrument.close()
-            except BaseException:
-                outcome, reason = 'ABORTED', 'instrument close failed; manual OFF required'
-        evidence.add('query_outcome', outcome=outcome, stop_reason=reason,
-                     firmware=evidence.firmware, verification='HW OBSERVED' if outcome == 'PASS'
-                     else 'HW UNVERIFIED',
-                     scope='external CH1+CH2 Series; CV/CC points at 2 V, 4 V, and 40 V profiles')
+        outcome = finish_combined_powered(
+            dev, io, load, meter, transport, evidence, outcome=outcome,
+            reason=reason,
+            scope='external CH1+CH2 Series; CV/CC points at 2 V, 4 V, and 40 V profiles')
     return outcome

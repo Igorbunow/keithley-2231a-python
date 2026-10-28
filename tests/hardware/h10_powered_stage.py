@@ -13,7 +13,8 @@ import math
 import re
 import time
 
-from common import StageAdapter, operator_gate, require_outputs
+from common import (ShutdownEvidence, StageAdapter, finish_combined_powered,
+                    operator_gate, require_outputs)
 from bench_config import current_bench
 from keithley2231a import (ChannelProfile, Keithley2231A, ParallelProfile,
                            Profile, SafetyError)
@@ -238,6 +239,7 @@ def h10_high_current(transport, evidence, load, meter):
 def _run_parallel_powered(transport, evidence, load, meter, *, high_current):
     token_builder = high_current_approval_token if high_current else approval_token
     token = token_builder(load_serial_port=getattr(load, 'port', None))
+    evidence = ShutdownEvidence(evidence)
     dev = Keithley2231A(transport, debug=True,
                        debug_trace=lambda record: evidence.add('driver_trace', trace=record),
                        debug_adapter=lambda channel: H10PoweredScope(channel, evidence))
@@ -291,6 +293,8 @@ def _run_parallel_powered(transport, evidence, load, meter, *, high_current):
         dev.combined_outputs(False)
         require_outputs(dev)
         load.set_input(False)
+        if load.input_state() != 'OFF':
+            raise SafetyError('KEL103 INPUT OFF unconfirmed before physical disconnection')
         io.powered_gate = False
         operator_gate(FINAL_TOKEN,
                       'Все выходы Keithley OFF, KEL103 INPUT OFF. Отключите KEL103 и '
@@ -304,32 +308,21 @@ def _run_parallel_powered(transport, evidence, load, meter, *, high_current):
         outcome, reason = 'PASS', ('external Parallel 4 A CC point passed' if high_current else
                                    'bounded external Parallel CV and CC points passed')
     except BaseException as exc:
-        outcome = ('ABORTED' if not io.live or isinstance(exc, (
-            OSError, TimeoutError, KeyboardInterrupt, InterruptedError)) else 'FAIL')
+        outcome = ('ABORTED' if not io.live or not getattr(load, 'live', True) or
+                   isinstance(exc, (OSError, TimeoutError, KeyboardInterrupt,
+                                    InterruptedError, EOFError)) else 'FAIL')
         reason = f'H10 powered stopped: {type(exc).__name__}: {exc}; verify all outputs OFF'
-        evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc),
-                     live_link=io.live)
-        if io.live:
-            try:
-                io.cleanup = True
-                dev.emergency_off()
-                require_outputs(dev)
-                dev.diagnostic_write('SYST:LOC')
-            except BaseException:
-                outcome, reason = 'ABORTED', 'shutdown unconfirmed; UNKNOWN OUTPUT STATE'
         try:
-            if getattr(load, 'live', False): load.set_input(False)
+            evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc),
+                         psu_live=io.live, load_live=getattr(load, 'live', True))
         except BaseException:
-            outcome, reason = 'ABORTED', 'KEL103 INPUT shutdown unconfirmed'
+            outcome = 'ABORTED'
+            reason += '; evidence write failed'
     finally:
-        for instrument in (transport, load, meter):
-            try: instrument.close()
-            except BaseException:
-                outcome, reason = 'ABORTED', 'instrument close failed; manual OFF required'
-        evidence.add('query_outcome', outcome=outcome, stop_reason=reason,
-                     firmware=evidence.firmware,
-                     verification='HW OBSERVED' if outcome == 'PASS' else 'HW UNVERIFIED',
-                     scope=('external Parallel; CC 4.000 A / CR0.50; approx. 2 V / 8 W; <=10 W'
-                            if high_current else
-                            'external Parallel; CV 3 V / CR30 and CC 0.300 A / CR5; <=1 W'))
+        outcome = finish_combined_powered(
+            dev, io, load, meter, transport, evidence, outcome=outcome,
+            reason=reason,
+            scope=('external Parallel; CC 4.000 A / CR0.50; approx. 2 V / 8 W; <=10 W'
+                   if high_current else
+                   'external Parallel; CV 3 V / CR30 and CC 0.300 A / CR5; <=1 W'))
     return outcome

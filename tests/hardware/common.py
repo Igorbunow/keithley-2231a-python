@@ -175,6 +175,11 @@ def release_psu_and_load(dev, io, load, evidence):
     """
     failures = []
     records = []
+    # KEL103 owns its own evidence handle from the equipment factory. After a
+    # disk failure it must use the shutdown-only sink, not the original broken
+    # sink, otherwise even an INPUT OFF command can fail before reaching USB.
+    if isinstance(evidence, ShutdownEvidence) and getattr(load, 'evidence', None) is evidence.target:
+        load.evidence = evidence
     if io.live:
         try:
             io.cleanup = True
@@ -208,6 +213,48 @@ def release_psu_and_load(dev, io, load, evidence):
         except BaseException:
             pass
     return failures
+
+
+
+def finish_combined_powered(dev, io, load, meter, transport, evidence, *, outcome,
+                            reason, scope):
+    """Finalize either powered H09 or H10 using the same fail-closed shutdown.
+
+    An OFF command alone is insufficient: check Keithley output readbacks and
+    KEL103 INPUT readback independently, even if profile state was disarmed.
+    Preserve UNKNOWN if a link or its evidence is no longer trustworthy.
+    """
+    evidence.cleanup = True
+    failures = release_psu_and_load(dev, io, load, evidence)
+    if failures:
+        outcome = 'ABORTED'
+        reason += '; ' + '; '.join(failures)
+    if io.live and not failures:
+        try:
+            dev.diagnostic_write('SYST:LOC')
+        except BaseException as exc:
+            outcome = 'ABORTED'
+            reason += f'; SYST:LOC unconfirmed: {type(exc).__name__}'
+    for instrument in (transport, load, meter):
+        try:
+            instrument.close()
+        except BaseException as exc:
+            outcome = 'ABORTED'
+            reason += f'; instrument close failed: {type(exc).__name__}'
+    if evidence.lost:
+        outcome = 'ABORTED'
+        reason += '; evidence incomplete; manual review required'
+    # Never report PASS if even the final outcome record cannot be persisted.
+    try:
+        evidence.add('query_outcome', outcome=outcome, stop_reason=reason,
+                     firmware=evidence.firmware,
+                     verification='HW OBSERVED' if outcome == 'PASS' else 'HW UNVERIFIED',
+                     scope=scope)
+    except BaseException:
+        outcome = 'ABORTED'
+    if evidence.lost:
+        outcome = 'ABORTED'
+    return outcome
 
 
 def require_outputs(dev, expected=None, *, settle_timeout_s=0.0):
