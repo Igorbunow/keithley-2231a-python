@@ -78,3 +78,12 @@ raw masks, CH3 open and zero, maximum observed power, physical OFF and jumper
 removal, and the evidence location. The historical reports remain valid as
 observations of earlier code only. Do not promote any H09/H10 to full current
 revision qualification until each corresponding powered case is reviewed.
+
+## R3.5.22 — bounded operator display confirmations
+
+The H09/H10 powered display gates now impose an explicit 120-second deadline
+for each point while the PSU is energized. Failure to enter the exact
+confirmation in time causes the existing runner to abort and use the shared
+fail-closed PSU/KEL103 cleanup. OFF-only wiring and high-voltage transition
+approvals are unchanged and may be reviewed without energizing outputs.
+No new setpoints, SCPI commands, or wiring schemes are added.

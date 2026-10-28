@@ -1035,7 +1035,7 @@ def main(argv=None):
                  load=(f'KORAD KEL103; USB serial {args.load_serial_port}; {bench.load.baudrate} 8N1; CR 0.50 Ω; '
                        'input OFF before/after the single point'
                        if args.test_id == 'H10' and args.high_current else
-                       f'KORAD KEL103; USB serial {args.load_serial_port}; {bench.load.baudrate} 8N1; CR 40/12 Ω; '
+                       f'KORAD KEL103; USB serial {args.load_serial_port}; {bench.load.baudrate} 8N1; CR 40/12/2000/1600 Ω; '
                        'input OFF between points'
                        if args.test_id == 'H09' and args.powered else
                        f'KORAD KEL103; USB serial {args.load_serial_port}; {bench.load.baudrate} 8N1; CR 30/5 Ω; '
@@ -1049,8 +1049,11 @@ def main(argv=None):
                        '8N1 (скорость из bench config); USB link previously HW OBSERVED on H03; input OFF'
                        if args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07')
                        else 'disconnected; input OFF'),
-                 proposed_caps=('H09 powered: Series total soft cap 4.00 V, current cap 0.300 A; '
-                                'CV 2.00 V/0.100 A CR40; CC 4.00 V/0.250 A CR12; CH3=0 V/open'
+                 proposed_caps=('H09 powered LOW: Series total soft cap 4.00 V, current cap 0.300 A; '
+                                'CV 2.00 V/0.100 A CR40; CC 4.00 V/0.250 A CR12; '
+                                'HIGH: total soft cap 40.00 V, current cap 0.025 A; '
+                                'CV 40.00 V/0.025 A CR2000; CC 40.00 V/0.024 A CR1600; '
+                                'CH3=0 V/open; load <=1 W; software-only combined voltage cap'
                                 if args.test_id == 'H09' and args.powered else
                                 'H10 high-current: Parallel soft caps 4.00 V / 4.500 A aggregate; '
                                 'CC 3.00 V / 4.000 A CR0.50; CH3=0 V/open; <=10 W'
@@ -1093,7 +1096,9 @@ def main(argv=None):
                                 if args.test_id == 'H12' else
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
                  independent_meter=({'model': 'DMM7510', 'host': args.meter_host, 'port': bench.meter.network_port,
-                                     'function': 'DCV 10 V, NPLC 1, front terminals'}
+                                     'function': ('DCV 100 V, NPLC 1, front terminals'
+                                                  if args.test_id == 'H09' and args.powered
+                                                  else 'DCV 10 V, NPLC 1, front terminals')}
                                     if args.test_id == 'H08' or (args.test_id in ('H09', 'H10') and (args.powered or args.high_current))
                                     else None))
     evidence.add('bench_configuration', sha256=bench.sha256, source=bench.source.name,

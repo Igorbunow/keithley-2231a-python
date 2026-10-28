@@ -216,7 +216,12 @@ class TestQualification(unittest.TestCase):
             source = ParallelSource()
             load, meter = Load(source), Meter(source)
             observed = []
-            def gate(token, prompt, adapter=None): observed.append(token)
+            def gate(token, prompt, adapter=None, **kwargs):
+                if token.startswith('CONFIRM H10 DISPLAY'):
+                    self.assertEqual(kwargs.get('powered_timeout_s'), 120)
+                else:
+                    self.assertNotIn('powered_timeout_s', kwargs)
+                observed.append(token)
             with patch.object(h10_powered_stage, 'operator_gate', side_effect=gate), \
                  patch.object(h10_powered_stage.time, 'sleep'):
                 with contextlib.redirect_stdout(io.StringIO()):
@@ -327,7 +332,12 @@ class TestQualification(unittest.TestCase):
             source = ParallelSource()
             load, meter = Load(source), Meter(source)
             observed = []
-            def gate(token, prompt, adapter=None): observed.append(token)
+            def gate(token, prompt, adapter=None, **kwargs):
+                if token.startswith('CONFIRM H10 DISPLAY'):
+                    self.assertEqual(kwargs.get('powered_timeout_s'), 120)
+                else:
+                    self.assertNotIn('powered_timeout_s', kwargs)
+                observed.append(token)
             with patch.object(h10_powered_stage, 'operator_gate', side_effect=gate), \
                  patch.object(h10_powered_stage.time, 'sleep'):
                 with contextlib.redirect_stdout(io.StringIO()):
@@ -436,7 +446,11 @@ class TestQualification(unittest.TestCase):
             source, meter = SeriesSource(), Meter()
             load = Load(meter)
             observed = []
-            def gate(token, prompt, adapter=None):
+            def gate(token, prompt, adapter=None, **kwargs):
+                if token.startswith('CONFIRM H09 DISPLAY'):
+                    self.assertEqual(kwargs.get('powered_timeout_s'), 120)
+                else:
+                    self.assertNotIn('powered_timeout_s', kwargs)
                 observed.append(token)
                 if token == h09_powered_stage.HIGH_VOLTAGE_TOKEN:
                     self.assertEqual(source.flags['OUTP:STAT:ALL'], 0.)
@@ -1192,6 +1206,16 @@ class TestQualification(unittest.TestCase):
         with patch('builtins.input', side_effect=('mistyped confirmation', 'CONFIRM TEST')), \
                 contextlib.redirect_stdout(io.StringIO()):
             operator_gate('CONFIRM TEST', 'Verify OFF')
+
+    def test_powered_confirmation_timeout_is_bounded_offline(self):
+        from common import operator_gate
+        # A wrong response after the deadline must stop the energized point;
+        # input is mocked and no instrument is opened.
+        with patch('builtins.input', return_value='WRONG'), \
+                patch('common.time.monotonic', side_effect=(100.0, 100.0, 221.0)), \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(TimeoutError, 'powered display confirmation timed out'):
+                operator_gate('CONFIRM TEST', 'Check display', powered_timeout_s=120)
 
     def test_h03_diagnostic_preflight_is_offline_and_restricts_scope(self):
         q = self.module()

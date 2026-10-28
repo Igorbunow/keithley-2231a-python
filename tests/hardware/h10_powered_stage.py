@@ -271,14 +271,14 @@ def _run_parallel_powered(transport, evidence, load, meter, *, high_current):
             operator_gate('CONFIRM H10 DISPLAY PSU=CC4A KEL=CR INPUT=ON',
                           'Сверьте дисплей Keithley: Parallel/CC, около 2.00 V и 4.00 A. '
                           'KEL103: CR 0.50 Ω, INPUT ON; мощность не выше 10 W. '
-                          'Автоматические показания PSU, KEL103 и DMM7510 записаны.', io)
+                          'Автоматические показания PSU, KEL103 и DMM7510 записаны.', io, powered_timeout_s=120)
             evidence.add('operator_display_review', point='CC4A', outcome='confirmed')
         else:
             _point(dev, load, meter, evidence, 'CV', 30.0, .100)
             operator_gate('CONFIRM H10 DISPLAY PSU=CV KEL=CR INPUT=ON',
                           'Сверьте дисплей Keithley: Parallel/CV, около 3.00 V и 0.100 A. '
                           'KEL103: CR 30.0 Ω, INPUT ON. Автоматические показания PSU, '
-                          'KEL103 и DMM7510 записаны.', io)
+                          'KEL103 и DMM7510 записаны.', io, powered_timeout_s=120)
             evidence.add('operator_display_review', point='CV', outcome='confirmed')
             dev.combined_outputs(False)
             require_outputs(dev)
@@ -288,7 +288,7 @@ def _run_parallel_powered(transport, evidence, load, meter, *, high_current):
             operator_gate('CONFIRM H10 DISPLAY PSU=CC KEL=CR INPUT=ON',
                           'Сверьте дисплей Keithley: Parallel/CC, примерно 1.50 V и 0.300 A. '
                           'KEL103: CR 5.0 Ω, INPUT ON. Автоматические показания PSU, '
-                          'KEL103 и DMM7510 записаны.', io)
+                          'KEL103 и DMM7510 записаны.', io, powered_timeout_s=120)
             evidence.add('operator_display_review', point='CC', outcome='confirmed')
         dev.combined_outputs(False)
         require_outputs(dev)

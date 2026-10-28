@@ -269,7 +269,7 @@ def h09_powered(transport, evidence, load, meter):
         _point(dev, load, meter, evidence, 'CV', 40.0, 2.00, .100)
         operator_gate('CONFIRM H09 DISPLAY PSU=CV KEL=CR INPUT=ON',
             'Сверьте экран Keithley: Series/CV и примерно 2.00 V. KEL103: CR 40.0 Ω, '
-            'INPUT ON. Выше автоматически считаны PSU, KEL103 и DMM7510.', io)
+            'INPUT ON. Выше автоматически считаны PSU, KEL103 и DMM7510.', io, powered_timeout_s=120)
         evidence.add('operator_display_review', point='CV', outcome='confirmed')
         dev.combined_outputs(False)
         require_outputs(dev)
@@ -278,7 +278,7 @@ def h09_powered(transport, evidence, load, meter):
         _point(dev, load, meter, evidence, 'CC', 12.0, 4.00, .250)
         operator_gate('CONFIRM H09 DISPLAY PSU=CC KEL=CR INPUT=ON',
             'Сверьте экран Keithley: Series/CC и примерно 3.00 V / 0.250 A. '
-            'KEL103: CR 12.0 Ω, INPUT ON. Выше автоматически считаны PSU, KEL103 и DMM7510.', io)
+            'KEL103: CR 12.0 Ω, INPUT ON. Выше автоматически считаны PSU, KEL103 и DMM7510.', io, powered_timeout_s=120)
         evidence.add('operator_display_review', point='CC', outcome='confirmed')
         dev.combined_outputs(False)
         require_outputs(dev)
@@ -300,7 +300,7 @@ def h09_powered(transport, evidence, load, meter):
         _point(dev, load, meter, evidence, 'CV', 2000.0, 40.00, .025)
         operator_gate('CONFIRM H09 DISPLAY PSU=CV40 KEL=CR INPUT=ON',
             'Сверьте экран Keithley: Series/CV и около 40.00 V суммарно. KEL103: '
-            'CR 2000 Ω, INPUT ON. Автоматические измерения PSU, KEL103 и DMM7510 записаны.', io)
+            'CR 2000 Ω, INPUT ON. Автоматические измерения PSU, KEL103 и DMM7510 записаны.', io, powered_timeout_s=120)
         evidence.add('operator_display_review', point='CV40', outcome='confirmed')
         dev.combined_outputs(False)
         require_outputs(dev)
@@ -312,7 +312,7 @@ def h09_powered(transport, evidence, load, meter):
             'Уставка напряжения 40 V, ток задан 0.024 A; '
             'ограничения тока. KEL103: '
             'CR 1600 Ω, INPUT ON. 40.00 V — уставка, фактическое напряжение ниже '
-            'из-за режима CC. Автоматические измерения записаны.', io)
+            'из-за режима CC. Автоматические измерения записаны.', io, powered_timeout_s=120)
         evidence.add('operator_display_review', point='CC40', outcome='confirmed')
         dev.combined_outputs(False)
         require_outputs(dev)
