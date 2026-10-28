@@ -426,3 +426,5 @@ from keithley2231a import TcpTransport
 - [R3.5.6 — ядро H03 CH1](R3_5_6_H03_SINGLE_RUNNER_OFFLINE.ru.md) — моделируемый runner.
 - [R3.5.7 — интеграция H03_SINGLE_CVCC CLI](R3_5_7_H03_SINGLE_CLI.ru.md) — отдельный контролируемый powered-маршрут и offline-аудит.
 - [R3.5.8: H03 SCPI и визуальная сверка](R3_5_8_POWERED_H03_AUDIT.ru.md) — отдельный ON-допуск и контроль времени при активном выходе.
+
+- [R3.5.14 — H04P: строгая числовая сверка и независимый аудит SCPI](R3_5_14_H04P_POWER_CONSISTENCY_AUDIT.ru.md)

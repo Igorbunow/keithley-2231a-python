@@ -5,7 +5,7 @@
 **Python control library for the Keithley 2231A-30-3 three-channel DC power supply.**
 Provides SCPI over USB–TTL UART, optional transparent TCP–UART bridges, immutable safety profiles, per-channel sequencing, measurement logs/statistics, DC voltage sweeps (including I–V curves).
 
-> **Experimental software / hardware qualification in progress.** A successful simulator/CI run does not validate an output command on a real instrument. The operator reports the panel alternating Main 1.04 / Aux 1.04 and Main 1.04 / Aux 1.01; hardware SCPI evidence separately contains `*IDN?` revisions `1.04-1.04` and `1.04-0.01`. The cause of this difference is not established; preserve exact observations, without conflating 1.01 and 0.01. Firmware is reported and recorded, not hard-coded as an API compatibility gate. See [verification matrix](docs/VERIFICATION.md) before powering a DUT. This is NOT a safety-rated protection system.
+> **Experimental software / hardware qualification in progress.** A successful simulator/CI run does not validate an output command on a real instrument. The operator confirmed that the front-panel Main/Aux display always matched `*IDN?` for the selected channel. A controlled OFF-only diagnostic observed `1.04-1.04` on CH1/CH2 and `1.04-0.01` on CH3. This does not establish which internal firmware module supplies the Aux field. Firmware is reported and recorded, not hard-coded as an API compatibility gate. See [verification matrix](docs/VERIFICATION.md) before powering a DUT. This is NOT a safety-rated protection system.
 
 **Version:** 0.2.1.dev0 · **Python:** 3.10+ · **License:** [MIT](LICENSE) · **Manufacturer affiliation:** none (independent community project).
 
@@ -52,17 +52,19 @@ qualification-specific: record the version shown in the instrument menu and the 
 physical supply returned `1.04-1.04` and `1.04-0.01` from `*IDN?`, including
 within individual runs. Main stayed `1.04`; the manufacturer, model, serial,
 SCPI communication and validated output behavior did not change. The operator
-also observed `Aux 1.01` on the panel (not present in the saved SCPI replies).
+confirmed that the panel and SCPI readings were identical for the selected channel. The previously reported panel `Aux 1.01` was a transcription error, **not** a device observation.
 The observed revision change is **diagnostic-only**, not a profile or safety
 fault. Preserve the literal response and log the transition. A separate error
 in identity, transport, setpoints, status or protection **must still fail**.
 
-All five observed within-run changes followed a channel sweep ending at CH3;
-H01 readings associated with CH1 stayed at `Aux 1.04`. This is a useful
-**correlation, not a proven channel-dependent firmware property**. No vendor
-erratum or independent field report of this exact alternation has been found.
-See `docs/R3_5_9_CH3_STATUS_AND_AUX_REVISION_REVIEW.ru.md` for the evidence,
-limits and an OFF-only diagnostic proposal. Do not treat `0.01` as `1.01`.
+The later H01_AUX_REVISION controlled OFF-only test (10 samples) confirmed a
+**reproducible channel-selection dependency on this physical unit**: both
+CH1 and CH2 reported `Aux 1.04`, while CH3 reported `Aux 0.01`; returning
+to CH1/CH2 restored `Aux 1.04`. The operator confirmed the panel always
+matched SCPI. This does not prove that firmware is actually changing or
+that all 2231A units behave alike. No vendor erratum or independent field
+report of this exact alternation has been identified. See
+`docs/R3_5_11_AUX_CHANNEL_OFF_DIAGNOSTIC.ru.md` for the controlled evidence.
 
 [Keithley/Tektronix official reference manual (PDF)](https://download.tek.com/manual/077100401_Referencemanual.pdf) · [Upstream product documentation](https://www.tek.com/en/tektronix-and-keithley-dc-power-supplies/keithley-2220-2230-2231-series-manual-0)
 
@@ -509,3 +511,19 @@ R3.5.7 adds a separate interactive CLI route, `--single-channel-cvcc --execute -
 ### OFF-only Aux/channel selection diagnostic (R3.5.11)
 
 A separate, physically gated H01 variant can correlate `*IDN?` Main/Aux revision with CH1/CH2/CH3 while all outputs remain OFF. Read-only preflight: `python3 tools/hw_qualify.py preflight H01 --aux-revision-diagnostic --config config/bench.local.toml`. See `docs/R3_5_11_AUX_CHANNEL_OFF_DIAGNOSTIC.ru.md`; no routine auto-execution.
+
+### H04P independent shutdown fault injection (R3.5.13)
+
+See `docs/R3_5_13_H04P_INDEPENDENT_SHUTDOWN.ru.md` for the offline-only H04P exception-path guard: PSU and KEL103 shutdown attempts are independent and never retry an uncertain link. Hardware execution requires a separate operator go-ahead.
+
+### H04P independent power consistency and strict trace audit (R3.5.14)
+
+H04P now validates finite U/I/P and CR values, compares Keithley SCPI power
+with Keithley U×I and KEL103 power with KEL103 U×I, and directly compares both
+instruments' power readings (0.025 W qualification tolerance; 0.06 V / 0.03 A
+remain unchanged). See `docs/R3_5_14_H04P_POWER_CONSISTENCY_AUDIT.ru.md`.
+Offline independent verification: `python3 tools/audit_hw_scpi.py
+reports/hardware/<timestamp>_H04P/events.jsonl`. Historical H04P evidence
+with a 0.31 W acceptance field is reported `PASS_WITH_REVIEW_NOTES`, even
+when every measurement passes today's tighter independent check. No automatic
+hardware approval or re-energizing follows from an offline PASS.

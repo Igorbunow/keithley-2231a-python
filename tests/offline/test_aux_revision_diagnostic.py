@@ -1,7 +1,7 @@
 """OFF-only AUX channel correlation: fake transports, no physical hardware."""
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 import json
@@ -169,10 +169,19 @@ class AuxRevisionTests(unittest.TestCase):
                 self.assertEqual(main(['run','H01','--aux-revision-diagnostic']), 0)
             self.assertIn('DRY RUN', out.getvalue())
             self.assertIn('H01-AUX-REVISION', out.getvalue())
-            with self.assertRaises(SystemExit):
-                main(['run','H03','--aux-revision-diagnostic'])
-            with self.assertRaises(SystemExit):
-                main(['run','H01','--aux-revision-diagnostic','--profile-only'])
+            invalid_variants = (
+                ['run', 'H03', '--aux-revision-diagnostic'],
+                ['run', 'H01', '--aux-revision-diagnostic', '--profile-only'],
+            )
+            for argv in invalid_variants:
+                with self.subTest(argv=argv), redirect_stderr(StringIO()) as err:
+                    with self.assertRaises(SystemExit) as rejected:
+                        main(argv)
+                    self.assertEqual(rejected.exception.code, 2)
+                    self.assertIn(
+                        'error: --aux-revision-diagnostic is an exclusive H01 OFF-only variant',
+                        err.getvalue(),
+                    )
 
     def test_execute_noninteractive_never_opens_or_lists_usb(self):
         with mock.patch('aux_revision_stage.open_psu', side_effect=AssertionError('open')) as opened, \

@@ -339,7 +339,7 @@ def preflight(test_id, port=None, load_host=None, load_port=None, start_channel=
               'только выбранный PSU ON, запись PSU/KEL, затем PSU OFF, проверка всех OFF, '
               'KEL INPUT OFF. При ошибке — останов без повторных запросов. Общий адаптер '
               'проверяет очередь после записей и запросов, кроме LOC/ERR?. '
-              'Предел: 5000 команд / 900 s плюс резерв на OFF; время ожидания оператора исключено.\n'
+              'Предел: 8000 команд / 900 s плюс резерв 128 команд на OFF; время ожидания оператора исключено.\n'
               f'Разрешение этапа: {token}\n'
               'Паузы на проводку: CONNECT CH1; MOVE CH1→CH2; MOVE CH2→CH3; DISCONNECT CH3.\n'
               'Финальная проверка: CONFIRM H04P CH1=OFF CH2=OFF CH3=OFF LOAD=OFF')
@@ -1066,7 +1066,7 @@ def main(argv=None):
                                 'then power_only caps 4 V / 0.500 A, setpoints 1.00 V / 0.100 A'
                                 if args.test_id == 'H04' else
                                 'H04P powered: control/power_only V-cap 4.50 V, I-cap 0.500 A; '
-                                'one CH at a time; low-power CV/CC; KEL103 CR 5/12/22/47/56 Ω'
+                                'one CH at a time; low-power CV/CC; KEL103 CR 5/11/22/47/56 Ω'
                                 if args.test_id == 'H04P' else
                                 'H05 power_only: each CH 1.00 V / 0.100 A, caps 1.00 V / 0.100 A; '
                                 'CH1→CH2→CH3 and reverse OFF with 1 s delays; KEL103 CR22 on CH1'

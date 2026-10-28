@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline read-only H01/H02/H03_SINGLE_CVCC trace audit from JSONL.
+"""Offline read-only H01/H02/H03/H04P trace audit from JSONL.
 
 Does not import instrument drivers or create connections. It validates actual
 recorded wire-command order, not the incomplete command display in the terminal.
@@ -340,6 +340,277 @@ def audit_aux_revision_records(records: list[dict]) -> dict:
                 historical_deviations=[], issues=issues)
 
 
+
+def audit_h04p_records(records: list[dict]) -> dict:
+    """Independently audit H04P wire order, guards and 21 U/I/P points.
+
+    Offline only: no instrument imports. Driver trace is the SCPI wire order;
+    both vendors' actual writes are ordered using the shared JSONL timeline.
+    """
+    from collections import Counter
+    import math
+    import re
+
+    if not records or {r.get('test_id') for r in records} != {'H04P'}:
+        raise ValueError('Expected exactly one H04P evidence stream')
+    issues, caveats = [], []
+    wire = [(idx, r['trace']['command']) for idx, r in enumerate(records)
+            if r.get('event') == 'driver_trace' and
+            r.get('trace', {}).get('event') in ('write', 'query')]
+    cmds = [cmd for _, cmd in wire]
+    sent = [r['command'] for r in records if r.get('event') in ('write', 'query')]
+    if not cmds or Counter(cmds) != Counter(sent):
+        issues.append('PSU driver wire trace disagrees with adapter requests')
+    trace_reply = [(r['trace'].get('command'), r['trace'].get('response'))
+                   for r in records if r.get('event') == 'driver_trace' and
+                   r.get('trace', {}).get('event') == 'reply']
+    evidence_reply = [(r.get('command'), r.get('response')) for r in records
+                      if r.get('event') == 'read']
+    if not trace_reply or Counter(trace_reply) != Counter(evidence_reply):
+        issues.append('PSU driver replies disagree with adapter read evidence')
+    if [c for c in cmds if c.endswith('?')] != [c for c, _ in trace_reply]:
+        issues.append('PSU wire queries and replies do not match in chronological order')
+
+    allowed_write = re.compile(
+        r'^(?:SYST:(?:REM|LOC)|OUTP 0|OUTP:(?:SER|PARALLEL|TRAC) 0|'
+        r'INST:NSEL [123]|CHAN:OUTP [01]|OUTP:TIM:STAT 0|'
+        r'VOLT (?:0|2\.20|3\.00|3\.30|4\.40|4\.50|4\.51)|'
+        r'CURR (?:0|0\.100|0\.250|0\.500)|'
+        r'VOLT:LIM 4\.50|VOLT:LIM:STAT 1)$')
+    allowed_query = re.compile(
+        r'^(?:\*IDN\?|SYST:ERR\?|INST:NSEL\?|CHAN:OUTP\?|'
+        r'OUTP:(?:SER|PARALLEL|TRAC)\?|STAT:(?:OPER|QUES):INST:ISUM[123]:COND\?|'
+        r'VOLT\?|CURR\?|VOLT:LIM\?|VOLT:LIM:STAT\?|'
+        r'OUTP:TIM:(?:STAT|DEL)\?|MEAS:(?:VOLT|CURR|POW)\?)$')
+    for pos, (idx, cmd) in enumerate(wire):
+        if not (allowed_query.fullmatch(cmd) if cmd.endswith('?')
+                else allowed_write.fullmatch(cmd)):
+            issues.append(f'Unapproved H04P wire command #{pos+1}: {cmd}')
+        if cmd != 'SYST:ERR?' and cmd != 'SYST:LOC':
+            if pos+1 == len(cmds) or cmds[pos+1] != 'SYST:ERR?':
+                issues.append(f'Missing immediate SYST:ERR? after wire #{pos+1}: {cmd}')
+        if cmd == 'SYST:ERR?' and pos and cmds[pos-1] == cmd:
+            issues.append(f'Adjacent SYST:ERR? queries #{pos}, #{pos+1}')
+
+    # Every nonzero response must be a hardware voltage clamp rejection on OFF.
+    error_reads = [r for r in records if r.get('event') == 'read'
+                   and r.get('command') == 'SYST:ERR?']
+    nonzero = []
+    for r in error_reads:
+        try:
+            response = r['response']
+            if not isinstance(response, str) or ',' not in response:
+                raise ValueError('malformed reply')
+            code = int(response.split(',', 1)[0].strip())
+        except (KeyError, TypeError, ValueError):
+            issues.append('Malformed error queue response')
+            continue
+        if code:
+            nonzero.append(code)
+    if len(error_reads) != cmds.count('SYST:ERR?'):
+        issues.append('Missing SCPI error replies')
+    if nonzero != [120, 120, 120]:
+        issues.append(f'Expected exactly 3 SCPI error 120 responses, got {nonzero}')
+    expected = [r for r in records if r.get('event') == 'expected_instrument_rejection']
+    if len(expected) != 3 or any(r.get('command') != 'VOLT 4.51' or
+                                  r.get('outcome') != 'EXPECTED_REJECTION' or
+                                  not str(r.get('response','')).startswith('120,') for r in expected):
+        issues.append('Missing 3 explicit 4.51 V hardware rejection records')
+
+    selected = 1
+    psu_on, psu_off, max_probe = [], [], []
+    for idx, cmd in wire:
+        if cmd.startswith('INST:NSEL '):
+            selected = int(cmd[-1])
+        elif cmd == 'CHAN:OUTP 1':
+            psu_on.append((idx, selected))
+        elif cmd == 'CHAN:OUTP 0':
+            psu_off.append((idx, selected))
+        elif cmd == 'VOLT 4.51':
+            max_probe.append((idx, selected))
+    if [c for _, c in max_probe] != [1, 2, 3]:
+        issues.append('Max voltage SCPI probes must address CH1, CH2, CH3 in order')
+    # Pair the 3 voltage-probe errors to their immediate on-wire command.
+    for idx, cmd in max_probe:
+        next_read = next((r for r in records[idx+1:] if r.get('event') == 'read' and
+                          r.get('command') == 'SYST:ERR?'), None)
+        if next_read is None or not str(next_read.get('response','')).startswith('120,'):
+            issues.append('VOLT 4.51 missing immediately expected error 120')
+    if len(psu_on) != 21 or len(psu_off) != 21:
+        issues.append(f'Expected 21 selected-channel PSU ON/OFF pairs, got {len(psu_on)}/{len(psu_off)}')
+    if [c for _,c in psu_on] != [ch for ch in (1,2,3) for _ in range(7)]:
+        issues.append('PSU channel ON order is not 7 points per CH1, CH2, CH3')
+    if [c for _,c in psu_off] != [ch for ch in (1,2,3) for _ in range(7)]:
+        issues.append('PSU channel OFF order disagrees with enabled channel')
+
+    kel_writes = [(i, r.get('command')) for i,r in enumerate(records)
+                  if r.get('event') == 'kel103_write']
+    allowed_kel = re.compile(r'^:(?:FUNC CR|INP (?:ON|OFF)|RES (?:5|11|22|47|56)OHM)$')
+    if any(not allowed_kel.fullmatch(str(cmd)) for _,cmd in kel_writes):
+        issues.append('Unexpected KEL103 write command')
+    kel_on = [i for i,c in kel_writes if c == ':INP ON']
+    kel_off = [i for i,c in kel_writes if c == ':INP OFF']
+    kel_func = [i for i,c in kel_writes if c == ':FUNC CR']
+    kel_res = [(i,c) for i,c in kel_writes if c.startswith(':RES ')]
+    if not all(len(x) == 21 for x in (kel_on, kel_off, kel_func, kel_res)):
+        issues.append('Expected 21 KEL103 INPUT ON/OFF and function/resistance setups')
+    for j in range(min(21,len(kel_on),len(kel_off),len(kel_func),len(kel_res))):
+        previous_end = kel_off[j-1] if j else -1
+        if not (previous_end < kel_func[j] < kel_res[j][0] < kel_on[j] < kel_off[j]):
+            issues.append(f'KEL103 CR modified while active or cycle out of order #{j+1}')
+
+    measurement = [(i,r) for i,r in enumerate(records) if r.get('event') == 'measurement']
+    if len(measurement) != 21:
+        issues.append(f'Expected 21 H04P measurement events, got {len(measurement)}')
+    if len(psu_on) == len(psu_off) == len(kel_on) == len(kel_off) == len(measurement) == 21:
+        for j in range(21):
+            on, channel = psu_on[j]
+            off, off_channel = psu_off[j]
+            mid, m = measurement[j]
+            if not (kel_on[j] < on < mid < off < kel_off[j]):
+                issues.append(f'Unsafe PSU/KEL sequencing around measurement #{j+1}')
+            if off_channel != channel or m.get('channel') != channel:
+                issues.append(f'Wrong channel at H04P measurement #{j+1}')
+            if j and (not kel_off[j-1] < kel_on[j]):
+                issues.append(f'Overlapping load cycles at #{j+1}')
+            # Require actual OFF response after this PSU OFF, before KEL OFF.
+            off_readbacks = [r for r in records[off+1:kel_off[j]]
+                             if r.get('event') == 'read' and
+                             r.get('command') == 'CHAN:OUTP?' and
+                             str(r.get('response')).strip() == '0']
+            if len(off_readbacks) < 3:
+                issues.append(f'Missing 3 OFF readbacks before KEL INPUT OFF #{j+1}')
+
+    # Validate physical readbacks against *the channel selected on the wire*,
+    # not against only the measurement's claimed channel number.
+    # The instrument may start with *any* channel selected. Until the first
+    # INST:NSEL write or readback, there is no documented CH1 default. Local
+    # panel use likewise invalidates the previously tracked selection.
+    select = None
+    selected_readbacks = []
+    for row_index, row in enumerate(records):
+        if row.get('event') != 'driver_trace':
+            continue
+        t = row.get('trace', {})
+        cmd, kind = t.get('command'), t.get('event')
+        if kind == 'write' and cmd == 'SYST:LOC':
+            select = None  # Operator may change selection while in Local.
+        if kind == 'write' and isinstance(cmd,str) and cmd.startswith('INST:NSEL '):
+            select = int(cmd[-1])
+        if kind == 'reply' and cmd == 'INST:NSEL?':
+            if select is None:
+                raw = t.get('response')
+                if raw not in ('1', '2', '3'):
+                    issues.append('Invalid selected-channel readback before first selection or after Local')
+                else:
+                    select = int(raw)
+            elif str(t.get('response')) != str(select):
+                issues.append('INST:NSEL? reply disagrees with selected channel')
+        if kind == 'reply' and cmd == 'CHAN:OUTP?':
+            if str(t.get('response')) not in ('0', '1'):
+                issues.append('Malformed channel-output state readback')
+            selected_readbacks.append((row_index, select, str(t.get('response'))))
+    if len(psu_on)==len(psu_off)==len(kel_off)==21:
+        for j, ((on,channel),(off,_)) in enumerate(zip(psu_on,psu_off)):
+            live = [(ch,value) for idx,ch,value in selected_readbacks if on < idx < off]
+            if not all((ch, '1' if ch==channel else '0') in live for ch in (1,2,3)):
+                issues.append(f'Missing ON/neighbor-OFF selected channel readback #{j+1}')
+            off_states = [(ch,value) for idx,ch,value in selected_readbacks if off<idx<kel_off[j]]
+            if not all((ch,'0') in off_states for ch in (1,2,3)):
+                issues.append(f'Missing final 3-channel OFF selected readbacks #{j+1}')
+
+    gate_events = [(i,r) for i,r in enumerate(records) if r.get('event')=='operator_gate']
+    if len(gate_events) != 5:
+        issues.append('Missing operator panel, connect, move, disconnect gates')
+    else:
+        expected_gate = ('MAXV','CONNECT CH1','MOVE CH1->CH2','MOVE CH2->CH3','DISCONNECT CH3')
+        for j, (idx,r) in enumerate(gate_events):
+            if expected_gate[j] not in str(r.get('token','')):
+                issues.append(f'Wrong operator gate #{j+1}')
+        if len(psu_on)==21 and not (gate_events[1][0] < psu_on[0][0] and
+                 kel_off[6] < gate_events[2][0] < psu_on[7][0] and
+                 kel_off[13] < gate_events[3][0] < psu_on[14][0] and
+                 kel_off[20] < gate_events[4][0]):
+            issues.append('Operator movement gate missing between physically OFF channel groups')
+
+    def finite(m, field):
+        value = m[field]
+        if isinstance(value, bool): raise ValueError(field)
+        value = float(value)
+        if not math.isfinite(value) or value < 0: raise ValueError(field)
+        return value
+
+    expectations = []
+    channel_voltages = {1:2.2,2:3.3,3:4.4}
+    for channel in (1,2,3):
+        expectations.extend([
+            (channel,'control','common_3.30V','CV',3.3,.1,47),
+            (channel,'control','channel_value','CV',channel_voltages[channel],.1,47),
+            (channel,'control','profile_voltage_boundary','CV',4.5,.1,56),
+            (channel,'control','current_limit_0.100A','CC',3.0,.1,22),
+            (channel,'control','current_limit_0.250A','CC',3.0,.25,11),
+            (channel,'control','current_limit_0.500A','CC',3.0,.5,5),
+            (channel,'power_only','fixed_channel_preset','CV',channel_voltages[channel],.1,47)])
+    for j, (_,m) in enumerate(measurement):
+        if j >= len(expectations): break
+        ch,phase,point,mode,voltage,current,resistance = expectations[j]
+        if (m.get('channel'), m.get('phase'), m.get('point'), m.get('actual_mode'),m.get('expected_mode')) != (ch,phase,point,mode,mode):
+            issues.append(f'Wrong H04P point / mode / channel #{j+1}')
+        try:
+            (psu_v,psu_i,psu_api,psu_scpi,kel_v,kel_i,kel_p,r_v,set_v,set_i)=tuple(finite(m,key) for key in (
+                'keithley_voltage_v','keithley_current_a','keithley_power_api_w',
+                'keithley_power_scpi_w','kel103_voltage_v','kel103_current_a',
+                'kel103_power_w','load_resistance_ohm','set_voltage_v','set_current_limit_a'))
+            if (abs(set_v-voltage)>.0049 or abs(set_i-current)>.00049 or
+                    abs(r_v-resistance)>.001 or abs(psu_v-kel_v)>.06 or
+                    abs(psu_i-kel_i)>.03 or abs(psu_api-psu_v*psu_i)>1e-8 or
+                    abs(psu_scpi-psu_v*psu_i)>.025 or
+                    abs(kel_p-kel_v*kel_i)>.025 or abs(psu_scpi-kel_p)>.025 or
+                    max(psu_api,psu_scpi,kel_p)>2.25):
+                issues.append(f'H04P numeric / power inconsistency at point #{j+1}')
+            actual_p_limit=finite(m,'power_difference_max_w')
+            if actual_p_limit>.025+1e-9:
+                if not caveats:
+                    caveats.append('HISTORICAL_POWER_TOLERANCE: captured runner used 0.31 W; '
+                                   'independent recheck used 0.025 W and passed')
+        except (KeyError, ValueError, TypeError, OverflowError):
+            issues.append(f'Malformed/non-finite H04P measurement #{j+1}')
+        # The independent status check preserves CH3's demonstrated OPER=8
+        # quirk, but never accepts contradictory or ambiguous CV/CC bits.
+        oper, ques = m.get('keithley_operation_status'), m.get('keithley_questionable_status')
+        expected_oper = 9 if mode == 'CV' else 10
+        expected_ques = 1 if mode == 'CV' else 2
+        if (type(oper) is not int or type(ques) is not int or
+                oper not in ((8,expected_oper) if ch==3 else (expected_oper,)) or
+                ques != expected_ques):
+            issues.append(f'Contradictory CV/CC status masks at H04P point #{j+1}')
+        if j < len(kel_res) and kel_res[j][1] != f':RES {resistance}OHM':
+            issues.append(f'KEL103 resistance command mismatch at point #{j+1}')
+
+    for event in ('max_voltage_panel_limit','max_voltage_panel_readback','profile'):
+        rows=[r for r in records if r.get('event')==event]
+        if len(rows)!=3 or [r.get('channel') for r in rows]!=[1,2,3]:
+            issues.append(f'Missing three-channel {event} evidence')
+    if len([r for r in records if r.get('event')=='bench_connection_confirmation'])!=1:
+        issues.append('Missing unique bench connection confirmation')
+    if len([r for r in records if r.get('event')=='approval'])!=1:
+        issues.append('Missing unique H04P wiring approval')
+    core=[r for r in records if r.get('event')=='query_outcome']
+    final=[r for r in records if r.get('event')=='outcome']
+    if len(core)!=1 or core[0].get('outcome')!='PASS' or core[0].get('command_count')!=len(cmds):
+        issues.append('Missing core PASS / wrong PSU command count')
+    if len(final)!=1 or final[0].get('outcome')!='PASS' or final[0].get('physical_off_confirmed') is not True:
+        issues.append('Missing final physically confirmed OFF and PASS')
+    if not cmds or cmds[-1]!='SYST:LOC':
+        issues.append('Keithley did not finish with SYST:LOC')
+    return dict(test_id='H04P', status='FAIL' if issues else
+                'PASS_WITH_REVIEW_NOTES' if caveats else 'PASS',
+                wire_commands=len(cmds), error_polls=len(error_reads),
+                observed_error_codes=nonzero,
+                aux_drift_events=sum(r.get('event')=='firmware_revision_drift' for r in records),
+                historical_deviations=caveats, issues=issues)
+
+
 def audit(path: Path, *, acknowledge_historical_h02_panel_poll: bool = False) -> dict:
     """Audit a saved run; optionally acknowledge exactly one known pre-fix H02 poll.
 
@@ -356,6 +627,8 @@ def audit(path: Path, *, acknowledge_historical_h02_panel_poll: bool = False) ->
         return audit_single_records(records)
     if stages == {'H03'}:
         return audit_full_h03_records(records)
+    if stages == {'H04P'}:
+        return audit_h04p_records(records)
     if len(stages) != 1 or next(iter(stages)) not in ('H01', 'H02'):
         raise ValueError('Expected one H01, H02, H03, or H03_SINGLE_CVCC evidence run')
     stage = next(iter(stages))
@@ -421,7 +694,7 @@ def audit(path: Path, *, acknowledge_historical_h02_panel_poll: bool = False) ->
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('evidence', type=Path, nargs='+', help='H01/H01_AUX_REVISION/H02/H03/H03_SINGLE_CVCC events.jsonl files')
+    parser.add_argument('evidence', type=Path, nargs='+', help='H01/H01_AUX_REVISION/H02/H03/H03_SINGLE_CVCC/H04P events.jsonl files')
     parser.add_argument('--acknowledge-historical-h02-panel-poll', action='store_true',
                         help='Only for saved pre-fix FULL H02: explicitly acknowledge the '
                              'one known adjacent SYST:ERR? after manual panel SYST:REM; '

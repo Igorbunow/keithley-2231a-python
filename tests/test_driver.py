@@ -1117,7 +1117,8 @@ class TestDevice(unittest.TestCase):
         dev._select(3)
         self.assertTrue(dev.identity().endswith('1.04-0.01'))
         self.assertEqual(dev.instrument_key, key)
-        # Do not silently normalize the separately reported panel value 1.01.
+        # Synthetic alternate valid version, NOT observed on the actual front panel;
+        # ensure arbitrary nonempty revisions are preserved without normalization.
         versions[3] = '1.04-1.01'
         self.assertTrue(dev.identity().endswith('1.04-1.01'))
         self.assertEqual(dev.instrument_key, key)

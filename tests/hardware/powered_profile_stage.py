@@ -35,6 +35,8 @@ H04P_FINAL_TOKEN = 'CONFIRM H04P CH1=OFF CH2=OFF CH3=OFF LOAD=OFF'
 MAX_COMMANDS = 8000
 MAX_SECONDS = 900
 SHUTDOWN_RESERVE = 128
+# Independent PSU/LOAD power consistency threshold, much tighter than 0.31 W.
+POWER_TOLERANCE_W = 0.025
 
 
 def approval_token(load_transport=None, load_port=None,
@@ -103,14 +105,32 @@ def _profile(access='control'):
                    lock_front_panel=False, verify_every_s=3600.0, access=access)
 
 
+
+def _finite_reading(value, field, *, minimum=0.0):
+    """Reject nonnumeric/nonfinite diagnostics before any tolerance comparison.
+
+    In particular NaN makes abs(a-b)>limit false. Keep a single explicit
+    trust-boundary guard even if the underlying adapter already validates SCPI.
+    """
+    if isinstance(value, bool):
+        raise SafetyError(f'{field}: boolean is not a numeric measurement')
+    try:
+        result = float(value)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise SafetyError(f'{field}: malformed numeric measurement') from exc
+    if not math.isfinite(result) or result < minimum:
+        raise SafetyError(f'{field}: non-finite or out-of-range numeric measurement')
+    return result
+
+
 def _max_voltage_panel_gate(io, dev, evidence):
     """Verify the 4.50 V front-panel ceiling and library rejection before loading."""
     dev.verify_profile()
     for channel in (1, 2, 3):
         dev.diagnostic_write(f'INST:NSEL {channel}')
-        maximum = float(dev.diagnostic_query('VOLT:LIM?'))
+        maximum = _finite_reading(dev.diagnostic_query('VOLT:LIM?'), 'VOLT:LIM?')
         enabled = dev._bool(dev.diagnostic_query('VOLT:LIM:STAT?'))
-        voltage = float(dev.diagnostic_query('VOLT?'))
+        voltage = _finite_reading(dev.diagnostic_query('VOLT?'), 'VOLT?')
         output = dev._bool(dev.diagnostic_query('CHAN:OUTP?'))
         if maximum != 4.5 or not enabled or abs(voltage - 3.3) > .0049 or output:
             raise SafetyError(f'CH{channel}: expected 4.50 V ceiling and 3.30 V setpoint, output OFF')
@@ -136,8 +156,8 @@ def _max_voltage_panel_gate(io, dev, evidence):
     require_outputs(dev)
     for channel in (1, 2, 3):
         dev.diagnostic_write(f'INST:NSEL {channel}')
-        voltage = float(dev.diagnostic_query('VOLT?'))
-        current = float(dev.diagnostic_query('CURR?'))
+        voltage = _finite_reading(dev.diagnostic_query('VOLT?'), 'VOLT?')
+        current = _finite_reading(dev.diagnostic_query('CURR?'), 'CURR?')
         if abs(voltage - 4.5) > .0049 or abs(current - .1) > .00049:
             raise SafetyError(f'CH{channel}: front-panel request was not clamped to 4.50 V')
         evidence.add('max_voltage_panel_readback', channel=channel,
@@ -151,7 +171,7 @@ def _max_voltage_panel_gate(io, dev, evidence):
             dev.diagnostic_write('VOLT 3.30')
         finally:
             dev.debug_bypass_profile = False
-        if abs(float(dev.diagnostic_query('VOLT?')) - 3.3) > .0049:
+        if abs(_finite_reading(dev.diagnostic_query('VOLT?'), 'VOLT?') - 3.3) > .0049:
             raise SafetyError(f'CH{channel}: failed to restore 3.30 V after panel check')
         before = io.commands
         rejection = _expect_local_rejection(dev, io, channel, voltage=4.51)
@@ -168,12 +188,12 @@ def _remote_max_voltage_scpi_probe(dev, io, evidence):
     require_outputs(dev)
     for channel in (1, 2, 3):
         dev.diagnostic_write(f'INST:NSEL {channel}')
-        enabled = bool(int(dev.diagnostic_query('VOLT:LIM:STAT?')))
-        limit = float(dev.diagnostic_query('VOLT:LIM?'))
-        output = bool(int(dev.diagnostic_query('CHAN:OUTP?')))
+        enabled = dev._bool(dev.diagnostic_query('VOLT:LIM:STAT?'))
+        limit = _finite_reading(dev.diagnostic_query('VOLT:LIM?'), 'VOLT:LIM?')
+        output = dev._bool(dev.diagnostic_query('CHAN:OUTP?'))
         if not enabled or abs(limit - 4.5) > .0049 or output:
             raise SafetyError(f'CH{channel}: remote clamp probe requires 4.50 V limit enabled and OFF')
-        before = float(dev.diagnostic_query('VOLT?'))
+        before = _finite_reading(dev.diagnostic_query('VOLT?'), 'VOLT?')
         if abs(before - 3.3) > .0049:
             raise SafetyError(f'CH{channel}: unexpected pre-probe setpoint {before} V')
         if dev.debug_bypass_profile:
@@ -198,8 +218,8 @@ def _remote_max_voltage_scpi_probe(dev, io, evidence):
             dev.debug_bypass_profile = False
             io.expected_error = None
             io.remote_limit_probe_channel = None
-        actual = float(dev.diagnostic_query('VOLT?'))
-        output = bool(int(dev.diagnostic_query('CHAN:OUTP?')))
+        actual = _finite_reading(dev.diagnostic_query('VOLT?'), 'VOLT?')
+        output = dev._bool(dev.diagnostic_query('CHAN:OUTP?'))
         if abs(actual - before) > .0049 or output:
             raise SafetyError(f'CH{channel}: rejected remote setpoint changed output or setpoint')
         evidence.add('case', channel=channel,
@@ -231,6 +251,51 @@ def _expect_local_rejection(dev, io, channel, *, voltage=None, current=None):
     return evidence_value
 
 
+def _release_h04p_instruments(dev, io, load, evidence, *, channel=None):
+    """Attempt both shutdowns independently; no retry on uncertain links.
+
+    An exception can follow a physical ON transition. Collect errors before
+    logging them: evidence-file failures must not suppress the other device's
+    independent OFF attempt.
+    """
+    failures, records = [], []
+    if io.live:
+        try:
+            if channel is not None and dev.armed and not dev.faulted:
+                dev.output(channel, False)
+            else:
+                dev.emergency_off()
+            require_outputs(dev)
+        except BaseException as exc:
+            records.append(('cleanup_error', 'Keithley', type(exc).__name__, str(exc)))
+            failures.append(f'Keithley shutdown unconfirmed: {type(exc).__name__}')
+    else:
+        records.append(('cleanup_unconfirmed', 'Keithley', 'link uncertain', ''))
+        failures.append('Keithley link uncertain; manual OFF required')
+
+    if getattr(load, 'live', True):
+        try:
+            load.set_input(False)
+        except BaseException as exc:
+            records.append(('cleanup_error', 'KEL103', type(exc).__name__, str(exc)))
+            failures.append(f'KEL103 INPUT OFF unconfirmed: {type(exc).__name__}')
+    else:
+        records.append(('cleanup_unconfirmed', 'KEL103', 'link uncertain', ''))
+        failures.append('KEL103 link uncertain; manual INPUT OFF required')
+
+    for event, instrument, error, detail in records:
+        try:
+            if event == 'cleanup_error':
+                evidence.add(event, instrument=instrument, exception_type=error,
+                             detail=detail)
+            else:
+                evidence.add(event, instrument=instrument, reason=error)
+        except BaseException:
+            failures.append(f'{instrument} cleanup evidence write failed')
+    return failures
+
+
+
 def _measure_point(dev, io, evidence, load, channel, *, phase, point,
                    voltage, current, resistance, expected_mode, configure=True):
     if any(io.outputs.values()):
@@ -241,32 +306,44 @@ def _measure_point(dev, io, evidence, load, channel, *, phase, point,
         dev.set_channel(channel, voltage=voltage, current=current)
     else:
         dev.diagnostic_write(f'INST:NSEL {channel}')
-        if (abs(float(dev.diagnostic_query('VOLT?')) - voltage) > .0049 or
-                abs(float(dev.diagnostic_query('CURR?')) - current) > .00049):
+        if (abs(_finite_reading(dev.diagnostic_query('VOLT?'), 'VOLT?') - voltage) > .0049 or
+                abs(_finite_reading(dev.diagnostic_query('CURR?'), 'CURR?') - current) > .00049):
             raise SafetyError('fixed power_only preset readback mismatch')
-    actual_resistance = load.configure_cr(resistance)
+    actual_resistance = _finite_reading(load.configure_cr(resistance), 'KEL103 resistance', minimum=.001)
     if abs(actual_resistance - resistance) > .001:
         raise SafetyError('KEL103 resistance did not verify')
-    load.set_input(True)
-    io.authorized_channel = channel
+    # The cleanup region must start BEFORE KEL INPUT ON and PSU ON. An
+    # exception from either command can occur after the instrument acted.
     try:
-        dev.output(channel, True)
-    finally:
-        io.authorized_channel = None
-    try:
+        load.set_input(True)
+        io.authorized_channel = channel
+        try:
+            dev.output(channel, True)
+        finally:
+            io.authorized_channel = None
         require_outputs(dev, {ch: ch == channel for ch in (1, 2, 3)}, settle_timeout_s=3.0)
         sample = dev.read_channel(channel)
         load_values = load.measurements()
-        scpi_power = float(dev.diagnostic_query('MEAS:POW?'))
+        scpi_power = _finite_reading(dev.diagnostic_query('MEAS:POW?'), 'Keithley MEAS:POW?')
         if not sample.enabled or sample.regulation != expected_mode:
             raise SafetyError(f'CH{channel} expected {expected_mode}, got {sample.regulation}')
-        if (abs(sample.voltage_v - load_values['kel103_voltage_v']) > .06 or
-                abs(sample.current_a - load_values['kel103_current_a']) > .03):
-            raise SafetyError('Keithley/KEL103 V/I disagreement exceeds H03 tolerances')
-        if (abs(load_values['kel103_power_w'] -
-                load_values['kel103_voltage_v'] * load_values['kel103_current_a']) > .31 or
-                abs(scpi_power - sample.power_w) > .31):
-            raise SafetyError('power comparison exceeds 0.31 W tolerance')
+        psu_v = _finite_reading(sample.voltage_v, 'Keithley voltage')
+        psu_i = _finite_reading(sample.current_a, 'Keithley current')
+        psu_api_p = _finite_reading(sample.power_w, 'Keithley API power')
+        kel_v = _finite_reading(load_values['kel103_voltage_v'], 'KEL103 voltage')
+        kel_i = _finite_reading(load_values['kel103_current_a'], 'KEL103 current')
+        kel_p = _finite_reading(load_values['kel103_power_w'], 'KEL103 power')
+        if abs(psu_v - kel_v) > .06 or abs(psu_i - kel_i) > .03:
+            raise SafetyError('Keithley/KEL103 V/I disagreement exceeds H04P tolerances')
+        # Check each instrument's displayed P against its own V*I, THEN compare
+        # the independent instruments directly. All fields must be finite.
+        if (abs(psu_api_p - psu_v * psu_i) > 1e-8 or
+                abs(scpi_power - psu_v * psu_i) > POWER_TOLERANCE_W or
+                abs(kel_p - kel_v * kel_i) > POWER_TOLERANCE_W or
+                abs(scpi_power - kel_p) > POWER_TOLERANCE_W):
+            raise SafetyError('H04P PSU/KEL103 power consistency exceeds 0.025 W')
+        if max(psu_api_p, scpi_power, kel_p) > 2.25:
+            raise SafetyError('H04P measured power exceeds 2.25 W cap')
         evidence.add('measurement', channel=channel, phase=phase, point=point,
                      mode=expected_mode, expected_mode=expected_mode,
                      actual_mode=sample.regulation,
@@ -279,18 +356,21 @@ def _measure_point(dev, io, evidence, load, channel, *, phase, point,
                      keithley_operation_status=sample.operation_status_mask,
                      keithley_questionable_status=sample.questionable_status_mask,
                      voltage_difference_max_v=.06, current_difference_max_a=.03,
-                     power_difference_max_w=.31, **load_values)
+                     power_difference_max_w=POWER_TOLERANCE_W, **load_values)
         print(f'H04-Powered CH{channel} {point}: PSU {sample.voltage_v:.4f} V / '
               f'{sample.current_a:.4f} A / {sample.power_w:.4f} W {sample.regulation}; '
               f'KEL103 {load_values["kel103_voltage_v"]:.4f} V / '
               f'{load_values["kel103_current_a"]:.4f} A / '
               f'{load_values["kel103_power_w"]:.4f} W')
     finally:
-        dev.output(channel, False)
-        require_outputs(dev)
-        load.set_input(False)
-
-
+        # Never make KEL INPUT OFF contingent on a successful PSU OFF, or on
+        # the PSU link still being trustworthy. Likewise try PSU OFF when KEL
+        # has failed. No commands are sent on either uncertain connection.
+        io.authorized_channel = None
+        failures = _release_h04p_instruments(dev, io, load, evidence, channel=channel)
+        if failures:
+            io.h04p_point_shutdown_failures = failures
+            raise SafetyError('H04P point shutdown unconfirmed: ' + '; '.join(failures))
 
 
 def h04_powered(transport, evidence, load):
@@ -412,18 +492,28 @@ def h04_powered(transport, evidence, load):
         outcome = ('ABORTED' if not io.live or isinstance(
             exc, (TimeoutError, KeyboardInterrupt, InterruptedError)) else 'FAIL')
         reason = f'H04-Powered stopped: {type(exc).__name__}: {exc}; verify all outputs/load OFF'
-        evidence.add('stage_error', exception_type=type(exc).__name__,
-                     message=str(exc), live_link=io.live)
-        if io.live:
+        # A full or failing evidence filesystem must not interrupt the
+        # independent shutdown attempts.
+        try:
+            evidence.add('stage_error', exception_type=type(exc).__name__,
+                         message=str(exc), live_link=io.live)
+        except BaseException:
+            pass
+        # The point already attempted both shutdowns; never retry an
+        # uncertain transition from the outer fault handler.
+        failures = getattr(io, 'h04p_point_shutdown_failures', None)
+        if failures is None:
+            failures = _release_h04p_instruments(dev, io, load, evidence)
+        if failures:
+            outcome, reason = ('ABORTED', 'shutdown unconfirmed; manual OFF required: '
+                               + '; '.join(failures))
+        elif io.live:
             try:
-                dev.emergency_off()
-                require_outputs(dev)
-                if getattr(load, 'live', True):
-                    load.set_input(False)
                 dev.diagnostic_write('SYST:LOC')
             except BaseException as cleanup_exc:
-                outcome, reason = 'ABORTED', 'shutdown unconfirmed; UNKNOWN OUTPUT/LOAD STATE'
-                evidence.add('cleanup_error', exception_type=type(cleanup_exc).__name__)
+                outcome, reason = 'ABORTED', 'Local restoration unconfirmed; manual OFF required'
+                evidence.add('cleanup_error', instrument='Keithley',
+                             exception_type=type(cleanup_exc).__name__)
     finally:
         try:
             transport.close()
