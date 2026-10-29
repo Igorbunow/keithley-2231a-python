@@ -451,3 +451,15 @@ remains firmware-dependent/unknown until original on-wire JSONL review.
 ## R4.5-B: первое аппаратное наблюдение INST? (29.10.2026)
 
 Терминальный протокол подтверждает один `INST? -> CH1` при `INST:NSEL? -> 1`, всех трёх выходах OFF. **TERMINAL REVIEWED PASS; JSONL PENDING**. Независимая трасса не приложена, `VOLT:STEP?`/`CURR:STEP?` остаются `HW NOT_RUN`.
+
+### R4.5-B original evidence: bounded hardware readback (2026-10-29)
+
+`INST?` **HW REVIEWED PASS** on selected CH1 while OFF (two real replies,
+`CH1`). `VOLT:STEP?` **HW REVIEWED PASS** for one CH1 OFF-profile numeric
+reply `0.001 V`; `CURR:STEP?` **HW REVIEWED PASS** for one CH1 OFF-profile
+numeric reply `0.001 A`. Firmware `1.04-1.04`; no output enabled. The STEP
+run **modified OFF-channel presets by authorization**; this was not a
+profile-free or fully nonmutating session. The vendor `Returns None` wording
+for `VOLT:STEP?` does not describe this one observed numeric response.
+No STEP writes/UP/DOWN, no powered operation, no other channels or firmware
+can be inferred. See `docs/reviews/R4_5_B_INST_STEP_HW_REVIEW_2026-10-29.md`.

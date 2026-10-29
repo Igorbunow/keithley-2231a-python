@@ -374,3 +374,15 @@ semantics and JSONL independent review remain outstanding.
 ### R4.5-B INST terminal review (2026-10-29)
 
 Коммит `a1af3d5` и 675 тестов OK; реальное `INST? -> CH1`, OFF три раза по каждому каналу; исходный JSONL отсутствует в приложениях. Отдельный офлайн-аудитор добавлен, STEP квалификация остаётся неиспытанной.
+
+### R4.5-B independent original JSONL review — 2026-10-29
+
+**HW REVIEWED PASS (bounded):** both original OFF-only traces audited.
+`INST?=CH1` on both runs; on the separately approved OFF-profile run,
+`VOLT:STEP?=0.001 V` and `CURR:STEP?=0.001 A` on CH1, each queried exactly once.
+All 33 STEP-run output readbacks OFF; all 232 error polls zero; profile presets
+read back at 3.30 V/0.150 A CH1 and 1.00 V/0.100 A CH2/CH3, remaining programmed
+but OFF. No power ON or STEP writes were sent. Evidence digests and limits:
+`docs/reviews/R4_5_B_INST_STEP_HW_REVIEW_2026-10-29.md`.
+Next work is software-only risk-based SCPI coverage; no automatic promotion of
+write/UP/DOWN/trigger functions or powered modes.

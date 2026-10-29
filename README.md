@@ -947,3 +947,13 @@ reference documents query syntax but lists `Returns None`. See
 For the guarded, two-phase source observation runner and explicit manual gates,
 see `docs/R4_5_B_OFF_HARDWARE_PLAN.ru.md`. `tools/r4_5_source_qualify.py`
 is dry-run by default; no hardware is authorized by software tests.
+
+### R4.5-B hardware-readback status
+
+Two independently reviewed OFF-only JSONL runs on firmware `1.04-1.04`
+confirm `INST?=CH1` and, after a second operator gate and programmed OFF
+presets, `VOLT:STEP?=0.001 V` / `CURR:STEP?=0.001 A` on CH1. This proves
+**readback on one OFF configuration only**, not STEP writes or powered behavior.
+Both originals are re-auditable offline with
+`tools/audit_r4_5_source_evidence.py`; SHA-256 and limits are in
+`docs/reviews/R4_5_B_INST_STEP_HW_REVIEW_2026-10-29.md`.
