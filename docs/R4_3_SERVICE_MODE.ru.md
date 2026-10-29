@@ -184,3 +184,53 @@ python3 tools/service_simulate_offline.py \
 
 **Статус R3.5.46: SIMULATED ONLY / HW NOT_RUN.** Ни одна сервисная команда
 не была передана реальному Keithley.
+
+## R3.5.47 / R4.3-F: in-memory сервисный gateway (никакого UART)
+
+`OfflineServiceGateway` (`service_gateway_offline.py`) развивает R3.5.46:
+он заново компилирует типизированный `ServicePlan`, проверяет подтверждения
+и автомат состояний через `ServiceSimulator`, затем воспроизводит SCPI-подобный
+обмен **только в памяти**: `FAKE_WRITE`/`FAKE_QUERY`, фиктивный ответ и
+`FAKE_ERROR_POLL` после каждой операции. Фиктивные `IDN`, три OFF и условия
+Independent/idle проверяются моделью, **не настоящим прибором**.
+
+* В публичном конструкторе нет `transport`, `port`, `device`, произвольной
+  функции передачи или реальной `execute`; принимается только `FakeBench`.
+  Даже `CAL:SEC OFF,<PASSWORD_FROM_SECURE_OPERATOR_INPUT>` остаётся текстом.
+* Перед каждым действием обязательно право в JSON сервисного профиля,
+  `SERVICE PLAN …`, `SIMULATE ONLY … SEQ=N`; для *critical* — ещё
+  `SIMULATE CRITICAL … SEQ=N`. Повторная/неверная авторизация не проходит.
+* При смоделированных сбоях отправки, ответа, error-poll или неожиданном
+  `CHx=ON` прекращаются дальнейшие **фиктивные** команды, сессия блокируется
+  до создания нового экземпляра. Никаких автоматических восстановлений.
+* На успешной трассе после каждой запланированной операции ровно один
+  `FAKE_ERROR_POLL`. На сбое запроса нет следующего `SYST:ERR?`.
+* SHA256 отчёта и связь с SHA отчёта `ServiceSimulator` позволяют заметить
+  случайную модификацию. **Это не подпись и не доказательство происхождения.**
+* `SIMULATED_PASS` — только прохождение модели. `*TST?`, `*PSC n` и другие
+  команды с непроверенным синтаксисом/ответом остаются **НЕ ПОДТВЕРЖДЕНЫ
+  НА ПРИБОРЕ**; синтетический ответ не следует интерпретировать как
+  результат заводского self-test или калибровки.
+
+Пример (у приватного `service.json` должно быть право `clear_events`):
+
+```bash
+python3 tools/service_gateway_offline.py --service-profile /private/service.json \
+  --operation clear_events --show-required-acks
+
+# Только после получения реальных строк в выводе предыдущей команды:
+python3 tools/service_gateway_offline.py --service-profile /private/service.json \
+  --operation clear_events \
+  --ack 'SERVICE PLAN clear_events <SERIAL> <HASH12>' \
+  --sim-ack 'SIMULATE ONLY clear_events <SERIAL> <HASH12> SEQ=1'
+
+# Для изучения отказа: --inject-fault-step 1 --inject-fault-phase error_poll
+```
+
+CLI не имеет флагов `--execute`, `--config`, `--port`, `--device`;
+**запуск реальных сервисных команд не предусмотрен**. Режим только
+программный, без физической квалификации и без необходимости подключать PSU.
+Копировать запланированные команды вручную на аппарат недопустимо без
+утверждённой сервисной процедуры и независимой проверки риска. Список
+этапов для будущего live gateway остаётся в этом документе как проект;
+сам по себе offline gateway **не открывает** дальнейший доступ к прибору.

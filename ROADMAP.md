@@ -89,3 +89,11 @@ and full JSONL evidence has **HW REVIEWED PASS (bounded idle-only,
 unchanged zero ESE/SRE masks. No general asynchronous timing,
 status latch preservation, or trigger verification is claimed. See
 [the independent review](docs/hardware_reports/R4_3_OPC_review_2026-10-29.md).
+
+### R4.3-F — сервисный in-memory gateway (R3.5.47)
+
+Сверка профиля/плана/автомата и отдельного фиктивного SCPI-контура с
+`FAKE_ERROR_POLL`, ограниченным числом шагов и отказами send/reply/error/output:
+**OFFLINE SIMULATED ONLY**, никакой связи с Keithley, никаких live-команд
+калибровки. Реальный сервисный gateway остаётся отдельным будущим этапом
+после проверки документации, внешней авторизации и метрологической методики.

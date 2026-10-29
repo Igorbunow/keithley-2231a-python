@@ -675,3 +675,10 @@ Hardware **HW REVIEWED PASS**, limited to one idle `*OPC?=1` response
 observed in 0.207 s on 2026-10-29. No pending-work, status-latch,
 execution-time bound or side-effect preservation claim. See the
 [independent review](docs/hardware_reports/R4_3_OPC_review_2026-10-29.md).
+
+**Service gateway (R4.3-F, offline only).** `tools/service_gateway_offline.py`
+проверяет разрешения отдельного `ServiceProfile`, подтверждения действия и
+фиктивные SCPI-трассы; **настоящий транспорт и сервисные команды на приборе
+не доступны**. См. `docs/R4_3_SERVICE_MODE.ru.md`. Для опасных операций,
+особенно `CAL:*`, не используйте эти планы без необходимости: они не
+являются проверенной заводской методикой калибровки.

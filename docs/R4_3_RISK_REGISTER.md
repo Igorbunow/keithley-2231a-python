@@ -108,3 +108,13 @@ firmware 1.04-1.04. Its SHA is an integrity check on an in-memory transcript,
 **not** a signature, audit of the live wire, or authorization. `*TST?` and
 `*PSC` write forms remain vendor-syntax unverified. Real service execution
 is still forbidden; see `docs/R4_3_SERVICE_MODE.ru.md`.
+
+### R4.3-F / R3.5.47: отдельная offline-граница исполнения
+
+`OfflineServiceGateway` проверяет, что после планирования никаких непроверенных
+SCPI-строк не добавляется, каждый фиктивный запрос получает соответствующую
+фиктивную пару «ответ / error-poll», а исключение немедленно обрывает дальнейшую
+последовательность. Только `FakeBench`, **никакого аппаратного транспорта**.
+Это не устраняет опасность применения этих команд на настоящем приборе;
+перенос такой модели на реальный UART без нового safety-review **запрещён**.
+`*TST?` и синтаксис записи `*PSC` остаются со статусом `UNVERIFIED`.
