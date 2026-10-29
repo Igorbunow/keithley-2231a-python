@@ -10,7 +10,7 @@ authorize use or establish firmware 1.04-1.04 compatibility for untested forms.
 | Vendor family | Contract risk | Current disposition / next condition |
 |---|---|---|
 | `*OPC?`, `*WAI` | Can wait for queued operations; completion semantics differ from status snapshots | **REVIEW** before any live query; specify timeout/interaction with the transport and concurrent guard first |
-| `*PSC?` / `*PSC` | Reads vs changes power-on state of status enable registers | Query may be a candidate after manual syntax/side-effect review; **no write** and no inherited-default assumption |
+| `*PSC?` / `*PSC` | Reads vs changes power-on state of status enable registers | `*PSC?` R3.5.41 query-only HW REVIEWED PASS (one `0` reply, OFF-only on 2026-10-29), 0/1 strict response; no `*PSC` write, power-cycle or default-value assumption |
 | `*TST?` | Self-test can have nontrivial execution time or effects | **DEFER**. Never run as routine health check until power/output behavior and shutdown/timeout protocol are reviewed |
 | `*RST`, `*CLS`, `STAT:PRES` | Reset/configuration changes or irreversible clearing of diagnostics | **BLOCKED** by default. `*CLS` and `STAT:PRES` must not be conflated with explicit R4.2 event consumption |
 | `*TRG`, `TRIGger`, `VOLT/CURR:TRIGgered` | Triggered source actions can change voltage/current | **DEFER** pending profile-aware gate, independent OFF transition, and dedicated controlled hardware qualification |
@@ -41,3 +41,15 @@ authorize use or establish firmware 1.04-1.04 compatibility for untested forms.
 
 R4.2-B reviewed evidence: [R4_2_EVENT_review_2026-10-29.md](hardware_reports/R4_2_EVENT_review_2026-10-29.md).
 Original manual: https://download.tek.com/manual/077100401_Referencemanual.pdf.
+
+## R4.3-B PSC observational pilot (R3.5.41)
+
+`power_on_status_clear_state()` reads one `*PSC?` through the public guarded
+PSU driver; it does **not** read events or modify status enables. New hardware
+runner independently gates one physical OFF-only PSU and compares `*ESE?` /
+`*SRE?` before and after reading *PSC?. The two values should be equal in
+the absence of an outside controller. **HW REVIEWED PASS** for one OFF-only
+`*PSC? = 0` observation, with zero ESE/SRE before and after. This does not
+prove power-on clearing, retention of nonzero enable masks or SRQ behavior.
+See [independent review](hardware_reports/R4_3_PSC_review_2026-10-29.md)
+and [hardware procedure](R4_3_PSC_HARDWARE.ru.md).

@@ -1402,6 +1402,22 @@ class Keithley2231A:
                 raise SafetyError('Faulted/uncertain session cannot query instrument masks')
             return self._uint(command, maximum=255)
 
+    def power_on_status_clear_state(self) -> int:
+        """Observe the *PSC? flag (0 or 1) without changing the instrument.
+
+        This is a power-on STATUS-ENABLE policy observation, **not** a power
+        output state or an instruction to clear latches. The vendor documents
+        *PSC? as a query but does not specify a reliable default value for
+        all firmware revisions. Do not infer an output/recall policy from it.
+
+        This method never sends *PSC, *ESR?, *CLS, *RST or STAT:PRES. A bad
+        reply latches an uncertain session and forbids another command.
+        """
+        with self._lock:
+            if self._faulted or self._link_uncertain:
+                raise SafetyError('Faulted/uncertain session cannot query *PSC?')
+            return self._uint('*PSC?', maximum=1)
+
     def consume_status_event(self, register: str, *, acknowledge_clear: bool) -> int:
         """Explicitly consume one 8-bit event latch; may clear its contents.
 

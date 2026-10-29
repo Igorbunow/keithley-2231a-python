@@ -62,3 +62,12 @@ unsupported/unsafe commands. Completeness never means blindly executing them.
   project** after requirements and hardware are established.
 - O01 test-only DMM integration remains a *bounded qualification adapter*, not
   an invitation to put a generic bench orchestrator into `src/`.
+
+#### R4.3-B (*PSC? read-only, R3.5.41)
+
+One guarded query-only method with strict 0/1 response and a separate OFF-only
+hardware qualification tool. `*PSC` writes, power cycles and all dangerous R4.3
+commands remain unsupported. **HW REVIEWED PASS** for the single OFF-only
+`*PSC? = 0` query on 2026-10-29; this does not test the power-on setting
+effect or nonzero enable masks. Protocol: `docs/R4_3_PSC_HARDWARE.ru.md`;
+independent [evidence review](docs/hardware_reports/R4_3_PSC_review_2026-10-29.md).

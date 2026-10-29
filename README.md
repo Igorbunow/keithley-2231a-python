@@ -622,3 +622,17 @@ Default `python3 tools/r4_status_qualify.py --config config/bench.local.toml` is
 **dry run**. It must never be launched with `--execute` unattended.
 Next R4.3 work requires [a fresh command-level risk review](docs/R4_3_RISK_REGISTER.md),
 not another unapproved live SCPI experiment.
+
+### R4.3-B: query-only `*PSC?` (bounded hardware review PASS)
+
+`psu.power_on_status_clear_state()` reads the 0/1 flag used for power-on
+behavior of status enable registers (ESER/SRER). It **does not** reset
+the PSU, clear any event register, write `*PSC`, or change outputs.
+The 0/1 value is observational; do not interpret it as Output Recall.
+First verify offline, then run the separately gated OFF-only physical protocol
+`tools/r4_3_psc_qualify.py` as documented in `docs/R4_3_PSC_HARDWARE.ru.md`.
+Hardware status: **HW REVIEWED PASS** (2026-10-29) for the one-shot, OFF-only
+`*PSC? = 0` read and unchanged zero ESER/SRER masks. See the
+[independent review](docs/hardware_reports/R4_3_PSC_review_2026-10-29.md).
+This does **not** qualify the `*PSC` write, power-on clearing, power cycling,
+nonzero mask retention, SRQ, or any output-state mutation.

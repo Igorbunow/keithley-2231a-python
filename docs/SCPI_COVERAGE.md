@@ -38,7 +38,7 @@
 | Common 5-2…5-6 | `*RCL` | **R** | Восстановление внутренних уставок |
 | Common 5-2…5-6 | `*TST?` | **R** | Самотестирование; непроверенные побочные эффекты |
 | Common 5-2…5-6 | `*WAI` | **U** | Синхронизация очереди |
-| Common 5-2…5-6 | `*PSC / *PSC?` | **R** | Настройка power-on status |
+| Common 5-2…5-6 | `*PSC / *PSC?` | **W** | R3.5.41 `power_on_status_clear_state()` queries `*PSC?` only (HW REVIEWED PASS 2026-10-29: one real `0` read, OFF-only); `*PSC` write and power-on effects remain untested/blocked |
 | APPLy 5-6…5-7 | `[SOUR:]APPLy / ?` | **R** | Многоканальная настройка с побочными эффектами |
 | APPLy 5-6…5-7 | `APPLy:VOLTage / ?` | **R** | Массовое изменение уставок |
 | APPLy 5-6…5-7 | `APPLy:CURRent / ?` | **R** | Массовое изменение ограничений тока |
