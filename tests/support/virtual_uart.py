@@ -92,6 +92,8 @@ class UARTPeer:
         # fixture, not a second implementation of the Keithley driver.
         self.event_latches = {'*ESR?': '7', 'STAT:QUES:EVEN?': '129',
                               'STAT:OPER:EVEN?': '255'}
+        # Narrow digital SCPI readbacks; no physical tracking or combine-mode model.
+        self.mode_registers = {'OUTP:SER': 0, 'OUTP:PARALLEL': 0, 'OUTP:TRAC': 0}
         self.selected = 1
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._serve, daemon=True)
@@ -122,14 +124,16 @@ class UARTPeer:
                 # SCPI over PTY.  Never enables output unless the driver writes it.
                 if self.profile_registers:
                     reg_write = re.fullmatch(
-                        r'(VOLT|CURR|VOLT:LIM|VOLT:LIM:STAT|OUTP:TIM:STAT) '
+                        r'(VOLT|CURR|VOLT:LIM|VOLT:LIM:STAT|OUTP:TIM:STAT|OUTP:TIM:DEL) '
                         r'([0-9]+(?:\.[0-9]+)?)', cmd)
                     if reg_write:
                         self.channel_registers[self.selected][reg_write[1]] = reg_write[2]
-                    elif cmd == 'OUTP 0':
+                    elif cmd in ('OUTP 0', 'OUTP 1'):
                         if not (cmd == 'OUTP 0' and (self.ignore_shutdown or self.ignore_global_off)):
                             for ch in (1, 2, 3):
                                 self.off_by_channel[ch] = int(cmd[-1])
+                    elif re.fullmatch(r'OUTP:(SER|PARALLEL|TRAC) [01]', cmd):
+                        self.mode_registers[cmd.split()[0]] = int(cmd[-1])
                     elif cmd in ('CHAN:OUTP 0', 'CHAN:OUTP 1'):
                         if not (cmd == 'CHAN:OUTP 0' and self.ignore_shutdown):
                             self.off_by_channel[self.selected] = int(cmd[-1])
@@ -151,6 +155,7 @@ class UARTPeer:
                             for kind in ('OPER', 'QUES') for ch in (1, 2, 3))
                         allowed_reads.update({'VOLT?', 'CURR?', 'VOLT:LIM?',
                                               'VOLT:LIM:STAT?', 'OUTP:TIM:STAT?',
+                                              'OUTP:TIM:DEL?',
                                               'OUTP:STAT:ALL?', 'SYST:VERS?', '*STB?',
                                               'STAT:QUES:COND?', 'STAT:OPER:COND?',
                                               'MEAS:VOLT?', 'MEAS:CURR?'})
@@ -158,7 +163,8 @@ class UARTPeer:
                         allowed_writes.update({'SYST:RWLOCK', 'OUTP:SER 0',
                                                'OUTP:PARALLEL 0', 'OUTP:TRAC 0',
                                                'OUTP:SER 1', 'OUTP:PARALLEL 1',
-                                               'OUTP 0',
+                                               'OUTP:TRAC 1',
+                                               'OUTP 0', 'OUTP 1',
                                                'CHAN:OUTP 0', 'CHAN:OUTP 1'})
                         if reg_write:
                             allowed_writes.add(cmd)
@@ -212,6 +218,8 @@ class UARTPeer:
                     ch = int(cmd[-7])
                     response = ('9' if self.off_by_channel.get(ch, 0) else '0') if cmd.startswith('STAT:OPER:') else '0'
                 elif cmd == 'SYST:ERR?': response = self.fault_code or '0,"No error"'
+                elif self.profile_registers and cmd[:-1] in self.mode_registers:
+                    response = str(self.mode_registers[cmd[:-1]])
                 elif cmd in ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?',
                              '*ESE?', '*SRE?', '*PSC?'): response = '0'
                 elif cmd == '*OPC?': response = '1'

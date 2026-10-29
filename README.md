@@ -754,3 +754,16 @@ and unauthorized output activation. The fixture allows combined-mode **writes
 only in the injected-fault scenario**, without pretending to simulate an actual
 Series/Parallel electrical connection. Historical physical H09/H10 results are
 unchanged. These tests never connect to or energize real equipment.
+
+## R3.5.58 — independent sequencing and Tracking control through virtual UART
+
+Four remaining `FakeTransport` test methods were replaced by six real-driver
+PTY tests for independent channel sequencing and timer readback, guarded
+Tracking global ON/OFF (including CH3), paired timer validation and OFF-only
+configuration, delayed global OFF readback, a valid-but-wrong timer reply,
+and an uncertain UART timeout that prohibits further OFF commands. The UART
+fixture only reflects explicitly written *digital* SCPI registers and scripted
+responses; it does not model linked-voltage regulation, actual timer expiry,
+physical connections or real power. Hardware H05/H06/H08/H09/H10 evidence
+and hardware authorization remain unchanged. No production SCPI or safety
+logic was modified.

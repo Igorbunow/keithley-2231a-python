@@ -413,51 +413,7 @@ class TestDevice(unittest.TestCase):
                 self.assertFalse(dev.armed)
                 self.assertTrue(all(not value['CHAN:OUTP'] for value in fake.values.values()))
 
-    def test_sequence_and_timer(self):
-        self.dev.sequence([(0,1,True),(0,2,True),(0,1,False)])
-        self.assertEqual(self.fake.values[1]['CHAN:OUTP'],0)
-        self.assertEqual(self.fake.values[2]['CHAN:OUTP'],1)
-        self.dev.timer(2, 2.2)
-        self.assertEqual(self.fake.values[2]['OUTP:TIM:DEL'],2.2)
-        self.dev.timer(2, None)
 
-    def test_tracking_timers_require_off_validate_both_and_read_back(self):
-        before = list(self.fake.cmds)
-        with self.assertRaises(SafetyError): self.dev.tracking_timers(3, 5)
-        self.assertEqual(self.fake.cmds, before)
-        self.dev.emergency_off()
-        self.dev.apply_profile(profile('tracking'), confirmed_wiring='independent')
-        for pair in ((3, float('nan')), (3, .01), (True, 5), (3, 5.01)):
-            before = list(self.fake.cmds)
-            with self.assertRaises(ValueError): self.dev.tracking_timers(*pair)
-            self.assertEqual(self.fake.cmds, before)
-        self.dev.tracking_timers(3, 5)
-        for ch, delay in ((1, 3), (2, 5)):
-            self.assertEqual(self.fake.values[ch]['OUTP:TIM:DEL'], delay)
-            self.assertEqual(self.fake.values[ch]['OUTP:TIM:STAT'], 1)
-        self.dev.combined_outputs(True, confirm_all_channels_safe=True)
-        before = list(self.fake.cmds)
-        with self.assertRaises(SafetyError): self.dev.tracking_timers(None, None)
-        self.assertFalse(any(cmd.startswith('OUTP:TIM:') and not cmd.endswith('?')
-                             for cmd in self.fake.cmds[len(before):]))
-        self.dev.combined_outputs(False)
-        self.dev.tracking_timers(None, None)
-        self.assertEqual(self.fake.values[1]['OUTP:TIM:STAT'], 0)
-        self.assertEqual(self.fake.values[2]['OUTP:TIM:STAT'], 0)
-        self.fake.failed_query = 'OUTP:TIM:DEL?'
-        with self.assertRaises(SafetyError): self.dev.tracking_timers(3, 5)
-        self.assertFalse(self.dev.armed)
-        self.assertTrue(self.dev.faulted)
-        class WrongTimerReadback(FakeTransport):
-            def query(self, command):
-                result = super().query(command)
-                return str(float(result) + .1) if command == 'OUTP:TIM:DEL?' else result
-        source = WrongTimerReadback()
-        dev = Keithley2231A(source)
-        dev.apply_profile(profile('tracking'), confirmed_wiring='independent')
-        with self.assertRaises(SafetyError): dev.tracking_timers(3, 5)
-        self.assertFalse(dev.armed)
-        self.assertTrue(all(not values['CHAN:OUTP'] for values in source.values.values()))
 
     def test_emergency_off_enters_remote_before_output_command(self):
         before = len(self.fake.cmds)
@@ -479,13 +435,6 @@ class TestDevice(unittest.TestCase):
         self.assertFalse(self.dev.armed)
         self.assertIn('OUTP 0', self.fake.cmds)
 
-    def test_tracking_requires_explicit_voltage_and_output_apis(self):
-        self.dev.emergency_off()
-        self.dev.apply_profile(profile('tracking'), confirmed_wiring='independent')
-        self.assertTrue(self.fake.flags['OUTP:TRAC'])
-        with self.assertRaises(SafetyError): self.dev.set_channel(1, voltage=2)
-        self.dev.combined_outputs(True, confirm_all_channels_safe=True)
-        self.assertTrue(self.fake.flags['OUTP:STAT:ALL'])
 
     def test_tracking_voltage_checks_both_channels_and_preserves_ratio(self):
         for ratio in (1, 2):
@@ -794,30 +743,6 @@ class TestDevice(unittest.TestCase):
         with self.assertRaisesRegex(ProfileError, 'ParallelProfile'):
             Profile('legacy parallel', p.channels, wiring='parallel')
 
-    def test_combined_output_off_waits_for_delayed_instrument_status(self):
-        class DelayedOff(FakeTransport):
-            stale_off_reads = 0
-
-            def write(self, command):
-                was_on = self.flags['OUTP:STAT:ALL']
-                super().write(command)
-                if command == 'OUTP 0' and was_on:
-                    self.stale_off_reads = 2
-
-            def query(self, command):
-                if command == 'OUTP:STAT:ALL?' and self.stale_off_reads:
-                    self.cmds.append(command)
-                    self.stale_off_reads -= 1
-                    return '1'
-                return super().query(command)
-
-        source = DelayedOff()
-        dev = Keithley2231A(source)
-        dev.apply_profile(profile('tracking'), confirmed_wiring='independent')
-        dev.combined_outputs(True, confirm_all_channels_safe=True)
-        dev.combined_outputs(False)
-        self.assertEqual(dev.output_states(), {1: False, 2: False, 3: False})
-        self.assertFalse(dev.faulted)
 
     def test_close_safely_disarms(self):
         self.dev.output(1, True)

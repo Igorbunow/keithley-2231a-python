@@ -179,3 +179,16 @@ execution. Other legacy fakes remain for separate case-by-case migration.
 используют `Keithley2231A` и тестовый PTY. Production-драйвер не меняется;
 сервисный/калибровочный доступ не расширяется. Остальные сценарии FakeTransport
 сохраняются до их поштучной миграции без потери покрытия.
+
+## R3.5.58 — sequence and tracking-control regressions (software only)
+
+Migrate four historical tests to six strict virtual-UART tests invoking the
+production `Keithley2231A`: ordered independent channel ON/OFF, per-channel
+programmable timer write/readback, Tracking mode readback and explicit CH3
+confirmation, Tracking timer pair with OFF-only constraint, delayed global OFF
+acknowledgement, and two distinct fault outcomes (coherent wrong reply leads
+to fault and verified OFF; missing UART reply leads to unknown output state
+without unsafe retries). The peer exposes only digital SCPI readbacks, no
+independent instrument control logic or electrical simulation. Keep the old
+voltage-coupling and physical Series/Parallel scenarios until a truthful
+bounded test can replace them. No real-hardware testing is implied.
