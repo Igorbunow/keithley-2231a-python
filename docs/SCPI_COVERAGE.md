@@ -29,7 +29,7 @@
 | Common 5-2…5-6 | `*ESE / *ESE?` | **W** | R4.2: `status_enable_mask("standard_event")` reads `*ESE?` only; writing `*ESE` stays unsupported |
 | Common 5-2…5-6 | `*ESR?` | **W** | R4.2-B: `consume_status_event("standard_event", acknowledge_clear=True)`; destructive read, OFF-only, HW REVIEWED PASS EVENT 2026-10-29 (one-shot; clear effect not independently measured) |
 | Common 5-2…5-6 | `*IDN?` | **W** | `Keithley2231A.identity()` |
-| Common 5-2…5-6 | `*OPC / *OPC?` | **U** | Completion/query |
+| Common 5-2…5-6 | `*OPC / *OPC?` | **W** | R3.5.43 `operation_complete()` sends only `*OPC?` with idle/profile-free guard, strict `1`, **HW REVIEWED PASS** (one idle OFF-only `1` in 0.207 s, 2026-10-29); `*OPC` write unsupported; no guaranteed latency or event-latch preservation |
 | Common 5-2…5-6 | `*RST` | **R** | Сброс конфигурации может изменить условия безопасности |
 | Common 5-2…5-6 | `*SRE / *SRE?` | **W** | R4.2: `status_enable_mask("service_request")` reads `*SRE?` only; writing `*SRE` stays unsupported |
 | Common 5-2…5-6 | `*STB?` | **W** | `status_snapshot()` |
@@ -37,7 +37,7 @@
 | Common 5-2…5-6 | `*SAV` | **R** | Запись внутренней памяти |
 | Common 5-2…5-6 | `*RCL` | **R** | Восстановление внутренних уставок |
 | Common 5-2…5-6 | `*TST?` | **R** | Самотестирование; непроверенные побочные эффекты |
-| Common 5-2…5-6 | `*WAI` | **U** | Синхронизация очереди |
+| Common 5-2…5-6 | `*WAI` | **R** | Write-only wait barrier; DEFER: possible instrument queue stall and no reliable readback |
 | Common 5-2…5-6 | `*PSC / *PSC?` | **W** | R3.5.41 `power_on_status_clear_state()` queries `*PSC?` only (HW REVIEWED PASS 2026-10-29: one real `0` read, OFF-only); `*PSC` write and power-on effects remain untested/blocked |
 | APPLy 5-6…5-7 | `[SOUR:]APPLy / ?` | **R** | Многоканальная настройка с побочными эффектами |
 | APPLy 5-6…5-7 | `APPLy:VOLTage / ?` | **R** | Массовое изменение уставок |

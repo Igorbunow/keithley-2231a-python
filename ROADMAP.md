@@ -71,3 +71,14 @@ commands remain unsupported. **HW REVIEWED PASS** for the single OFF-only
 `*PSC? = 0` query on 2026-10-29; this does not test the power-on setting
 effect or nonzero enable masks. Protocol: `docs/R4_3_PSC_HARDWARE.ru.md`;
 independent [evidence review](docs/hardware_reports/R4_3_PSC_review_2026-10-29.md).
+
+
+#### R4.3-C (idle `*OPC?` query, R3.5.43)
+
+One narrowly guarded completion query for a fresh, profile-free session;
+`*WAI`/`*OPC` writes blocked. OFF-only hardware gate with finite serial timeout
+and full JSONL evidence has **HW REVIEWED PASS (bounded idle-only,
+2026-10-29)**: one `*OPC?=1` response in 0.207 s, six OFF readbacks,
+unchanged zero ESE/SRE masks. No general asynchronous timing,
+status latch preservation, or trigger verification is claimed. See
+[the independent review](docs/hardware_reports/R4_3_OPC_review_2026-10-29.md).

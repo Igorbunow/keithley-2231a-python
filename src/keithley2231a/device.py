@@ -1418,6 +1418,30 @@ class Keithley2231A:
                 raise SafetyError('Faulted/uncertain session cannot query *PSC?')
             return self._uint('*PSC?', maximum=1)
 
+    def operation_complete(self) -> bool:
+        """One bounded-by-transport ``*OPC?`` completion query, expecting ``1``.
+
+        Intended ONLY for an idle, unarmed, profile-free session. The query
+        may WAIT for outstanding instrument operations and so is NOT a
+        passive status snapshot. It does not authorize *OPC (write), *WAI,
+        triggering, reset, or status-event consumption. The caller supplies
+        a finite transport read timeout; a lost reply is terminal and no
+        retry or automatic OFF may be sent on the uncertain link.
+
+        This does not prove event-register preservation on all firmware.
+        """
+        with self._lock:
+            if self._faulted or self._link_uncertain:
+                raise SafetyError('Faulted/uncertain session cannot query *OPC?')
+            if (self._armed or self._profile is not None or
+                    self._sequencing or (self._profile_monitor_thread is not None and
+                    self._profile_monitor_thread.is_alive())):
+                raise SafetyError('*OPC? requires idle, profile-free, unarmed session')
+            response = self._query('*OPC?')
+            if re.fullmatch(r' *1 *', response) is None:
+                self._malformed_value('Unexpected *OPC? completion response')
+            return True
+
     def consume_status_event(self, register: str, *, acknowledge_clear: bool) -> int:
         """Explicitly consume one 8-bit event latch; may clear its contents.
 

@@ -636,3 +636,17 @@ Hardware status: **HW REVIEWED PASS** (2026-10-29) for the one-shot, OFF-only
 [independent review](docs/hardware_reports/R4_3_PSC_review_2026-10-29.md).
 This does **not** qualify the `*PSC` write, power-on clearing, power cycling,
 nonzero mask retention, SRQ, or any output-state mutation.
+
+
+### R4.3-C: idle completion `*OPC?` (bounded HW REVIEWED PASS)
+
+`psu.operation_complete()` returns `True` only after one successful `*OPC?=1`
+query in a profile-free/unarmed session. **It can block until pending operations
+complete**. The hardware-only runner `tools/r4_3_opc_qualify.py` enforces a
+serial read timeout <=3s and two physical OFF sweeps. Do not interpret this as
+a live profile watchdog, an event-register proof, or permission to issue `*WAI`
+or `*OPC` writes; see `docs/R4_3_OPC_HARDWARE.ru.md`.
+Hardware **HW REVIEWED PASS**, limited to one idle `*OPC?=1` response
+observed in 0.207 s on 2026-10-29. No pending-work, status-latch,
+execution-time bound or side-effect preservation claim. See the
+[independent review](docs/hardware_reports/R4_3_OPC_review_2026-10-29.md).

@@ -9,7 +9,7 @@ authorize use or establish firmware 1.04-1.04 compatibility for untested forms.
 
 | Vendor family | Contract risk | Current disposition / next condition |
 |---|---|---|
-| `*OPC?`, `*WAI` | Can wait for queued operations; completion semantics differ from status snapshots | **REVIEW** before any live query; specify timeout/interaction with the transport and concurrent guard first |
+| `*OPC?`, `*WAI` | Completion query can block or affect standard event status; WAI blocks later messages | **`*OPC?` QUERY-ONLY / HW REVIEWED PASS (one idle OFF-only `1`, 0.207 s, 2026-10-29)**: transport timeout <=3s, strict reply `1`, no retry; `*WAI` **DEFER** (write, no response, not a status snapshot) |
 | `*PSC?` / `*PSC` | Reads vs changes power-on state of status enable registers | `*PSC?` R3.5.41 query-only HW REVIEWED PASS (one `0` reply, OFF-only on 2026-10-29), 0/1 strict response; no `*PSC` write, power-cycle or default-value assumption |
 | `*TST?` | Self-test can have nontrivial execution time or effects | **DEFER**. Never run as routine health check until power/output behavior and shutdown/timeout protocol are reviewed |
 | `*RST`, `*CLS`, `STAT:PRES` | Reset/configuration changes or irreversible clearing of diagnostics | **BLOCKED** by default. `*CLS` and `STAT:PRES` must not be conflated with explicit R4.2 event consumption |
@@ -53,3 +53,23 @@ the absence of an outside controller. **HW REVIEWED PASS** for one OFF-only
 prove power-on clearing, retention of nonzero enable masks or SRQ behavior.
 See [independent review](hardware_reports/R4_3_PSC_review_2026-10-29.md)
 and [hardware procedure](R4_3_PSC_HARDWARE.ru.md).
+
+## R4.3-C *OPC? idle observational pilot (R3.5.43)
+
+`operation_complete()` uses exactly one `*OPC?`, returns True only for integer
+reply `1`, and requires a fresh, unarmed, profile-free and monitor-free driver
+session. The reference manual (§5 p.5-3) documents completion semantics but does
+not state an explicit maximum execution duration or unambiguous status-register
+side-effect split between `*OPC` and `*OPC?`. Therefore **do not assume pure
+read-only event preservation**, and never use this as a real-time watchdog.
+The OFF-only hardware stage caps the configured serial response timeout at
+3 seconds, checks all three channels and ESE/SRE before/after, and will not
+retry, send shutdown, or reconnect after a failed query. `*WAI` remains blocked;
+no trigger, queued-work, or pending-operation test is authorized.
+
+Observed on hardware: **HW REVIEWED PASS**, one idle `*OPC?=1` in 0.207 s;
+zero ESE/SRE before and after, six channel OFF readbacks. This is no proof
+of queued-operation synchronization, max latency, OPC bit behavior, or event-latch
+preservation. Review: [R4_3_OPC_review_2026-10-29.md](hardware_reports/R4_3_OPC_review_2026-10-29.md).
+
+Protocol: [R4_3_OPC_HARDWARE.ru.md](R4_3_OPC_HARDWARE.ru.md).
