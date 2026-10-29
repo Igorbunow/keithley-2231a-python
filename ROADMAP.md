@@ -97,3 +97,13 @@ status latch preservation, or trigger verification is claimed. See
 **OFFLINE SIMULATED ONLY**, никакой связи с Keithley, никаких live-команд
 калибровки. Реальный сервисный gateway остаётся отдельным будущим этапом
 после проверки документации, внешней авторизации и метрологической методики.
+
+### R4.3-G / R3.5.48 — offline service authority model
+
+The offline service session now has fake normal/service exclusivity, a unique
+per-action permit bound to full profile/serial/plan/synthetic-fixture hashes,
+explicit action approval and terminal fail-closed behavior on changes or faults.
+Only a FakeBench is accepted; `HW NOT_RUN` and **real service execution remains
+blocked**. Remaining before any live gateway: real exclusive device ownership,
+trustworthy operator authorization, independent evidence, exact vendor service
+procedure and external calibrated measurement hardware.

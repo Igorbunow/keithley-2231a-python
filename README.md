@@ -682,3 +682,14 @@ execution-time bound or side-effect preservation claim. See the
 не доступны**. См. `docs/R4_3_SERVICE_MODE.ru.md`. Для опасных операций,
 особенно `CAL:*`, не используйте эти планы без необходимости: они не
 являются проверенной заводской методикой калибровки.
+
+### R3.5.48 — fake service-session authorization (no hardware)
+
+`service_authority_offline.OfflineServiceAuthority` adds an **offline-only**
+per-plan, one-shot service authorization model. It separates fake normal/service
+ownership, binds each simulated action to the exact service-profile file,
+serial, parameters, synthetic OFF/idle fixture and typed SCPI-plan SHA256,
+then rechecks them before the fake gateway. Any error latches a terminal
+unknown state. This is **not a physical serial-port lock, user authentication,
+calibration validation or permission to operate a PSU**. See the service guide;
+**do not use dangerous service commands unless necessary**.
