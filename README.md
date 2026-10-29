@@ -308,9 +308,21 @@ and it is written only after Parallel mode is selected while outputs remain OFF.
 On the observed firmware, Parallel disables the pair's hardware voltage-limit
 enable. `max_voltage` is therefore enforced by the library as a software cap,
 not hardware OVP. `combined_outputs(True, confirm_all_channels_safe=True)` is a
-global ON and also energizes CH3. H10 OFF behavior is HW OBSERVED; powered
-Parallel remains unqualified. Simulations do not establish terminal current
-sharing or physical protection behavior.
+global ON and also energizes CH3. H10 OFF, low-current CV/CC, and
+high-current CV (~3 A)/CC (4 A) have been HW OBSERVED in separately gated runs;
+these do not establish individual channel current sharing or hardware OVP.
+
+H10 CLI dispatch (R3.5.26): without a subgroup flag, `preflight H10` or
+`run H10 --dry-run` previews all three stages; `run H10 --execute` runs
+OFF diagnostic → low-current CV/CC → high-current CV3A/CC4A sequentially.
+Each stage has its own fresh USB/bench, wiring, display, and final-OFF gates;
+physical reconfiguration is manual and only at verified OFF. The isolated
+`--off-only` command completes successfully with `PARTIAL` *scope* evidence;
+`--powered` and `--high-current` select the other isolated stages. The full
+command requires all three new stage records, otherwise it stops and never
+runs later powered stages. This command includes 4 A and MUST NOT be treated
+as an automatic, unattended bench run. No qualification is promoted without
+manual review of the generated evidence.
 
 ## Installation and offline tests
 
@@ -531,3 +543,27 @@ hardware approval or re-energizing follows from an offline PASS.
 ### R3.5.15 H05 guard refinement
 
 For the fixed H05 1 V power_only run, the runner now checks KEL103 and Keithley live U/I/P, demands positive KEL103 OFF readback, and verifies a real 0-to-1 V excursion rather than accepting small relative-only scope edges. Evidence logging and scope-open failures cannot suppress PSU/load shutdown attempts. The physical common-return/oscilloscope-ground wiring and all setpoints are unchanged. See `docs/H05_PREFLIGHT.ru.md`.
+
+
+### R3.5.29 — O01 host-timed DMM observer (offline-only)
+
+The experimental `TimedVoltageObserver` / `coordinated_voltage_sweep` reuse the
+existing guarded sweep and emergency OFF. They record source-to-DMM host-clock
+intervals and validate CSV, but **do not synchronize instrument conversions**
+and have no approved hardware-run CLI. [O01 scope and safety (RU)](docs/O01_COORDINATOR_OFFLINE.ru.md).
+
+
+### R3.5.30 — O01 stage-preparation, NO hardware permission
+
+The bounded `tests/hardware/o01_stage.py` pilot reuses the existing O01 coordinator,
+DMM7510 SCPI adapter and shared PSU safety dispatcher. `preflight O01` / `run O01`
+without `--execute` now prints the wiring, scope and operator confirmation plan.
+**`run O01 --execute` refuses before any USB/LAN enumeration or port open** until
+the pilot's independently reviewed offline trace and physical procedure are approved.
+See [O01 stage card](docs/O01_STAGE_PREFLIGHT.ru.md). No O01 hardware PASS is claimed.
+
+
+O01: ограниченный интерактивный аппаратный пилот с независимым DMM7510:
+`python3 tools/hw_qualify.py preflight O01 --config config/bench.local.toml`,
+после проверки схемы `python3 tools/hw_qualify.py run O01 --config config/bench.local.toml --execute --allow-o01-on`.
+Без `--allow-o01-on` порты не открываются. См. `docs/O01_STAGE_PREFLIGHT.ru.md`.

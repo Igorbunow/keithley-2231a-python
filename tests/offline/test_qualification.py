@@ -252,6 +252,8 @@ class TestQualification(unittest.TestCase):
         card = output.getvalue()
         self.assertEqual(result, 0)
         self.assertIn('CR 0.50 Ω', card)
+        self.assertIn('CR 1.00 Ω', card)
+        self.assertIn('CV', card)
         self.assertIn('4.00 A', card)
         self.assertIn('8 W', card)
         self.assertIn('AWG 10', card)
@@ -308,9 +310,20 @@ class TestQualification(unittest.TestCase):
             live = True
             def __init__(self, source):
                 self.source, self.state, self.resistance, self.closed = source, 'OFF', None, False
+                self.configured_resistances = []
                 source.load = self
             def input_state(self): return self.state
             def configure_cr(self, resistance):
+                # Use the production KEL103 policy, not an unbounded test-only CR mock.
+                from equipment.kel103 import KEL103Serial
+                if (resistance not in KEL103Serial.VERIFIED_RESISTANCES or
+                        f':RES {resistance:g}OHM' not in KEL103Serial.WRITE_COMMANDS):
+                    raise ValueError('KEL103 resistance not approved for qualification')
+                # The next CR is forbidden until both PSU and KEL are verified OFF.
+                if self.configured_resistances:
+                    assert self.state == 'OFF'
+                    assert self.source.flags['OUTP:STAT:ALL'] == 0
+                self.configured_resistances.append(resistance)
                 self.resistance = resistance
                 return resistance
             def set_input(self, enabled): self.state = 'ON' if enabled else 'OFF'
@@ -345,20 +358,64 @@ class TestQualification(unittest.TestCase):
             self.assertEqual(outcome, 'PASS', '\n'.join(
                 line for line in evidence.path.read_text().splitlines()
                 if 'stage_error' in line or 'query_outcome' in line))
-            self.assertEqual(observed, ['CONFIRM H10 DISPLAY PSU=CC4A KEL=CR INPUT=ON',
+            self.assertEqual(observed, ['CONFIRM H10 DISPLAY PSU=CV3A KEL=CR INPUT=ON',
+                                        'CONFIRM H10 DISPLAY PSU=CC4A KEL=CR INPUT=ON',
                                         h10_powered_stage.FINAL_TOKEN])
             self.assertEqual(source.flags['OUTP:PARALLEL'], 0.)
             self.assertEqual(source.flags['OUTP:STAT:ALL'], 0.)
             self.assertEqual(load.state, 'OFF')
+            self.assertEqual(load.configured_resistances, [1.0, .5])
             self.assertTrue(source.closed and load.closed and meter.closed)
             records = [json.loads(line) for line in evidence.path.read_text().splitlines()]
             samples = [r for r in records if r['event'] == 'parallel_measurement_sample']
-            self.assertEqual(len(samples), 4)
+            self.assertEqual(len(samples), 8)
+            cv = samples[:4]
+            cc = samples[4:]
+            self.assertTrue(all(r['point'] == 'CV3A' and r['resistance_ohm'] == 1.0
+                                and 2.7 <= r['kel_current_a'] <= 3.2
+                                and 7.0 <= r['kel_power_w'] <= 10.0 for r in cv))
             self.assertTrue(all(r['point'] == 'CC4A' and r['resistance_ohm'] == .5
                                 and 3.9 <= r['kel_current_a'] <= 4.1
-                                and 7.0 <= r['kel_power_w'] <= 9.0 for r in samples))
+                                and 7.0 <= r['kel_power_w'] <= 9.0 for r in cc))
             self.assertIn('CURR 4.000', source.cmds)
+            self.assertEqual(source.cmds.count('OUTP 1'), 2)
+            first_on = source.cmds.index('OUTP 1')
+            first_off = source.cmds.index('OUTP 0', first_on)
+            second_on = source.cmds.index('OUTP 1', first_off)
+            self.assertLess(first_on, first_off)
+            self.assertLess(first_off, second_on)
+            self.assertEqual([r['point'] for r in records
+                if r['event'] == 'operator_display_review'], ['CV3A', 'CC4A'])
             self.assert_driver_path(evidence, source)
+
+    def test_h10_high_current_mismatched_cv_stops_before_cc(self):
+        import h10_powered_stage
+        from test_driver import FakeTransport
+        from keithley2231a import SafetyError
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H10')
+            trace = []
+            def bad_cv(dev, load, meter, report, mode, resistance, current, **kwargs):
+                trace.append((mode, resistance))
+                raise SafetyError('injected CV meter disagreement')
+            with patch.object(h10_powered_stage, '_point', side_effect=bad_cv), \
+                 patch.object(h10_powered_stage, 'finish_combined_powered', return_value='FAIL'):
+                source = FakeTransport()
+                class Load:
+                    port = '/dev/ttyACM0'
+                    live = True
+                    def input_state(self): return 'OFF'
+                    def close(self): pass
+                class Meter:
+                    live = True
+                    def configure_voltage(self, range_v=10): pass
+                    def close(self): pass
+                terminal = io.StringIO()
+                with contextlib.redirect_stdout(terminal):
+                    result = h10_powered_stage.h10_high_current(source, evidence, Load(), Meter())
+            self.assertIn('injected CV meter disagreement', terminal.getvalue())
+            self.assertEqual(result, 'FAIL')
+            self.assertEqual(trace, [('CV3A', 1.0)])
 
     def test_h09_powered_runner_reuses_driver_for_cv_cc_and_restores_all_off(self):
         import h09_powered_stage
@@ -1387,6 +1444,24 @@ class TestQualification(unittest.TestCase):
         before = list(fake.sent)
         with self.assertRaises(ValueError): load.configure_cr(.4)
         self.assertEqual(fake.sent, before)
+
+        # R3.5.25 regression: H10 CV3A must be accepted by the *real* serial
+        # driver, with a verified CR readback and OFF before switching to CC4A.
+        two_points = SerialFake((b'OFF\n', b'CR\n', b'CR\n', b'1.000OHM\n',
+                                 b'OFF\n', b'ON\n', b'OFF\n',
+                                 b'OFF\n', b'CR\n', b'CR\n', b'0.500OHM\n'))
+        load = KEL103Serial('/dev/ttyACM0', expected_vid=0x0416, expected_pid=0x5011,
+                            baudrate=115200, serial_port=two_points)
+        self.assertEqual(load.configure_cr(1.0), 1.0)
+        load.set_input(True)
+        load.set_input(False)
+        self.assertEqual(load.configure_cr(0.5), 0.5)
+        self.assertEqual(two_points.sent, [
+            b':INP?\n', b':FUNC CR\n', b':FUNC?\n', b':RES 1OHM\n', b':FUNC?\n', b':RES?\n',
+            b':INP?\n', b':INP ON\n', b':INP?\n',
+            b':INP OFF\n', b':INP?\n',
+            b':INP?\n', b':FUNC CR\n', b':FUNC?\n', b':RES 0.5OHM\n', b':FUNC?\n', b':RES?\n',
+        ])
 
         active = SerialFake((b'ON\n',))
         load = KEL103Serial('/dev/ttyACM0', expected_vid=0x0416, expected_pid=0x5011, baudrate=115200, serial_port=active)

@@ -118,9 +118,14 @@ class TestH11FailClosed(unittest.TestCase):
             def successful_sweep(dev, *args, csv_path, **kwargs):
                 dev.output(1, True)
                 points = [SimpleNamespace(index=index, requested_v=requested,
+                                          timestamp_utc=f'2026-10-29T01:06:{40+index}.000000+00:00',
+                                          monotonic_s=1000. + index,
                                           measured_v=actual, measured_a=current,
                                           measured_w=actual * current,
-                                          regulation=state, external={})
+                                          regulation=state, external={
+                                              'kel_current_a':current,
+                                              'kel_power_w':actual * current,
+                                              'kel_voltage_v':actual})
                           for index, (requested, actual, current, state) in enumerate((
                               (.50, .50, .012, 'CV'),
                               (1.0, 1.0, .024, 'CV'),
@@ -128,11 +133,17 @@ class TestH11FailClosed(unittest.TestCase):
                               (2.0, 1.63, .040, 'CC')), start=1)]
                 dev.output(1, False)
                 with csv_path.open('w', newline='', encoding='utf-8') as stream:
-                    writer = csv.DictWriter(stream, fieldnames=('requested_v', 'regulation'))
-                    writer.writeheader()
+                    writer = csv.writer(stream)
+                    writer.writerow(('index', 'requested_v', 'timestamp_utc',
+                        'monotonic_s', 'measured_v', 'measured_a', 'measured_w',
+                        'regulation', 'kel_current_a', 'kel_power_w', 'kel_voltage_v'))
                     for point in points:
-                        writer.writerow(dict(requested_v=point.requested_v,
-                                             regulation=point.regulation))
+                        writer.writerow((point.index, point.requested_v,
+                            point.timestamp_utc, point.monotonic_s, point.measured_v,
+                            point.measured_a, point.measured_w, point.regulation,
+                            point.external['kel_current_a'],
+                            point.external['kel_power_w'],
+                            point.external['kel_voltage_v']))
                 return points
 
             with (patch('h11_stage.voltage_sweep', side_effect=successful_sweep),

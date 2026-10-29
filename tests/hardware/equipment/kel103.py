@@ -17,10 +17,10 @@ class _KEL103Core:
     READ_COMMANDS = frozenset(('*IDN?', ':INP?', ':FUNC?', ':RES?',
                                ':MEAS:VOLT?', ':MEAS:CURR?', ':MEAS:POW?'))
     WRITE_COMMANDS = frozenset((':FUNC CR', ':INP ON', ':INP OFF',
-                                ':RES 0.5OHM', ':RES 5OHM', ':RES 11OHM', ':RES 12OHM', ':RES 22OHM',
+                                ':RES 0.5OHM', ':RES 1OHM', ':RES 5OHM', ':RES 11OHM', ':RES 12OHM', ':RES 22OHM',
                                 ':RES 30OHM', ':RES 40OHM', ':RES 47OHM', ':RES 56OHM',
                                 ':RES 1600OHM', ':RES 2000OHM'))
-    VERIFIED_RESISTANCES = (0.5, 5.0, 11.0, 12.0, 22.0, 30.0, 40.0, 47.0, 56.0,
+    VERIFIED_RESISTANCES = (0.5, 1.0, 5.0, 11.0, 12.0, 22.0, 30.0, 40.0, 47.0, 56.0,
                             1600.0, 2000.0)
 
 

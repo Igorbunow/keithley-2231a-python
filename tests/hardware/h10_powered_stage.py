@@ -40,9 +40,9 @@ def high_current_approval_token(meter_host=None, load_serial_port=None):
     if load_serial_port is None: load_serial_port = bench.load.port
     return (f'CONFIRM H10 HIGH_CURRENT PARALLEL ALL_OFF '
             f'JUMPERS=CH1+->CH2+_CH1-->CH2-_10AWG '
-            f'LOAD=KEL103_USB={load_serial_port} CR=0.50 LOAD_LEADS=10AWG '
+            f'LOAD=KEL103_USB={load_serial_port} CR=1.00,0.50 LOAD_LEADS=10AWG '
             f'DMM7510={meter_host}:{current_bench().meter.network_port} FRONT=DCV10 CH3=OPEN RECALL=OFF '
-            'V=3.00 I=4.00 ICAP=4.50 POWER<=10W')
+            'V=3.00 I=4.00 ICAP=4.50 POWER<=10W CV3A_THEN_CC4A')
 
 
 def preflight(port, meter_host=None, load_serial_port=None,
@@ -60,16 +60,20 @@ def preflight(port, meter_host=None, load_serial_port=None,
         print(f'Keithley: {port}, USB–TTL 8N1 (скорость из bench config). KEL103 USB: {load_serial_port}, '
               '8N1 (скорость из bench config). DMM7510: '
               f'{meter_host}:{current_bench().meter.network_port} raw TCP, SCPI, front terminals, DCV 10 V, NPLC 1.\n'
-              'Высокотоковая точка H10, отдельный разрешённый прогон. До подключения: '
+              'Высокотоковые точки CV/CC H10, отдельный разрешённый прогон. До подключения: '
               'Keithley CH1/CH2/CH3 OFF, KEL103 INPUT OFF, Output Recall OFF; сетевой '
               'выключатель Keithley доступен. Осциллограф, общая шина и прежние перемычки сняты.\n'
               'При всех выходах OFF соединить короткими изолированными проводами AWG 10 '
               'CH1+↔CH2+ и CH1−↔CH2−. Подключить KEL103 INPUT+/- к общей паре, используя '
               'подтверждённые кабели AWG 10. DMM7510 FRONT HI/LO подключить поперёк пары, '
               'режим DCV 10 V, NPLC 1; задние клеммы не использовать. CH3 оставить открытым.\n'
-              'Runner задаст 3.00 V и 4.00 A, программный cap пары 4.00 V / 4.50 A, '
-              'нагрузку KEL103 CR 0.50 Ω; ожидается примерно 2.00 V / 4.00 A / 8 W. '
-              'Остановочный предел измеренной мощности — 10 W. Режим ожидается CC. '
+              'Runner задаст 3.00 V и 4.00 A, программный cap пары 4.00 V / 4.50 A. '
+              'Сначала CV: KEL103 CR 1.00 Ω, ожидается примерно 3.00 V / 3.00 A / 9 W. '
+              'После раздельных подтверждённых PSU OFF и KEL INPUT OFF — CC: '
+              'KEL103 CR 0.50 Ω, ожидается примерно 2.00 V / 4.00 A / 8 W. '
+              'Остановочный предел измеренной мощности для ОБЕИХ точек — 10 W. '
+              'Критерий 10 W проверяется по измерению, не является аппаратным ограничителем. '
+              'При ошибке или неожиданном режиме запуск не продолжается. '
               'Аппаратный voltage-limit пары в наблюдавшейся конфигурации отключён: '
               '4.00 V — только программный предел. Измерения суммарные и не проверяют '
               'распределение тока между ветвями. Не менять проводку при включённом PSU.\n'
@@ -148,7 +152,7 @@ def _parallel_profile():
 def _high_current_profile():
     return ParallelProfile('H10 separately gated 4 A Parallel point', 4.00, 4.500,
                            3.00, 4.000, ChannelProfile(4.00, .500, 0.00, .100),
-                           expected_regulation='cc', lock_front_panel=False,
+                           expected_regulation='auto', lock_front_panel=False,
                            verify_every_s=3600.0)
 
 
@@ -204,8 +208,11 @@ def _point(dev, load, meter, evidence, mode, resistance, current, *,
                    kel['kel103_voltage_v'] * kel['kel103_current_a']) > .20:
                 raise SafetyError('KEL103 power disagrees with measured V×I')
         wanted_mode = (regulation_mode or mode).upper()
-        if source.regulation not in (wanted_mode, 'UNKNOWN'):
-            raise SafetyError(f'Parallel regulation mismatch: expected {mode}, got {source.regulation}')
+        # A numeric V/I match cannot certify CV or CC if status is ambiguous.
+        # The previous UNKNOWN allowance could silently promote an uncertain
+        # instrument status to hardware PASS after the operator gate.
+        if source.regulation != wanted_mode:
+            raise SafetyError(f'Parallel regulation mismatch: expected {wanted_mode}, got {source.regulation}')
         row = {'sample': number, 'psu_voltage_v': source.voltage_v,
                'psu_current_a': source.current_a, 'psu_regulation': source.regulation,
                'kel_voltage_v': kel['kel103_voltage_v'],
@@ -232,7 +239,7 @@ def h10_powered(transport, evidence, load, meter):
 
 
 def h10_high_current(transport, evidence, load, meter):
-    """Run the separately gated 4 A H10 Parallel point through the same driver path."""
+    """Run separately gated high-current Parallel CV (~3 A) and CC (4 A)."""
     return _run_parallel_powered(transport, evidence, load, meter, high_current=True)
 
 
@@ -264,6 +271,22 @@ def _run_parallel_powered(transport, evidence, load, meter, *, high_current):
         require_outputs(dev)
 
         if high_current:
+            _point(dev, load, meter, evidence, 'CV3A', 1.00, 4.000,
+                   voltage=3.00, max_power_w=10.0, current_tolerance_a=.10,
+                   expected_current_a=(2.70, 3.20), expected_voltage_v=(2.70, 3.10),
+                   regulation_mode='CV')
+            operator_gate('CONFIRM H10 DISPLAY PSU=CV3A KEL=CR INPUT=ON',
+                          'Сверьте дисплей Keithley: Parallel/CV, около 3.00 V и 3.00 A. '
+                          'KEL103: CR 1.00 Ω, INPUT ON; мощность не выше 10 W. '
+                          'Ожидайте отдельной команды OFF перед изменением сопротивления.',
+                          io, powered_timeout_s=120)
+            evidence.add('operator_display_review', point='CV3A', outcome='confirmed')
+            dev.combined_outputs(False)
+            require_outputs(dev)
+            load.set_input(False)
+            if load.input_state() != 'OFF':
+                raise SafetyError('KEL103 INPUT OFF unconfirmed between H10 high-current points')
+
             _point(dev, load, meter, evidence, 'CC4A', .50, 4.000,
                    voltage=3.00, max_power_w=10.0, current_tolerance_a=.10,
                    expected_current_a=(3.75, 4.25), expected_voltage_v=(1.70, 2.30),
@@ -305,13 +328,18 @@ def _run_parallel_powered(transport, evidence, load, meter, *, high_current):
         dev.apply_profile(_safe_profile(), confirmed_wiring='independent')
         require_outputs(dev)
         dev.diagnostic_write('SYST:LOC')
-        outcome, reason = 'PASS', ('external Parallel 4 A CC point passed' if high_current else
+        outcome, reason = 'PASS', ('external Parallel high-current CV 3 A and CC 4 A points passed' if high_current else
                                    'bounded external Parallel CV and CC points passed')
     except BaseException as exc:
         outcome = ('ABORTED' if not io.live or not getattr(load, 'live', True) or
                    isinstance(exc, (OSError, TimeoutError, KeyboardInterrupt,
                                     InterruptedError, EOFError)) else 'FAIL')
         reason = f'H10 powered stopped: {type(exc).__name__}: {exc}; verify all outputs OFF'
+        try:
+            print(f'{outcome}: {reason}')
+        except OSError:
+            # Console failure must never interfere with electrical shutdown.
+            pass
         try:
             evidence.add('stage_error', exception_type=type(exc).__name__, message=str(exc),
                          psu_live=io.live, load_live=getattr(load, 'live', True))
@@ -340,7 +368,7 @@ def _run_parallel_powered(transport, evidence, load, meter, *, high_current):
         outcome = finish_combined_powered(
             dev, io, load, meter, transport, evidence, outcome=outcome,
             reason=reason, recover_independent=recover_independent,
-            scope=('external Parallel; CC 4.000 A / CR0.50; approx. 2 V / 8 W; <=10 W'
+            scope=('external Parallel; CV approx. 3 A / CR1.00 and CC 4.000 A / CR0.50; <=10 W each'
                    if high_current else
                    'external Parallel; CV 3 V / CR30 and CC 0.300 A / CR5; <=1 W'))
     return outcome

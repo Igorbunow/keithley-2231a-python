@@ -55,7 +55,8 @@ def preflight(port, load_serial_port=None, load_transport=None):
           'CH1+ с KEL103 INPUT+, CH1− с INPUT− короткими проводами. CH2/CH3 оставить '
           'свободными. Runner настроит CR 40 Ω. Пройдёт лестница 0.50, 1.00, 1.50, '
           '2.00 V с лимитом тока 0.040 A и остановкой при CC. Ожидаемая мощность '
-          'не выше 0.064 W; нагрузка должна показать переход CV→CC около последней точки. '
+          'порядка 0.06–0.07 W, с проверяемым пределом KEL103 0.10 W; '
+          'нагрузка должна показать переход CV→CC около последней точки. '
           'Будут сверены монотонность I–V, показания KEL103, CSV и очередь ошибок.\n'
           'После автоматического OFF отключить KEL103 от CH1, оставить все выходы OFF и '
           'подтвердить финальную проверку. При ошибке не переставлять провода и не '
@@ -91,6 +92,76 @@ class H11Scope(StageAdapter):
 def _check(condition, detail):
     if not condition:
         raise SafetyError(f'H11 verification failed: {detail}')
+
+
+def verify_h11_load_sample(source, voltage_v, current_a, power_w):
+    """Require CR40 physics and cross-instrument agreement, not mere finite data.
+
+    The old 25 mA current and 100 mW power tolerances could accept grossly
+    incorrect readings on this 40 mA/70 mW sweep. These bounded tolerances
+    allow the actual 2026-10-29 hardware readings, including the observed
+    ~1.6 mA source/load offset at the 0.5 V point.
+    """
+    values = (source.voltage_v, source.current_a, source.power_w,
+              voltage_v, current_a, power_w)
+    _check(all(isinstance(v, (int, float)) and not isinstance(v, bool)
+               and math.isfinite(v) and v >= 0 for v in values),
+           'invalid source or KEL103 numeric measurement')
+    _check(abs(source.power_w - source.voltage_v * source.current_a) <= .0005,
+           'Keithley U/I/P inconsistent')
+    _check(abs(voltage_v - source.voltage_v) <= .025,
+           'Keithley/KEL103 voltage disagreement')
+    _check(abs(current_a - source.current_a) <=
+           max(.003, .08 * max(current_a, source.current_a)),
+           'Keithley/KEL103 current disagreement')
+    _check(abs(current_a - voltage_v / 40.) <=
+           max(.002, .08 * (voltage_v / 40.)),
+           'KEL103 current inconsistent with CR 40 ohm')
+    _check(abs(power_w - voltage_v * current_a) <=
+           max(.0005, .025 * voltage_v * current_a),
+           'KEL103 reported power inconsistent with U*I')
+    _check(abs(power_w - source.power_w) <=
+           max(.003, .10 * max(power_w, source.power_w)),
+           'Keithley/KEL103 cross-power disagreement')
+    _check(power_w <= .10, 'H11 load power exceeds 0.10 W')
+
+
+def verify_h11_csv(csv_path, points):
+    """Reparse every CSV field and require equality with the measured points.
+
+    A four-row CSV with only correct requested voltages and final CC used to
+    count as verified even if it contained altered/missing measured values.
+    """
+    numeric_columns = ('index', 'requested_v', 'monotonic_s', 'measured_v',
+                       'measured_a', 'measured_w', 'kel_current_a',
+                       'kel_power_w', 'kel_voltage_v')
+    fields = ('index', 'requested_v', 'timestamp_utc', 'monotonic_s',
+              'measured_v', 'measured_a', 'measured_w', 'regulation',
+              'kel_current_a', 'kel_power_w', 'kel_voltage_v')
+    with csv_path.open(newline='', encoding='utf-8') as stream:
+        reader = csv.DictReader(stream)
+        _check(tuple(reader.fieldnames or ()) == fields, 'CSV columns mismatch')
+        rows = list(reader)
+    _check(len(rows) == len(points), 'CSV row count mismatch')
+    for point, row in zip(points, rows):
+        _check(None not in row and None not in row.values(), 'CSV missing/extra fields')
+        _check(row['timestamp_utc'] == point.timestamp_utc and
+               row['regulation'] == point.regulation,
+               f'CSV timestamp or regulation mismatch at {point.index}')
+        expected = {'index': point.index, 'requested_v': point.requested_v,
+                    'monotonic_s': point.monotonic_s,
+                    'measured_v': point.measured_v, 'measured_a': point.measured_a,
+                    'measured_w': point.measured_w, **point.external}
+        for col in numeric_columns:
+            try:
+                actual = float(row[col])
+                target = float(expected[col])
+            except (ValueError, TypeError, KeyError) as exc:
+                raise SafetyError(f'CSV nonnumeric or absent {col} at {point.index}') from exc
+            _check(math.isfinite(actual) and
+                   math.isclose(actual, target, rel_tol=1e-12, abs_tol=1e-12),
+                   f'CSV {col} disagrees with measurement at {point.index}')
+    return len(rows)
 
 
 def profile_evidence(profile):
@@ -159,11 +230,7 @@ def h11(transport, evidence, load):
             v, i, p = (kel[key] for key in ('kel103_voltage_v',
                                              'kel103_current_a',
                                              'kel103_power_w'))
-            if not all(math.isfinite(x) and x >= 0 for x in (v, i, p)):
-                raise SafetyError('Nonfinite KEL103 measurement')
-            if (abs(v - source.voltage_v) > .08 or abs(i - source.current_a) > .025 or
-                    abs(p - v * i) > .10 or p > .10):
-                raise SafetyError('H11 source/KEL103 readings or power bound disagree')
+            verify_h11_load_sample(source, v, i, p)
             return {'kel_voltage_v': v, 'kel_current_a': i, 'kel_power_w': p}
 
         points = voltage_sweep(dev, 1, VOLTAGES, current_limit_a=CURRENT_LIMIT_A,
@@ -182,19 +249,17 @@ def h11(transport, evidence, load):
         _check(all(a.measured_v < b.measured_v
                    for a, b in zip(points[:-1], points[1:])),
                'measured voltage must increase through the CC transition')
-        with csv_path.open(newline='', encoding='utf-8') as stream:
-            rows = list(csv.DictReader(stream))
-        _check(len(rows) == len(points), 'CSV row count mismatch')
-        _check(rows[-1]['regulation'] == 'CC', 'CSV does not include the CC stop point')
-        _check(all(abs(float(row['requested_v']) - point.requested_v) < 1e-9
-                   for row, point in zip(rows, points)), 'CSV requested-voltage mismatch')
+        csv_rows = verify_h11_csv(csv_path, points)
         for point in points:
             evidence.add('iv_measurement', index=point.index,
                          requested_v=point.requested_v,
+                         sample_timestamp_utc=point.timestamp_utc,
+                         sample_monotonic_s=point.monotonic_s,
                          measured_v=point.measured_v, measured_a=point.measured_a,
                          measured_w=point.measured_w, regulation=point.regulation,
                          external=point.external)
-        evidence.add('csv_verified', path=str(csv_path), rows=len(rows))
+        evidence.add('csv_verified', path=str(csv_path), rows=csv_rows,
+                     checked_fields=11)
         require_outputs(dev)
         load.set_input(False)
         if load.input_state() != 'OFF':

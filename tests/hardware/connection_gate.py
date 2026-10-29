@@ -14,11 +14,11 @@ _NAMES = {'psu': 'Keithley 2231A', 'load': 'KEL103',
 
 def required_devices(stage_id: str, *, recall=False, powered=False, high_current=False):
     """All connections which a stage may open, including nested adapters."""
-    if stage_id not in {f'H{x:02}' for x in range(1, 13)} | {'H04P'}:
+    if stage_id not in {f'H{x:02}' for x in range(1, 13)} | {'H04P', 'O01'}:
         raise ValueError(f'unknown qualification stage: {stage_id}')
     if stage_id == 'H05':
         return ('psu', 'load', 'scope')
-    if stage_id == 'H08':
+    if stage_id in ('H08', 'O01'):
         return ('psu', 'meter')
     if stage_id in ('H09', 'H10') and (powered or high_current):
         return ('psu', 'load', 'meter')

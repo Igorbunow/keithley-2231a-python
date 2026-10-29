@@ -163,7 +163,7 @@ def open_meter(host, evidence):
 def preflight(test_id, port=None, load_host=None, load_port=None, start_channel=1,
               load_transport=None, load_serial_port=None, diagnose_status=False,
               load_connected=False, recall=False, meter_host=None, powered=False,
-              high_current=False, profile_only=False):
+              high_current=False, profile_only=False, off_only=False):
     """Print a human-readable card; never contact hardware."""
     bench = current_bench()
     if port is None: port = bench.psu.port
@@ -180,9 +180,27 @@ def preflight(test_id, port=None, load_host=None, load_port=None, start_channel=
     print(bench_summary(bench))
     row = stages()[test_id]
     if test_id == 'H10':
+        if not (powered or high_current or off_only):
+            print('[H10 FULL] OFF diagnostic → low-power CV/CC → high-current CV3A/CC4A.')
+            print('Одна CLI-команда, три независимых допуска и три отдельных evidence; '
+                  'каждый этап заканчивается подтверждённым OFF. Между этапами — '
+                  'физическое переподключение ТОЛЬКО при OFF, после отдельного подтверждения оператора.')
+            print('OFF-диагностика штатно возвращает PARTIAL; FULL PASS допустим '
+                  'только после её успешного завершения и двух powered PASS.')
+            for title, opts in (('OFF diagnostic', {'off_only': True}),
+                                ('low-current CV/CC', {'powered': True}),
+                                ('high-current CV3A/CC4A', {'high_current': True})):
+                print(f'\n--- H10 FULL / {title} ---')
+                preflight(test_id, port, load_host, load_port, start_channel,
+                          load_transport, load_serial_port, diagnose_status,
+                          load_connected, recall, meter_host,
+                          powered=opts.get('powered', False),
+                          high_current=opts.get('high_current', False),
+                          off_only=opts.get('off_only', False))
+            return
         if powered or high_current:
             from h10_powered_stage import preflight as h10_preflight
-            print('[H10-High-Current] Parallel — отдельная gated-точка 4 A / 8 W'
+            print('[H10-High-Current] Parallel — отдельные gated-точки CV ~3 A / CC 4 A'
                   if high_current else
                   '[H10-Powered] Parallel — low-power CV/CC с внешними измерителями')
             h10_preflight(port, meter_host, load_serial_port, load_transport,
@@ -208,6 +226,10 @@ def preflight(test_id, port=None, load_host=None, load_port=None, start_channel=
         return
     if not (test_id == 'H02' and profile_only):
         print(f'[{test_id}] {row[0]}\nТопология/нагрузка: {row[1]}\nКритерий: {row[2]}')
+    if test_id == 'O01':
+        from o01_stage import preflight as o01_preflight
+        o01_preflight(port, meter_host)
+        return
     if test_id == 'H08':
         from h08_stage import preflight as h08_preflight
         h08_preflight(port, meter_host)
@@ -677,7 +699,173 @@ def validate_h03_checkpoint(path, start_channel):
     print(f'H03 checkpoint accepted: reviewed {len(expected)} prior points; prior log retained.')
 
 
-def main(argv=None):
+H10_FULL_TOKEN = ('CONFIRM H10 FULL SEQUENTIAL OFF_THEN_POWERED_THEN_HIGH_CURRENT '
+                  'SEPARATE_GATES NO_AUTOMATIC_REWIRING STOP_ON_FAILURE')
+H10_FULL_GROUPS = (
+    ('off', '--off-only', 'parallel_off_diagnostic', 'PARTIAL'),
+    ('powered', '--powered', 'parallel_powered_cv_cc', 'PASS'),
+    ('high_current', '--high-current', 'parallel_high_current_cv_cc', 'PASS'),
+)
+
+
+def _h10_verify_subrun(path, bench_sha, source_sha, subgroup, expected):
+    """Fail closed on absent, foreign, or incomplete freshly-generated evidence."""
+    if not isinstance(path, Path):
+        raise ValueError('H10 full subrun did not return an evidence path')
+    events = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
+    def single(kind):
+        records = [event for event in events if event.get('event') == kind]
+        if len(records) != 1:
+            raise ValueError(f'H10 full requires one {kind}: observed {len(records)}')
+        return records[0]
+    metadata = single('metadata')
+    bench = single('bench_configuration')
+    query = single('query_outcome')
+    outcome = single('outcome')
+    if metadata.get('test_id') != 'H10' or metadata.get('subgroup') != subgroup:
+        raise ValueError('H10 full subrun subgroup/identity mismatch')
+    if (metadata.get('source_sha256') != source_sha or
+            bench.get('sha256') != bench_sha):
+        raise ValueError('H10 full subrun source/config drift')
+    if (query.get('outcome') != expected or outcome.get('outcome') != expected or
+            outcome.get('physical_off_confirmed') is not True):
+        raise ValueError('H10 full subrun status or operator OFF confirmation is incomplete')
+    if any(event.get('event') in ('stage_error', 'io_error') for event in events):
+        raise ValueError('H10 full subrun contains a recorded error')
+    writes = [(index, event['command']) for index, event in enumerate(events)
+              if event.get('event') == 'write']
+    if subgroup == 'parallel_off_diagnostic':
+        if any(cmd in ('OUTP 1', 'CHAN:OUTP 1') for _, cmd in writes):
+            raise ValueError('H10 OFF diagnostic contains an output enable')
+        if not all(any(cmd == required for _, cmd in writes)
+                   for required in ('OUTP:PARALLEL 1', 'OUTP:PARALLEL 0')):
+            raise ValueError('H10 OFF diagnostic omitted a parallel-mode transition')
+        if not any(event.get('phase') == 'independent_after_restoration'
+                   for event in events):
+            raise ValueError('H10 OFF diagnostic lacks final Independent snapshot')
+    else:
+        if not any(event.get('event') == 'topology_restore' and
+                   event.get('state') == 'VERIFIED_INDEPENDENT' for event in events):
+            raise ValueError('H10 powered subrun has no verified Independent restore')
+        if not any(event.get('event') == 'electrical_shutdown' and
+                   event.get('state') == 'VERIFIED_OFF' and
+                   {'Keithley', 'KEL103'} <= set(event.get('devices', ()))
+                   for event in events):
+            raise ValueError('H10 powered subrun has no verified PSU/KEL electrical shutdown')
+        if not any(event.get('event') == 'operator_gate' and
+                   event.get('action') == 'disconnect_parallel_wiring' for event in events):
+            raise ValueError('H10 powered subrun has no confirmed physical jumper disconnection')
+        on = [index for index, cmd in writes if cmd == 'OUTP 1']
+        if (len(on) != 2 or not any(on[0] < index < on[1] for index, cmd in writes
+                                    if cmd == 'OUTP 0')):
+            raise ValueError('H10 powered subrun lacks two distinct ON points and an intermediate OFF')
+        points = ('CV', 'CC') if subgroup == 'parallel_powered_cv_cc' else ('CV3A', 'CC4A')
+        samples_by_point = []
+        for point in points:
+            samples = [index for index, event in enumerate(events)
+                       if event.get('event') == 'parallel_measurement_sample'
+                       and event.get('point') == point]
+            reviews = [index for index, event in enumerate(events)
+                       if event.get('event') == 'operator_display_review'
+                       and event.get('point') == point and event.get('outcome') == 'confirmed']
+            if len(samples) != 4 or len(reviews) != 1:
+                raise ValueError(f'H10 powered subrun incomplete at {point}')
+            mode = 'CV' if point.startswith('CV') else 'CC'
+            if ([(events[index].get('sample')) for index in samples] != [1, 2, 3, 4] or
+                    any(events[index].get('psu_regulation') != mode for index in samples)):
+                raise ValueError(f'H10 powered subrun at {point} has missing sample indexes or ambiguous CV/CC')
+            samples_by_point.append((samples, reviews))
+        if not (on[0] < samples_by_point[0][0][0] <= samples_by_point[0][0][-1] <
+                samples_by_point[0][1][0] < on[1] < samples_by_point[1][0][0] <=
+                samples_by_point[1][0][-1] < samples_by_point[1][1][0]):
+            raise ValueError('H10 powered subrun measurements/display reviews are out of order')
+    return {'subgroup': subgroup, 'outcome': expected, 'evidence': str(path),
+            'firmware': query.get('firmware')}
+
+
+def _h10_full_sequence(args, bench):
+    """Three bounded fresh subruns; no shared transport, no automatic power reruns."""
+    print('[H10 FULL] OFF diagnostic → low-power CV/CC → high-current CV3A/CC4A.')
+    print('Каждый подпроход включает собственную проверку USB, отдельный токен схемы, '
+          'подтверждение OFF и закрытие соединений. Силовые кабели устанавливаются '
+          'оператором заново ТОЛЬКО после OFF; без автоматического переподключения.')
+    if args.command == 'preflight' or not args.execute:
+        for title, flag, _, _ in H10_FULL_GROUPS:
+            print(f'\n=== H10 FULL PREVIEW: {title} ===')
+            main([args.command, 'H10', flag, '--config', str(args.config), '--dry-run']
+                 if args.command == 'run' else
+                 [args.command, 'H10', flag, '--config', str(args.config)])
+        print('DRY RUN H10 FULL: никакие приборы не открывались; '
+              'для аппаратного прогона требуется --execute и новые подтверждения.')
+        return 0
+    if bench.load.transport != 'serial':
+        print('BLOCKED: H10 FULL requires KEL103 serial; ports not opened.')
+        return 2
+    prerequisites = ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05',
+                     'H06', 'H07', 'H08', 'H09')
+    if any(not stage_passed(stages()[stage][-1]) for stage in prerequisites):
+        print('BLOCKED: H10 FULL requires reviewed prerequisites H01–H09, including H04P; ports not opened.')
+        return 2
+    if not sys.stdin.isatty():
+        print('BLOCKED: H10 FULL requires an interactive terminal; ports not opened.')
+        return 2
+    try:
+        if input(f'Подтвердите план полного H10 (не разрешает включение):\n'
+                 f'{H10_FULL_TOKEN}\n> ').strip() != H10_FULL_TOKEN:
+            print('BLOCKED: H10 FULL plan was not confirmed; ports not opened.')
+            return 2
+    except (KeyboardInterrupt, EOFError):
+        print('ABORTED: H10 FULL plan not confirmed; ports not opened.')
+        return 2
+    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H%M%S.%fZ')
+    summary = Evidence(ROOT / f'reports/hardware/{now}_H10_FULL/events.jsonl', 'H10')
+    source_sha = software_metadata()['source_sha256']
+    summary.add('full_plan', subgroup='parallel_full_sequence',
+                config_sha256=bench.sha256, source_sha256=source_sha,
+                stages=[name for name, _, _, _ in H10_FULL_GROUPS],
+                gating='fresh approval and final OFF for every separate hardware subrun')
+    completed = []
+    result = 'ABORTED'
+    reason = 'H10 FULL interrupted'
+    try:
+        for name, flag, subgroup, expected in H10_FULL_GROUPS:
+            print(f'\n=== H10 FULL STEP {len(completed)+1}/3: {name} ===')
+            if name != 'off':
+                print('Предыдущий этап завершён и его evidence проверен. '
+                      'Следующая схема подключается оператором при PSU ALL OFF и KEL OFF; '
+                      'новое подключение НЕ считается разрешённым автоматически.')
+            summary.add('full_step_start', step=name)
+            subrun = {}
+            code = main(['run', 'H10', flag, '--config', str(args.config), '--execute'],
+                        _h10_full_off_proof=(completed[0]['evidence'] if completed else None),
+                        _subrun_result=subrun)
+            if code != 0:
+                raise ValueError(f'H10 {name} exited {code}; next stage prohibited')
+            verified = _h10_verify_subrun(subrun.get('evidence'), bench.sha256,
+                                          source_sha, subgroup, expected)
+            completed.append(verified)
+            summary.add('full_step_complete', step=name, **verified)
+        result, reason = 'PASS', 'H10 OFF, low-current CV/CC and high-current CV3A/CC4A all completed with separate gates and final OFF'
+    except BaseException as exc:
+        reason = f'STOP after {len(completed)}/3 subruns: {type(exc).__name__}: {exc}'
+        result = 'ABORTED' if isinstance(exc, (KeyboardInterrupt, EOFError,
+                                                OSError, TimeoutError, InterruptedError)) else 'FAIL'
+        print(f'{result}: {reason}; НЕ запускать следующий этап, проверить PSU/KEL OFF вручную.')
+        summary.add('full_step_error', error_type=type(exc).__name__, message=str(exc),
+                    completed=len(completed))
+    summary.add('outcome', subgroup='parallel_full_sequence', outcome=result,
+                stop_reason=reason, completed=completed,
+                review='separate raw evidence requires manual review; no automatic HW VERIFIED promotion')
+    report_path = ROOT / f'docs/hardware_reports/{now}_H10_FULL_qualification.md'
+    with report_path.open('x', encoding='utf-8') as stream, contextlib.redirect_stdout(stream):
+        report(summary.path)
+    print(f'H10 FULL {result}; completed {len(completed)}/3; Evidence: {summary.path}\n'
+          f'Summary: {report_path}\n'
+          'Каждый этап также имеет собственный протокол. Нового аппаратного прогона без review не выполнять.')
+    return 0 if result == 'PASS' else 2
+
+
+def main(argv=None, *, _h10_full_off_proof=None, _subrun_result=None):
     """Dry run is default; each prepared hardware group has its own operator gate."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('list', 'inventory', 'preflight', 'run', 'report', 'abort'))
@@ -694,13 +882,17 @@ def main(argv=None):
     parser.add_argument('--powered', action='store_true',
                         help='H09/H10 only: separately gated low-power combined-mode qualification')
     parser.add_argument('--high-current', action='store_true',
-                        help='H10 only: separately gated 4 A / 8 W Parallel point')
+                        help='H10 only: separately gated high-current Parallel CV ~3 A and CC 4 A points')
+    parser.add_argument('--off-only', action='store_true',
+                        help='H10 only: isolated, non-powered Parallel OFF diagnostic (PARTIAL expected); default H10 runs ALL subgroups')
     parser.add_argument('--single-channel-cvcc', action='store_true',
                         help='H03 CH1-only CV/CC; gated live runner or dry-run (full H03 unchanged)')
     parser.add_argument('--aux-revision-diagnostic', action='store_true',
                         help='H01 only: separate OFF-only, selected-channel *IDN? correlation')
     parser.add_argument('--allow-single-cvcc-on', action='store_true',
                         help='H03 CH1 ONLY: additional explicit powered-run opt-in; no effect on full H03')
+    parser.add_argument('--allow-o01-on', action='store_true',
+                        help='O01 ONLY: explicitly authorize gated CH1 no-load DMM voltage pilot')
     parser.add_argument('--profile-only', action='store_true',
                         help='H02 only: restricted OFF-only Independent profile readback, no panel/debug probes')
     parser.add_argument('--prior-evidence', type=Path, action='append',
@@ -736,6 +928,13 @@ def main(argv=None):
     if args.allow_single_cvcc_on and (not args.single_channel_cvcc or
                                       args.command != 'run' or not args.execute):
         parser.error('--allow-single-cvcc-on requires run H03 --single-channel-cvcc --execute')
+    if args.allow_o01_on and (args.test_id != 'O01' or args.command != 'run' or not args.execute):
+        parser.error('--allow-o01-on requires run O01 --execute')
+    if args.test_id == 'O01' and (args.start_channel != 1 or args.recall or args.powered or
+                                   args.high_current or args.off_only or args.load_connected or
+                                   args.diagnose_status or args.single_channel_cvcc or
+                                   args.profile_only or args.prior_evidence):
+        parser.error('O01 only supports the bounded CH1 DMM voltage pilot; no variants')
     if args.single_channel_cvcc and bench.h03_single_cvcc is None:
         parser.error('H03 single CV/CC requires [qualification.h03_single_cvcc] in --config TOML')
     if args.profile_only and (args.test_id != 'H02' or args.recall or args.powered or args.high_current):
@@ -748,6 +947,9 @@ def main(argv=None):
         parser.error('--high-current requires H10')
     if args.high_current and args.powered:
         parser.error('--high-current and --powered are separate H10 runs')
+    if args.off_only and (args.test_id != 'H10' or args.powered or args.high_current or
+                          args.command not in ('run', 'preflight')):
+        parser.error('--off-only is an exclusive H10 run/preflight variant')
     if args.load_connected and (args.test_id != 'H03' or args.start_channel != 1):
         parser.error('--load-connected requires H03 start channel 1')
     if args.diagnose_status and (args.test_id != 'H03' or args.start_channel != 3):
@@ -803,6 +1005,9 @@ def main(argv=None):
               'Этот CLI однопроходный; другой работающий процесс остановите Ctrl-C. Не переподключаться автоматически.')
         return 0
     if args.test_id is None: parser.error('preflight/run requires one test ID')
+    if (args.test_id == 'H10' and args.command in ('run', 'preflight') and
+            not (args.off_only or args.powered or args.high_current)):
+        return _h10_full_sequence(args, bench)
     if args.aux_revision_diagnostic:
         from aux_revision_stage import preflight as aux_preflight, run_cli as aux_run
         if args.command in ('preflight', 'run'):
@@ -835,7 +1040,7 @@ def main(argv=None):
     preflight(args.test_id, args.port, args.load_host, args.load_port,
               args.start_channel, args.load_transport, args.load_serial_port,
               args.diagnose_status, args.load_connected, args.recall, args.meter_host,
-              args.powered, args.high_current, args.profile_only)
+              args.powered, args.high_current, args.profile_only, args.off_only)
     if args.test_id == 'H03' and args.start_channel > 1:
         if args.prior_evidence is None:
             parser.error('--prior-evidence is required when resuming H03; repeat for each prior channel log')
@@ -846,7 +1051,10 @@ def main(argv=None):
     if args.command == 'preflight' or not args.execute:
         print('DRY RUN: порт не открыт, SCPI не отправлены.')
         return 0
-    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09', 'H10', 'H11', 'H12'):
+    if args.test_id == 'O01' and not args.allow_o01_on:
+        print('BLOCKED: O01 live run requires --allow-o01-on; ports not opened.')
+        return 2
+    if args.test_id not in ('H01', 'H02', 'H03', 'H04', 'H04P', 'H05', 'H06', 'H07', 'H08', 'H09', 'H10', 'H11', 'H12', 'O01'):
         print('BLOCKED: выполнение этой группы ещё не подготовлено; порт не открыт.')
         return 2
     if args.test_id in ('H09', 'H10') and (args.powered or args.high_current) and args.load_transport != 'serial':
@@ -881,7 +1089,7 @@ def main(argv=None):
             if not stage_passed(stages()['H09'][-1]):
                 print('BLOCKED: H10 requires reviewed PASS H09; port not opened.')
                 return 2
-            if (args.powered or args.high_current) and not stages()['H10'][-1].startswith('**PARTIAL (HW OBSERVED'):
+            if (args.powered or args.high_current) and _h10_full_off_proof is None and not stages()['H10'][-1].startswith('**PARTIAL (HW OBSERVED'):
                 print('BLOCKED: H10 powered requires the reviewed OFF diagnostic; port not opened.')
                 return 2
         if args.high_current:
@@ -980,6 +1188,12 @@ def main(argv=None):
             print('BLOCKED: H12 requires reviewed PASS H11; port not opened.')
             return 2
         runner = h12
+    if args.test_id == 'O01':
+        from o01_stage import FINAL_TOKEN as final_token, approval_token, o01
+        if any(not stage_passed(stages()[stage][-1]) for stage in ('H08', 'H11', 'H12')):
+            print('BLOCKED: O01 requires reviewed PASS H08, H11, H12; ports not opened.')
+            return 2
+        token, runner = approval_token(args.meter_host), o01
     # One bench gate for ALL stages. Never ask the operator to retype a
     # port, serial speed or VID:PID: the validated TOML is authoritative.
     devices = required_devices(args.test_id, recall=args.recall,
@@ -1026,14 +1240,14 @@ def main(argv=None):
                            'independent; CH1/CH2/CH3 negative terminals tied to scope common'
                            if args.test_id == 'H05' else 'independent; no jumpers; no DUT'),
                  subgroup=('independent_profile_only' if args.profile_only else
-                           'parallel_high_current_cc' if args.high_current else
+                           'parallel_high_current_cv_cc' if args.high_current else
                            ('series_powered_cv_cc' if args.test_id == 'H09' else
                             'parallel_powered_cv_cc') if args.powered else
                            'series_off_diagnostic' if args.test_id == 'H09' else
                            'parallel_off_diagnostic' if args.test_id == 'H10' else
                            'output_recall' if args.recall else None),
-                 load=(f'KORAD KEL103; USB serial {args.load_serial_port}; {bench.load.baudrate} 8N1; CR 0.50 Ω; '
-                       'input OFF before/after the single point'
+                 load=(f'KORAD KEL103; USB serial {args.load_serial_port}; {bench.load.baudrate} 8N1; CR 1.00/0.50 Ω; '
+                       'input OFF between the two high-current points'
                        if args.test_id == 'H10' and args.high_current else
                        f'KORAD KEL103; USB serial {args.load_serial_port}; {bench.load.baudrate} 8N1; CR 40/12/2000/1600 Ω; '
                        'input OFF between points'
@@ -1056,7 +1270,7 @@ def main(argv=None):
                                 'CH3=0 V/open; load <=1 W; software-only combined voltage cap'
                                 if args.test_id == 'H09' and args.powered else
                                 'H10 high-current: Parallel soft caps 4.00 V / 4.500 A aggregate; '
-                                'CC 3.00 V / 4.000 A CR0.50; CH3=0 V/open; <=10 W'
+                                'CV 3.00 V / 4.000 A CR1.00 (~3 A) then CC 3.00 V / 4.000 A CR0.50; CH3=0 V/open; <=10 W each'
                                 if args.test_id == 'H10' and args.high_current else
                                 'H10 powered: Parallel soft caps 4.00 V / 0.500 A aggregate; '
                                 'CV 3.00 V / 0.100 A CR30; CC 3.00 V / 0.300 A CR5; CH3=0 V/open; <=1 W'
@@ -1094,12 +1308,16 @@ def main(argv=None):
                                 'H12 OFF only: V-set 1/1.5/2 V, I-set 0.100/0.200/0.300 A; '
                                 'V-cap 2/3/4 V; software I-cap 0.300/0.400/0.500 A'
                                 if args.test_id == 'H12' else
+                                'O01 independent CH1 only, no load: 0.50/1.00/1.50 V, I-set 0.040 A; '
+                                'DMM7510 FRONT DCV10 NPLC1; CH2/CH3 OFF; caps 2/3/4 V; '
+                                'max lag 2 s/window 5 s/PSU–DMM delta 30 mV'
+                                if args.test_id == 'O01' else
                                 'each CH: V-cap 4.00 V, software I-cap 0.500 A; initial 1.00 V / 0.100 A'),
                  independent_meter=({'model': 'DMM7510', 'host': args.meter_host, 'port': bench.meter.network_port,
                                      'function': ('DCV 100 V, NPLC 1, front terminals'
                                                   if args.test_id == 'H09' and args.powered
                                                   else 'DCV 10 V, NPLC 1, front terminals')}
-                                    if args.test_id == 'H08' or (args.test_id in ('H09', 'H10') and (args.powered or args.high_current))
+                                    if args.test_id in ('H08', 'O01') or (args.test_id in ('H09', 'H10') and (args.powered or args.high_current))
                                     else None))
     evidence.add('bench_configuration', sha256=bench.sha256, source=bench.source.name,
                  devices={name: {'model': getattr(bench, name).model,
@@ -1119,7 +1337,7 @@ def main(argv=None):
                      prior_evidence=[path.name for path in args.prior_evidence])
     load, meter, transport = None, None, None
     try:
-        if args.test_id == 'H08' or (args.test_id in ('H09', 'H10') and (args.powered or args.high_current)):
+        if args.test_id in ('H08', 'O01') or (args.test_id in ('H09', 'H10') and (args.powered or args.high_current)):
             meter = open_meter(args.meter_host, evidence)
         if (args.test_id in ('H03', 'H04P', 'H05', 'H06', 'H07', 'H11') or
                 (args.test_id in ('H09', 'H10') and (args.powered or args.high_current))) and not args.recall:
@@ -1138,7 +1356,7 @@ def main(argv=None):
         verify_serial_adapter(bench.psu)
         return open_transport(args.port)
 
-    outcome = (runner(transport, evidence, meter) if args.test_id == 'H08' else
+    outcome = (runner(transport, evidence, meter) if args.test_id in ('H08', 'O01') else
                runner(transport, evidence, load, meter) if args.test_id in ('H09', 'H10') and (args.powered or args.high_current) else
                runner(transport, evidence) if args.test_id in ('H09', 'H10') else
                runner(transport, evidence, reopen_recall_transport) if args.recall else
@@ -1161,8 +1379,16 @@ def main(argv=None):
     report_path = ROOT / f'docs/hardware_reports/{now}_{report_stage}_qualification.md'
     with report_path.open('x', encoding='utf-8') as stream, contextlib.redirect_stdout(stream):
         report(evidence.path)
+    if _subrun_result is not None:
+        _subrun_result.update(outcome=outcome, physical_off_confirmed=physical_off,
+                              evidence=evidence.path, report=report_path)
+    if args.test_id == 'H10' and args.off_only and outcome == 'PARTIAL':
+        print('NOTE: --off-only H10 is an isolated OFF diagnostic; PARTIAL is expected. For complete H10 omit all subgroup flags.')
     print(f'{outcome}; Evidence: {evidence.path}\n'
           f'Протокол для review: {report_path}\n'
           'STOP: перед следующей группой требуется разбор отчёта и отдельное разрешение.\n'
           f'Предлагаемое сообщение коммита после review: test(hw): record {args.test_id} qualification')
-    return 0 if outcome == 'PASS' else 2
+    # An isolated, deliberately partial OFF diagnostic is a *completed* command,
+    # not a complete H10 qualification. Its evidence still says PARTIAL.
+    return 0 if (outcome == 'PASS' or (args.test_id == 'H10' and args.off_only and
+                                       outcome == 'PARTIAL' and physical_off)) else 2

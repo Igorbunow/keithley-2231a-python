@@ -1,12 +1,14 @@
 """Offline checks for the bounded H11 I-V qualification stage."""
 import sys
 import inspect
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 import unittest
 
 sys.path.insert(0, str(Path(__file__).parent / 'hardware'))
 sys.path.insert(0, str(Path(__file__).parents[1] / 'src'))
-from h11_stage import H11Scope, approval_token, h11, profile_evidence
+from h11_stage import H11Scope, approval_token, h11, preflight, profile_evidence
 from keithley2231a import ChannelProfile, Profile, SafetyError
 
 
@@ -26,6 +28,13 @@ class TestH11Stage(unittest.TestCase):
         scope._validate('SYST:ERR?', True)
         scope.authorized_channel = 1
         scope._validate('CHAN:OUTP 1', False)
+
+    def test_h11_preflight_displays_actual_100mw_guard_not_nominal_64mw(self):
+        output=StringIO()
+        with redirect_stdout(output):
+            preflight('/dev/ttyUSB1')
+        self.assertIn('0.10 W', output.getvalue())
+        self.assertNotIn('не выше 0.064 W',output.getvalue())
 
     def test_runner_reads_error_queue_through_library_diagnostic_api(self):
         source = inspect.getsource(h11)
