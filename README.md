@@ -724,3 +724,13 @@ Hardware **HW REVIEWED PASS**, limited to one idle `*OPC?=1` response
 observed in 0.207 s on 2026-10-29. No pending-work, status-latch,
 execution-time bound or side-effect preservation claim. See the
 [independent review](docs/hardware_reports/R4_3_OPC_review_2026-10-29.md).
+
+## R3.5.55 — несколько offline-этапов в одной поставке
+
+Публичные `*PSC?` и `*OPC?`, а также контроль целостности активного
+профиля проверяются **через основной драйвер и виртуальный UART**. Удалены
+устаревшие дублирующие тесты с `FakeTransport`; тесты границ аппаратных
+runner сохранены, поскольку выполняют отдельную защитную функцию.
+Проверяются CRLF, отсутствие повторов, реакция на плохие ответы/тайм-ауты,
+дрейф четырёх параметров профиля и запрет аварийного OFF после потери связи.
+Это программные проверки, **не новая аппаратная квалификация**.

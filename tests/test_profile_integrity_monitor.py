@@ -23,13 +23,6 @@ class ProfileIntegrityMonitorTests(unittest.TestCase):
             threading.Event().wait(.005)
         self.fail('Timed out waiting for profile monitor state')
 
-    def test_verify_every_s_does_not_start_an_implicit_thread(self):
-        before = list(self.fake.cmds)
-        self.assertFalse(self.psu.profile_monitor_running)
-        threading.Event().wait(.03)
-        self.assertEqual(self.fake.cmds, before)
-        self.assertIsNone(self.psu.profile_monitor_error)
-
     def test_explicit_start_checks_immediately_and_stop_joins_without_scpi(self):
         checked = threading.Event()
         original = self.psu.verify_profile
@@ -59,49 +52,6 @@ class ProfileIntegrityMonitorTests(unittest.TestCase):
         self.assertFalse(self.psu.profile_monitor_running)
         self.assertEqual(self.fake.cmds, before)
         self.assertTrue(self.psu.armed)
-
-    def test_worker_actually_checks_drift_and_uses_shared_fault_shutdown(self):
-        for name, mutation in (
-                ('voltage', lambda f: f.values[1].__setitem__('VOLT', 1.11)),
-                ('current', lambda f: f.values[1].__setitem__('CURR', .151)),
-                ('limit', lambda f: f.values[1].__setitem__('VOLT:LIM:STAT', 0.)),
-                ('topology', lambda f: f.flags.__setitem__('OUTP:TRAC', 1.))):
-            with self.subTest(change=name):
-                fake = FakeTransport()
-                psu = Keithley2231A(fake)
-                psu.apply_profile(profile(), confirmed_wiring='independent')
-                try:
-                    psu.start_profile_monitor(interval_s=.1)
-                    mutation(fake)
-                    self.wait_until(lambda: psu.profile_monitor_error is not None)
-                    psu.stop_profile_monitor()
-                    self.assertFalse(psu.armed)
-                    self.assertTrue(psu.faulted)
-                    self.assertFalse(psu.profile_monitor_running)
-                    self.assertIn('Profile integrity check failed', psu.profile_monitor_error)
-                    self.assertIn('output OFF confirmed', psu.profile_monitor_error)
-                    self.assertEqual(fake.cmds.count('OUTP 0'), 2)  # apply + one fault shutdown
-                finally:
-                    psu.stop_profile_monitor()
-
-    def test_uncertain_link_stops_monitor_without_shutdown_attempt_or_retry(self):
-        self.psu.output(1, True)
-        self.psu.start_profile_monitor(interval_s=.1)
-        self.fake.failed_query = 'VOLT:LIM?'
-        before = self.fake.cmds.count('OUTP 0')
-        self.wait_until(lambda: self.psu.profile_monitor_error is not None)
-        self.psu.stop_profile_monitor()
-        self.assertTrue(self.psu.faulted)
-        self.assertFalse(self.psu.armed)
-        self.assertFalse(self.psu.profile_monitor_running)
-        self.assertIn('UNKNOWN OUTPUT STATE', self.psu.profile_monitor_error)
-        self.assertEqual(self.fake.cmds.count('OUTP 0'), before)
-        # A live output may remain on when the transport becomes uncertain.
-        self.assertEqual(self.fake.values[1]['CHAN:OUTP'], 1.)
-        cmds = list(self.fake.cmds)
-        with self.assertRaises(SafetyError):
-            self.psu.verify_profile()
-        self.assertEqual(self.fake.cmds, cmds)
 
     def test_emergency_off_stops_monitor_and_profile_replacement_requires_join(self):
         self.psu.start_profile_monitor(interval_s=.1)

@@ -17,8 +17,10 @@
 Классы: `W` — обнаружен прямой рабочий on-wire маршрут драйвера; `U` — маршрут
 не обнаружен, требуется оценка необходимости; `R` — отдельная оценка риска до
 реализации/испытания; `X` — сервисная/калибровочная команда, **исключена из
-публичного API** (R3.5.45: разрешена только в отдельном OFFLINE-only планировщике,
-не на UART; см. `R4_3_SERVICE_MODE.ru.md`). `W` ≠ `HW VERIFIED`. For a paired write/query family, `W` can mean **query-only**: the table must explicitly mark the write leg unsupported; never infer permission to write from `W`. Входящие в общий
+обычного API**. Некоторые отдельно разрешённые некалибровочные сервисные
+операции проходят через основной драйвер при `service_mode=True` и
+явном разрешении в сервисном профиле; калибровочные записи остаются
+заблокированными для реального UART (см. `R4_3_SERVICE_MODE.ru.md`). `W` ≠ `HW VERIFIED`. For a paired write/query family, `W` can mean **query-only**: the table must explicitly mark the write leg unsupported; never infer permission to write from `W`. Входящие в общий
 `_write/_query` диагностические команды не означают автоматическое разрешение
 выходов.
 
@@ -26,7 +28,7 @@
 
 | Раздел §5 | Команда / семейство | Класс | Привязка / решение |
 | --- | --- | :---: | --- |
-| Common 5-2…5-6 | `*CLS` | **U** | Очистка статуса; опасность потери диагностик |
+| Common 5-2…5-6 | `*CLS` | **R** | Очистка диагностик; только явно авторизованный service_mode, не обычный API |
 | Common 5-2…5-6 | `*ESE / *ESE?` | **W** | R4.2: `status_enable_mask("standard_event")` reads `*ESE?` only; writing `*ESE` stays unsupported |
 | Common 5-2…5-6 | `*ESR?` | **W** | R4.2-B: `consume_status_event("standard_event", acknowledge_clear=True)`; destructive read, OFF-only, HW REVIEWED PASS EVENT 2026-10-29 (one-shot; clear effect not independently measured) |
 | Common 5-2…5-6 | `*IDN?` | **W** | `Keithley2231A.identity()` |
@@ -312,3 +314,22 @@ three-channel readback, optional single-channel OFF fallback, and no further
 SCPI after a link-uncertain reply. The peer implements minimal readback
 registers, not another SCPI driver or independent execution workflow.
 These tests do **not** establish hardware OFF or new calibration support.
+
+### R3.5.55 — bundled virtual-UART regression (software only)
+
+One combined increment retires redundant `FakeTransport` tests of the *public*
+`power_on_status_clear_state()` and `operation_complete()` methods and
+replaces them with wire-level `Keithley2231A`/PTY tests. The separate hardware
+runner whitelist/evidence contract tests stay in place because their safety
+scopes are different; the full runner wire scripts are already tested over PTY.
+
+The same bundle migrates the implicit-monitor, four profile-drift and lost
+monitor-reply cases to `apply_profile()` plus the real profile monitor over
+virtual UART; no second driver/state machine is introduced. Hardware OFF is
+**not** inferred from virtual readback. The physical Keithley is never opened.
+
+The test-only peer verifies CRLF and exact command counts; missing replies
+latch an uncertain link. A serial driver's `readline()` cannot *atomically*
+prove that no second delayed reply line will arrive; this is a transport
+limitation, not an unqualified guarantee of reply framing. Neither offline
+PASS nor existing bounded physical reviews are expanded by this work.

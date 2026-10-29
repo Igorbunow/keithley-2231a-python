@@ -58,50 +58,6 @@ class OpcTests(unittest.TestCase):
             status = run_opc(wire, evidence, final_gate=final_gate)
         return status, wire, evidence
 
-    def test_public_idle_returns_true_with_exact_one_query(self):
-        wire = OpcFake(' 1 ')
-        dev = Keithley2231A(wire)
-        self.assertIs(dev.operation_complete(), True)
-        self.assertEqual(wire.cmds, ['*IDN?', 'SYST:REM', '*OPC?'])
-        self.assertFalse(dev.faulted)
-
-    def test_public_malformed_reply_latches_fault_and_never_retries(self):
-        for reply in ('0','2','-1','1.0','1e0','NaN','ON','', '1,0','01','true','1\n','1\t', ' 1 0 '):
-            with self.subTest(reply=reply):
-                wire, dev = OpcFake(reply), None
-                dev = Keithley2231A(wire)
-                with self.assertRaises(InstrumentError): dev.operation_complete()
-                saved = wire.cmds[:]
-                with self.assertRaises(SafetyError): dev.operation_complete()
-                self.assertEqual(wire.cmds, saved)
-                self.assertTrue(dev.faulted)
-
-    def test_public_lost_reply_no_followup_scpi(self):
-        wire = OpcFake()
-        wire.break_on = '*OPC?'
-        dev = Keithley2231A(wire)
-        with self.assertRaises(OSError): dev.operation_complete()
-        saved = wire.cmds[:]
-        with self.assertRaises(SafetyError): dev.operation_complete()
-        self.assertEqual(wire.cmds, saved)
-        self.assertTrue(dev.faulted)
-
-    def test_public_rejects_faulted_without_identity(self):
-        wire = OpcFake()
-        dev = Keithley2231A(wire)
-        dev._latch_fault()
-        with self.assertRaises(SafetyError): dev.operation_complete()
-        self.assertEqual(wire.cmds, [])
-
-    def test_public_rejects_armed_profile_and_sequencer_before_scpi(self):
-        for attr, value in (('_armed', True), ('_profile', object()), ('_sequencing', True)):
-            with self.subTest(attr=attr):
-                wire, dev = OpcFake(), None
-                dev = Keithley2231A(wire)
-                setattr(dev, attr, value)
-                with self.assertRaises(SafetyError): dev.operation_complete()
-                self.assertEqual(wire.cmds, [])
-
     def test_scope_rejects_unsupported_reads_and_all_mutating_writes(self):
         for command in ('*PSC?', '*ESR?', '*OPC', '*WAI', 'STAT:QUES:EVEN?',
                         'VOLT?', 'SYST:MODU?'):

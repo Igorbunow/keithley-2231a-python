@@ -59,52 +59,6 @@ class PscTests(unittest.TestCase):
             result = run_psc(wire, evidence, final_gate=final_gate)
         return result, wire, evidence
 
-    def test_public_read_only_zero_and_one(self):
-        for reply, expected in (('0', 0), ('1', 1), (' 1 ', 1)):
-            with self.subTest(reply=reply):
-                wire = PscFake(reply)
-                dev = Keithley2231A(wire)
-                self.assertEqual(dev.power_on_status_clear_state(), expected)
-                self.assertEqual(wire.cmds, ['*IDN?', 'SYST:REM', '*PSC?'])
-                self.assertFalse(dev.faulted)
-
-    def test_bad_reply_is_terminal_and_not_retried(self):
-        for reply in ('2', '-1', '1.0', '0.0', 'NaN', '1e0', '', 'ON', 'True', '99999', '00.1'):
-            with self.subTest(reply=reply):
-                wire = PscFake(reply)
-                dev = Keithley2231A(wire)
-                with self.assertRaises(InstrumentError):
-                    dev.power_on_status_clear_state()
-                snapshot = wire.cmds[:]
-                with self.assertRaises(SafetyError):
-                    dev.power_on_status_clear_state()
-                self.assertEqual(wire.cmds, snapshot)
-                self.assertTrue(dev.faulted)
-
-    def test_public_can_observe_while_output_on_without_change(self):
-        wire = PscFake()
-        wire.values[2]['CHAN:OUTP'] = 1
-        dev = Keithley2231A(wire)
-        self.assertEqual(dev.power_on_status_clear_state(), 1)
-        self.assertEqual(wire.values[2]['CHAN:OUTP'], 1)
-        self.assertFalse(any(cmd.startswith(('OUTP ', 'CHAN:OUTP ')) for cmd in wire.cmds))
-
-    def test_faulted_session_requires_no_wire(self):
-        wire = PscFake()
-        dev = Keithley2231A(wire)
-        dev._latch_fault()
-        with self.assertRaises(SafetyError): dev.power_on_status_clear_state()
-        self.assertEqual(wire.cmds, [])
-
-    def test_lost_query_reply_latches_and_stops(self):
-        wire = PscFake()
-        wire.break_on = '*PSC?'
-        dev = Keithley2231A(wire)
-        with self.assertRaises(OSError): dev.power_on_status_clear_state()
-        snapshot = wire.cmds[:]
-        with self.assertRaises(SafetyError): dev.power_on_status_clear_state()
-        self.assertEqual(wire.cmds, snapshot)
-
     def test_hardware_scope_allows_only_exact_whitelist(self):
         for query in ('*ESR?', '*OPC?', '*WAI', 'STAT:QUES:EVEN?',
                       '*PSC', 'STAT:PRES', 'OUTP:STAT:ALL?', 'VOLT?', 'SYST:MODU?'):

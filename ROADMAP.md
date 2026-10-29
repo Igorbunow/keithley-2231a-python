@@ -142,3 +142,18 @@ channel, output readback and unarmed SCPI error are now verified through
 `Keithley2231A` on a strict virtual UART, with additional malformed/timeout
 error-response scenarios. No driver changes, physical qualification or service
 execution. Other legacy fakes remain for separate case-by-case migration.
+
+## R3.5.55 — пакетная миграция трёх программных групп
+
+1. Публичный `*PSC?`: 0/1, некорректные ответы, потеря UART, защита
+   при faulted и наблюдение без изменения включённого выхода.
+2. Публичный `*OPC?`: один запрос, строгий ответ `1`, отказ до передачи
+   при armed/profile/sequencer, отсутствие повтора после неопределённости.
+3. Monitor профиля: реальный `apply_profile()` и фоновый поток через PTY,
+   обнаружение дрейфа VOLT/CURR/LIMIT/TOPOLOGY, подтверждённое отключение
+   в тестовом peer и запрет OFF при потере UART-ответа.
+
+Отдельные hardware runner тесты ограничений продолжают проверять свои
+независимые защитные условия; остальные исторические `FakeTransport`-сценарии
+планируются для постепенного перевода без потери покрытия. Никаких новых
+разрешений реальным калибровочным командам этот пакет не даёт.
