@@ -171,7 +171,7 @@ class UARTPeer:
                 for prefix in ('STAT:QUES:INST', 'STAT:OPER:INST'):
                     status_reads.add(f'{prefix}:ENAB?')
                     status_reads.update(f'{prefix}:ISUM{ch}:ENAB?' for ch in (1, 2, 3))
-                allowed_reads = {'*IDN?', 'INST:NSEL?', 'CHAN:OUTP?',
+                allowed_reads = {'*IDN?', 'INST:NSEL?', 'INST?', 'CHAN:OUTP?',
                                  'SYST:ERR?', 'DISP?', 'OUTP:SER?', 'OUTP:PARALLEL?',
                                  'OUTP:TRAC?', '*ESE?', '*SRE?', '*PSC?', '*OPC?',
                                  '*ESR?', 'STAT:QUES:EVEN?', 'STAT:OPER:EVEN?'} | status_reads
@@ -186,6 +186,7 @@ class UARTPeer:
                                               'OUTP:STAT:ALL?', 'SYST:VERS?', '*STB?',
                                               'STAT:QUES:COND?', 'STAT:OPER:COND?',
                                               'MEAS:VOLT?', 'MEAS:CURR?', 'MEAS:POW?',
+                                              'VOLT:STEP?', 'CURR:STEP?',
                                               'FETC:VOLT?', 'FETC:CURR?', 'FETC:POW?'})
                     else:
                         allowed_writes.update({'SYST:RWLOCK', 'OUTP:SER 0',
@@ -242,6 +243,9 @@ class UARTPeer:
                                 and (mode, self.selected, cmd) in self.mode_channel_overrides)
                     response = self.mode_channel_overrides[mode, self.selected, cmd]
                 elif cmd == 'INST:NSEL?': response = str(self.selected)
+                elif cmd == 'INST?': response = f'CH{self.selected}'
+                elif self.profile_registers and cmd == 'VOLT:STEP?': response = '0.01'
+                elif self.profile_registers and cmd == 'CURR:STEP?': response = '0.001'
                 elif cmd == 'CHAN:OUTP?': response = str(self.off_by_channel.get(self.selected, 0))
                 elif self.profile_registers and cmd == 'OUTP:STAT:ALL?':
                     response = str(int(any(self.off_by_channel.values())))

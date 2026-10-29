@@ -56,7 +56,7 @@
 | DISPlay 5-9…5-10 | `DISP[:WIND][:STATe] / ?` | **W** | R4.4-A `display_enabled()` query-only `DISP?`; R4.4-B **HW REVIEWED PASS** (2026-10-29; one `DISP?=1`, OFF-only, firmware `1.04-1.04`); writes unsupported; see `docs/reviews/R4_4_B_DISPLAY_HW_REVIEW_2026-10-29.md` |
 | DISPlay 5-9…5-10 | `DISP[:WIND]:TEXT[:DATA]` | **U** | Пользовательский текст |
 | DISPlay 5-9…5-10 | `DISP[:WIND]:TEXT:CLEar` | **U** | Очистка текста |
-| INSTrument 5-10…5-12 | `INST[:SELect] / ?` | **U** | Выбор по имени; core применяет NSEL |
+| INSTrument 5-10…5-12 | `INST[:SELect] / ?` | **W** | R4.5-A: `selected_channel_name()` reads `INST?` only; CH1/CH2/CH3; symbolic write is unsupported, **SIM TESTED / HW NOT_RUN** |
 | INSTrument 5-10…5-12 | `INST:NSELect / ?` | **W** | Селектор канала + проверка |
 | INSTrument 5-10…5-12 | `INST:COMBine:SERies` | **U** | Отдельная альтернатива OUTP:SER |
 | INSTrument 5-10…5-12 | `INST:COMBine:PARAllel` | **U** | Отдельная альтернатива OUTP:PARALLEL |
@@ -105,12 +105,12 @@
 | SOURce 5-24…5-28 | `[SOUR:]CURRent[:LEV] / ?` | **W** | Уставка и readback через `set_channel()` |
 | SOURce 5-24…5-28 | `CURRent:UP` | **U** | Инкремент уставки |
 | SOURce 5-24…5-28 | `CURRent:DOWN` | **U** | Декремент уставки |
-| SOURce 5-24…5-28 | `CURRent:STEP / ?` | **R** | Состояние шагов требует охранных границ |
+| SOURce 5-24…5-28 | `CURRent:STEP / ?` | **W** | R4.5-A: `source_step(ch, "current")` reads `CURR:STEP?` only in armed Independent; writes/UP/DOWN blocked; **SIM TESTED / HW NOT_RUN** |
 | SOURce 5-24…5-28 | `CURRent:TRIGgered / ?` | **R** | Триггер может менять ограничение тока |
 | SOURce 5-24…5-28 | `[SOUR:]VOLTage[:LEV] / ?` | **W** | Уставка и readback через `set_channel()` |
 | SOURce 5-24…5-28 | `VOLTage:UP` | **U** | Инкремент уставки |
 | SOURce 5-24…5-28 | `VOLTage:DOWN` | **U** | Декремент уставки |
-| SOURce 5-24…5-28 | `VOLTage:STEP / ?` | **R** | Состояние шагов требует охранных границ |
+| SOURce 5-24…5-28 | `VOLTage:STEP / ?` | **W** | R4.5-A: `source_step(ch, "voltage")` reads `VOLT:STEP?` only in armed Independent; writes/UP/DOWN blocked; response format not yet HW confirmed |
 | SOURce 5-24…5-28 | `VOLTage:TRIGgered / ?` | **R** | Триггер меняет уставку |
 | SOURce 5-24…5-28 | `VOLTage:LIMit / ?` | **W** | Профиль ограничений + readback |
 | SOURce 5-24…5-28 | `VOLTage:LIMit:STATe / ?` | **W** | Защита профиля + readback |
@@ -417,3 +417,25 @@ is not a transfer of previous H03/H04P powered qualification.
 #### R4.4-C actual low-power CH1 attempt (2026-10-29)
 
 **HW ABORTED**: during a powered trial, `DMM7510 :READ?=11.61243 V` on a 10 V range disagreed with independent PSU/KEL103 readings (~3.3 V). The guarded runner stopped and confirmed PSU/KEL OFF; **`MEAS:POW?` and all `FETC:*?` were never transmitted**. Accordingly all four new scalar queries remain `HW NOT_RUN` despite passing software regression. Evidence SHA256 and safety audit are documented in `docs/reviews/R4_4_C_SCALAR_ABORT_2026-10-29.md`.
+
+## R4.5-A — source observability without stepping (SIM TESTED, HW NOT_RUN)
+
+- `selected_channel_name()` sends one `INST?` and returns **only** the documented
+  symbolic channel string `CH1`, `CH2` or `CH3`; no channel-select write from
+  this method. The session may authenticate and enter Remote before the query.
+- `source_step(ch, kind)` accepts only real integer channel 1–3, and exact kind
+  `voltage`/`current`; it requires an armed Independent profile and checks its
+  integrity before selecting the channel to observe one `VOLT:STEP?` or
+  `CURR:STEP?` numeric preset. Bounded numbers are **digital observations**,
+  not active limits, measured outputs, or authorization to use those steps.
+- Explicit exception in the SCPI policy permits **only** `VOLT:STEP?` and
+  `CURR:STEP?`. Any `STEP` write, `UP`, `DOWN`, trigger, `OUTP:ENAB` write,
+  `APPLy` or reset remains blocked; no generic raw executor is introduced.
+- Invalid/missing reply and lost transport latch UNKNOWN / no retry; no
+  unconfirmed automatic OFF is sent. A profile-integrity drift uses the
+  existing safety response. The virtual peer scripts 0.01 V / 0.001 A; it
+  does not model real stepping, a cache, or firmware behavior.
+- The vendor documents `INST?` -> CHn (5-11), `CURR:STEP?` numerical current
+  increment (5-25), `VOLT:STEP?` query syntax (5-27), but oddly lists
+  `Returns None` for voltage step; **real hardware reply format remains unverified**.
+  Do not perform powered hardware testing based on these software tests.

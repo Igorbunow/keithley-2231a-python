@@ -926,3 +926,18 @@ block must be added to local bench TOML; sample values and strict ceilings
 are in `docs/R4_4_HARDWARE_PLAN.ru.md`. The FETC results are observational:
 freshness and simultaneity are explicitly **unverified**. The runner's
 `PASS` does not itself mark these commands hardware qualified.
+
+
+### R4.5-A — selected channel and step preset inspection (software only)
+
+`Keithley2231A.selected_channel_name()` reads `INST?` (CH1/CH2/CH3) without
+applying a profile or selecting a different channel. `source_step(ch, kind)`
+reads `VOLT:STEP?` or `CURR:STEP?` under an armed Independent profile, checking
+profile integrity before selecting its channel. Both operations are **query
+only**, with strict reply parsing; invalid replies/transport faults block
+further commands on the uncertain session. `STEP` writes, `VOLT/CURR:UP/DOWN`,
+triggered setpoints and triggers remain blocked. The virtual UART supplies
+canned digital responses only. All three queries are **SIM TESTED / HW NOT_RUN**;
+`VOLT:STEP?` firmware response is particularly unconfirmed because its vendor
+reference documents query syntax but lists `Returns None`. See
+`docs/R4_5_QUERY_ONLY_PLAN.ru.md` before planning any operator-approved trial.

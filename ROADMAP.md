@@ -348,3 +348,18 @@ synchronized sampling are **not** demonstrated. No new higher-power or topology
 qualification. Review: `docs/reviews/R4_4_C_SCALAR_HW_REVIEW_2026-10-29.md`;
 raw evidence SHA-256 `138942d72bc95c3bacba15ed776372d7207b48333fef7ee4b41f4f76790b340c`.
 Corrected future `psu_identity` event redaction without touching raw evidence.
+
+
+## R4.5-A — digital source observation, software only
+
+- Added read-only symbolic `INST?` and Independent-profile `VOLT:STEP?` /
+  `CURR:STEP?` to the existing production driver. All have virtual-UART
+  positive and fail-closed negative coverage; no other executor/framework.
+- No new SCPI write, output ON/OFF, trigger, STEP change or storage action.
+  Profiling/integrity and uncertain-link restrictions remain effective.
+- **SIM TESTED / HW NOT_RUN**: hardware command syntax and replies must be
+  confirmed under a distinct, OFF-only, operator-gated protocol. The vendor
+  `VOLT:STEP?` return-type entry is inconsistent; do not assume real firmware
+  returns a numeric value merely because the offline UART does.
+- Next: document and separately approve an OFF-only hardware plan for the
+  three new queries; leave dangerous step/UP/DOWN/trigger/APPLy commands gated.

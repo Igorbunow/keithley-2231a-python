@@ -210,6 +210,10 @@ class Keithley2231A:
             return True
         if re.match(r'^\*(?:PSC|OPC)(?!\?)\b', cmd):
             return True
+        # Explicit read-only STEP queries do not mutate preset increments.
+        # All STEP writes and UP/DOWN/TRIG forms remain service-blocked.
+        if cmd in ('VOLT:STEP?', 'CURR:STEP?'):
+            return False
         if re.match(r'^(?:VOLT(?:AGE)?|CURR(?:ENT)?):(?:TRIG|STEP|UP|DOWN)', cmd):
             return True
         return False
@@ -1514,6 +1518,48 @@ class Keithley2231A:
         not guaranteed to be refreshed or synchronized across channels.
         """
         return self._scalar_measurement(ch, kind, cached=True)
+
+    def selected_channel_name(self) -> str:
+        """Read symbolic selected-channel name via ``INST?`` without selecting.
+
+        Values are exactly CH1/CH2/CH3. This is an observation, not an
+        authorization to control the selected channel; no profile is applied.
+        The query may first authenticate the instrument and enter Remote.
+        """
+        with self._lock:
+            if self._faulted or self._link_uncertain:
+                raise SafetyError('Faulted/uncertain session cannot query channel name')
+            raw = self._query('INST?')
+            if raw not in ('CH1', 'CH2', 'CH3'):
+                self._malformed_value(f'Invalid INST? channel name: {raw!r}')
+            return raw
+
+    def source_step(self, ch: int, kind: str) -> float:
+        """Read only the preset UP/DOWN increment, without stepping outputs.
+
+        ``kind`` is exactly voltage or current. This is an observation of the
+        per-channel register with a validated independent profile; a voltage
+        or current STEP *write*, UP/DOWN and trigger commands remain forbidden.
+        Reading this register is NOT permission to change the source setting.
+        The firmware response to VOLT:STEP? remains SIM TESTED / HW NOT_RUN.
+        """
+        self._check_channel(ch)
+        if type(kind) is not str or kind not in ('voltage', 'current'):
+            raise ValueError('source step kind must be voltage or current')
+        with self._lock:
+            self._require_ready()
+            if not isinstance(self._profile, Profile) or self._profile.wiring != 'independent':
+                raise SafetyError('Source step observation requires independent profile')
+            self.verify_profile()
+            self._select(ch)
+            command = 'VOLT:STEP?' if kind == 'voltage' else 'CURR:STEP?'
+            value = self._num(command)
+            # The wire reply must represent a plausible finite source increment,
+            # never a negative/infinite value. Hardware defaults are not assumed.
+            maximum = (5.0 if ch == 3 else 30.0) if kind == 'voltage' else 3.0
+            if value < 0 or value > maximum:
+                self._malformed_value(f'Out-of-range {command} reply: {value!r}')
+            return value
 
     def module_info(self) -> str:
         """Read the instrument's SYST:MODU? text without changing settings.
