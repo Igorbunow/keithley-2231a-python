@@ -21,6 +21,26 @@ Provides SCPI over USB–TTL UART, optional transparent TCP–UART bridges, immu
 - **Measurement and automation:** per-channel CSV logs, min/max/mean/population σ, Ah/Wh integration; guarded voltage sweeps with optional DMM callback; optional external readings via an observer callback.
 - **Replaceable transports:** UART `SerialTransport('/dev/ttyUSB1')`, future MCU bridge `TcpTransport('psu-lab.local', 5025)`; TCP is a transparent UART tunnel, **not native Ethernet, VISA or VXI-11**.
 
+## Service-only command planning (R3.5.45; **OFFLINE ONLY**)
+
+Dangerous commands, including calibration, are intentionally **not callable
+through the normal driver**, even using its debug profile bypass. A separate
+`keithley2231a.service.ServiceProfile` explicitly lists individual permitted
+service operations, binds the plan to the actual instrument serial and exact
+profile file SHA256, and requires an operation-specific acknowledgement.
+`ServicePlanner` outputs immutable, **SIMULATION_ONLY** typed SCPI plans without
+any transport, execute, send, or device connection capability. This is NOT
+hardware qualification and is NOT authorization to issue SCPI from a terminal.
+**Do not use service commands unless they are strictly necessary** and an
+appropriately qualified engineer has a verified service procedure.
+
+The documented calibration planning scope is `CAL:SEC` / ordered voltage
+`P1..P4` and current `P1..P2` / `CAL:SAV` / `CAL:INIT` / `CAL:STR`, with
+independent privileges for saving and destructive initialization. A complete
+calibration adjustment guide is **not** supplied by the reference manual §5;
+real adjustment is prohibited pending vendor service procedure and a separate
+approved execution boundary. See [service mode and calibration guide (RU)](docs/R4_3_SERVICE_MODE.ru.md).
+
 ## Hardware and safety first
 
 1. Rear DB9 is **TTL-level UART**, NOT ±RS-232. Use a correctly configured and wired USB–TTL adapter; never connect a conventional RS-232 dongle directly. The instrument serial protocol uses 9600 baud, 8N1.

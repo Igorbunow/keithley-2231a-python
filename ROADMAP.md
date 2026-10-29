@@ -30,8 +30,12 @@ not use outdated `v0.2/v0.3/v0.4/v0.5` sketches as engineering milestones.
    OFF-only run (2026-10-29); actual latch clearing was not measured.
 3. **R4.3 risky gaps:** start with the command-level risk disposition
    [`docs/R4_3_RISK_REGISTER.md`](docs/R4_3_RISK_REGISTER.md); review
-   trigger/apply/step/save/recall/display commands separately. Never expose arbitrary write access or bypass existing profile
-   and output gates. CALibration/service commands are **inventory only**.
+   trigger/apply/step/save/recall/display commands separately. Never expose
+   arbitrary write access or bypass existing profile and output gates.
+   R3.5.45 starts a **separate service-profile, typed OFFLINE-ONLY
+   plan compiler** for dangerous and calibration commands, with no runtime
+   transport and no live service execution. The ordinary driver even blocks
+   service SCPI in diagnostic bypass. See `docs/R4_3_SERVICE_MODE.ru.md`.
 4. **R4.4 verification:** trace auditor, firmware caveats, documented exclusions,
    targeted operator-approved hardware checks only if indispensable.
 

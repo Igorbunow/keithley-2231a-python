@@ -18,7 +18,7 @@ authorize use or establish firmware 1.04-1.04 compatibility for untested forms.
 | `VOLT/CURR:UP`, `DOWN`, `STEP` | Increment/decrement and step state may depend on current channel and previous settings | **DEFER**. Must never bypass bounded absolute setpoint validation or live profile integrity |
 | `*SAV`, `*RCL` | Nonvolatile persistence; recall may change current settings or output-recall assumptions | **DEFER**. No automatic invocation or startup restore |
 | `DISPlay`/text control | May obscure physical warnings/panel presentation, unrelated to safety-critical supply control | **LOW PRIORITY**; not required in the guarded core |
-| `CALibration:*` | Calibration/service settings can irreversibly alter the instrument | **EXCLUDE** from public API and from automatic / debug hardware tests |
+| `CALibration:*` | Calibration/service settings can irreversibly alter the instrument | **SEPARATE OFFLINE service-profile plans only** (R3.5.45); no live execution, standard/debug driver blocks service commands |
 
 ## Gates for the next technical increment
 
@@ -73,3 +73,15 @@ of queued-operation synchronization, max latency, OPC bit behavior, or event-lat
 preservation. Review: [R4_3_OPC_review_2026-10-29.md](hardware_reports/R4_3_OPC_review_2026-10-29.md).
 
 Protocol: [R4_3_OPC_HARDWARE.ru.md](R4_3_OPC_HARDWARE.ru.md).
+
+## R4.3-D Service-mode offline foundation (R3.5.45)
+
+An isolated `ServiceProfile` and `ServicePlanner` compile only explicit,
+per-operation typed command plans. They do not execute or import a transport.
+The normal driver blocks service commands before automatic identity or Remote
+setup, including under `debug_bypass_profile=True`; note that direct UART
+access by untrusted Python code is outside library protection. `*TST?` and
+`*PSC` write forms have reference-manual ambiguities and are **unverified**.
+The calibration sequence is an offline proposal only; no complete manufacturer
+adjustment method, hardware verification, external references or runtime gateway
+has been qualified. See `R4_3_SERVICE_MODE.ru.md`; **HW NOT_RUN** throughout.

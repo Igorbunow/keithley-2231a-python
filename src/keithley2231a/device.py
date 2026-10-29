@@ -183,12 +183,38 @@ class Keithley2231A:
         if match: return f'INST:NSEL {match[1]}'
         return upper
 
+    @staticmethod
+    def _service_only_command(command: str) -> bool:
+        """Never let normal or debug-bypass dispatch reach service SCPI.
+
+        This is a logical API boundary, not a security sandbox against code
+        accessing the underlying physical transport directly. Service preview
+        plans deliberately have no live dispatch implementation.
+        """
+        cmd = command.strip().upper()
+        if re.match(r'^CAL[A-Z]*:', cmd):
+            return True
+        if re.match(r'^(?:SOUR(?:CE)?:)?APPL(?:Y)?(?:\b|:)', cmd):
+            return True
+        if re.match(r'^(?:STAT(?:US)?:PRES|TRIG(?:GER)?(?:\b|:))', cmd):
+            return True
+        if re.match(r'^\*(?:CLS|RST|WAI|TRG|RCL|SAV|TST)(?:\b|\?)', cmd):
+            return True
+        if re.match(r'^\*(?:PSC|OPC)(?!\?)\b', cmd):
+            return True
+        if re.match(r'^(?:VOLT(?:AGE)?|CURR(?:ENT)?):(?:TRIG|STEP|UP|DOWN)', cmd):
+            return True
+        return False
+
     def _execute(self, command: str, *, query: bool):
         """Single wire path for normal API, diagnostics and adapter error checks."""
         with self._lock:
             if not self._dispatch_depth:
                 raise SafetyError('Use the driver API; direct adapter sends are forbidden')
             self._command(command, query=query)
+            if self._service_only_command(command):
+                raise SafetyError('Service-only SCPI is blocked by the ordinary driver'
+                                  ' (including debug bypass); offline plan only')
             if self._link_uncertain:
                 raise TransportError('UNKNOWN OUTPUT STATE: link uncertain; no commands or automatic reconnect')
             session_command = self._session_command(command)

@@ -17,7 +17,8 @@
 Классы: `W` — обнаружен прямой рабочий on-wire маршрут драйвера; `U` — маршрут
 не обнаружен, требуется оценка необходимости; `R` — отдельная оценка риска до
 реализации/испытания; `X` — сервисная/калибровочная команда, **исключена из
-публичного API** (учтена без посылки). `W` ≠ `HW VERIFIED`. For a paired write/query family, `W` can mean **query-only**: the table must explicitly mark the write leg unsupported; never infer permission to write from `W`. Входящие в общий
+публичного API** (R3.5.45: разрешена только в отдельном OFFLINE-only планировщике,
+не на UART; см. `R4_3_SERVICE_MODE.ru.md`). `W` ≠ `HW VERIFIED`. For a paired write/query family, `W` can mean **query-only**: the table must explicitly mark the write leg unsupported; never infer permission to write from `W`. Входящие в общий
 `_write/_query` диагностические команды не означают автоматическое разрешение
 выходов.
 

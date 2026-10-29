@@ -1,0 +1,9 @@
+{
+  "mode": "service",
+  "model": "2231A-30-3",
+  "serial": "REPLACE_WITH_ACTUAL_SERIAL",
+  "allowed_operations": [
+    "self_test",
+    "wait_pending"
+  ]
+}
