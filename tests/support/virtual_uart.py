@@ -7,6 +7,7 @@ No physical device is opened.
 """
 from __future__ import annotations
 import os
+import re
 import select
 import tty
 import threading
@@ -60,7 +61,7 @@ class UARTPeer:
     """Canned protocol fixture; no independent driver or service state machine."""
     def __init__(self, *, serial='LAB-UNIT-001', response_overrides=None, drop=None,
                  fault_code=None, off_by_channel=None, response_sequences=None,
-                 fault_after=None):
+                 fault_after=None, profile_registers=False):
         self.master, slave = os.openpty()
         tty.setraw(self.master)
         tty.setraw(slave)
@@ -80,6 +81,13 @@ class UARTPeer:
         self.drop = drop
         self.fault_code = fault_code
         self.off_by_channel = off_by_channel or {}
+        self.profile_registers = profile_registers
+        self.ignore_shutdown = False
+        self.ignore_global_off = False
+        self.channel_registers = {ch: {'VOLT': '0.00', 'CURR': '0.000',
+                                      'VOLT:LIM': '30.00' if ch < 3 else '5.00',
+                                      'VOLT:LIM:STAT': '0', 'OUTP:TIM:STAT': '0'}
+                                  for ch in (1, 2, 3)}
         # Three documented read-to-clear event latches; the peer is a wire
         # fixture, not a second implementation of the Keithley driver.
         self.event_latches = {'*ESR?': '7', 'STAT:QUES:EVEN?': '129',
@@ -110,6 +118,21 @@ class UARTPeer:
                     self._rx_cond.notify_all()
                 if cmd.startswith('INST:NSEL ') and cmd[-1:] in ('1', '2', '3'):
                     self.selected = int(cmd[-1])
+                # Optional narrow fixture for testing real apply_profile/output
+                # SCPI over PTY.  Never enables output unless the driver writes it.
+                if self.profile_registers:
+                    reg_write = re.fullmatch(
+                        r'(VOLT|CURR|VOLT:LIM|VOLT:LIM:STAT|OUTP:TIM:STAT) '
+                        r'([0-9]+(?:\.[0-9]+)?)', cmd)
+                    if reg_write:
+                        self.channel_registers[self.selected][reg_write[1]] = reg_write[2]
+                    elif cmd == 'OUTP 0':
+                        if not (cmd == 'OUTP 0' and (self.ignore_shutdown or self.ignore_global_off)):
+                            for ch in (1, 2, 3):
+                                self.off_by_channel[ch] = int(cmd[-1])
+                    elif cmd in ('CHAN:OUTP 0', 'CHAN:OUTP 1'):
+                        if not (cmd == 'CHAN:OUTP 0' and self.ignore_shutdown):
+                            self.off_by_channel[self.selected] = int(cmd[-1])
                 is_query = cmd.endswith('?')
                 allowed_writes = {'SYST:REM', 'SYST:LOC', '*CLS', '*WAI', '*RST',
                                   'INST:NSEL 1', 'INST:NSEL 2', 'INST:NSEL 3'}
@@ -121,6 +144,18 @@ class UARTPeer:
                                  'SYST:ERR?', 'OUTP:SER?', 'OUTP:PARALLEL?',
                                  'OUTP:TRAC?', '*ESE?', '*SRE?', '*PSC?', '*OPC?',
                                  '*ESR?', 'STAT:QUES:EVEN?', 'STAT:OPER:EVEN?'} | status_reads
+                if self.profile_registers:
+                    if is_query:
+                        allowed_reads.update({'VOLT?', 'CURR?', 'VOLT:LIM?',
+                                              'VOLT:LIM:STAT?', 'OUTP:TIM:STAT?',
+                                              'OUTP:STAT:ALL?'})
+                    else:
+                        allowed_writes.update({'SYST:RWLOCK', 'OUTP:SER 0',
+                                               'OUTP:PARALLEL 0', 'OUTP:TRAC 0',
+                                               'OUTP 0',
+                                               'CHAN:OUTP 0', 'CHAN:OUTP 1'})
+                        if reg_write:
+                            allowed_writes.add(cmd)
                 if cmd not in (allowed_reads if is_query else allowed_writes):
                     self.unsupported.append(cmd)
                     # An unknown write is rejected at the next error poll;
@@ -156,6 +191,10 @@ class UARTPeer:
                     response = str(base + 11 + channel)
                 elif cmd == 'INST:NSEL?': response = str(self.selected)
                 elif cmd == 'CHAN:OUTP?': response = str(self.off_by_channel.get(self.selected, 0))
+                elif self.profile_registers and cmd == 'OUTP:STAT:ALL?':
+                    response = str(int(any(self.off_by_channel.values())))
+                elif self.profile_registers and cmd.endswith('?') and cmd[:-1] in self.channel_registers[self.selected]:
+                    response = self.channel_registers[self.selected][cmd[:-1]]
                 elif cmd == 'SYST:ERR?': response = self.fault_code or '0,"No error"'
                 elif cmd in ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?',
                              '*ESE?', '*SRE?', '*PSC?'): response = '0'

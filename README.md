@@ -60,6 +60,15 @@ CRLF bytes and command order are checked, with `SerialTransport` selected
 when `pyserial` is available. No production driver or hardware runner change.
 The remaining historical fake-backed tests still need selective migration.
 
+**R3.5.54 armed-profile SCPI fault/shutdown UART tests:** historical
+in-memory error/shutdown tests are migrated to `Keithley2231A` over strict
+PTY. The tests first call real `apply_profile()` (physically simulated but
+sent through the full driver) and `output(1, True)` using minimal allowlisted
+register readbacks. Faults at `SYST:ERR?` verify the actual `OUTP 0` and
+per-channel confirmation/fallback behavior. A lost OFF readback and malformed
+error both forbid further commands on the uncertain link. This is **software
+fault injection only**, not proof a physical PSU will obey OFF.
+
 **R3.5.53 malformed-reply/error-queue UART migration:** the existing driver
 regressions for invalid `CHAN:OUTP?`, `INST:NSEL?`, `*IDN?` and nonzero
 `SYST:ERR?` have been moved from `test_driver.FakeTransport` to the **production

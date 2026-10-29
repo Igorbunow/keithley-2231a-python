@@ -301,3 +301,14 @@ no automatic shutdown on an uncertain link, no channel restore after malformed
 selection/output responses, and no extra `SYST:ERR?` after an invalid output
 reply are asserted. These are controlled peer injections, not physical
 instrument observations. No new SCPI support or safety qualification is implied.
+
+### R3.5.54 — armed SCPI faults and OFF confirmation (software PTY only)
+
+The production `Keithley2231A` driver applies an Independent profile via
+actual SCPI calls to a strict virtual UART, then enables CH1 with the normal
+`output(1, True)` API. Injections at `SYST:ERR?`, `CHAN:OUTP?` and shutdown
+acknowledgements check the exact wire order: one error poll, one global OFF,
+three-channel readback, optional single-channel OFF fallback, and no further
+SCPI after a link-uncertain reply. The peer implements minimal readback
+registers, not another SCPI driver or independent execution workflow.
+These tests do **not** establish hardware OFF or new calibration support.

@@ -49,6 +49,15 @@ hardware stage's own separate SCPI error polls. No new hardware or calibration
 commands and no new execution layer. Actual physical latch-clearing effect
 remains unverified by a repeated hardware read.
 
+## R3.5.54 — powered fault shutdown over virtual UART
+
+Replace three historical armed SCPI-error `FakeTransport` tests with direct
+production-driver + real PTY transport checks, adding ON→fault→OFF wire
+verification and uncertain-link failure injection. The virtual peer supports
+only the few typed registers needed for real `apply_profile()` and `output()`.
+No new service abstraction or live hardware execution; actual physical
+shutdown still requires operator-confirmed hardware evidence.
+
 ## Next: R4 — SCPI coverage (current priority)
 
 1. **R4.1 inventory:** review vendor 2231A reference manual 077100401 §5,
