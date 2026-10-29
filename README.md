@@ -885,3 +885,20 @@ an application or replacing established measurement workflows.
 
 No additional privileged service route or independent SCPI implementation is
 introduced. See `docs/SCPI_COVERAGE.md` for the per-family evidence state.
+
+## R4.4-B — manual display-only OFF qualification (hardware NOT_RUN)
+
+After R4.4-A software regression, the next separate stage validates only
+`display_enabled()` / `DISP?` on a real PSU, with physically empty terminals
+and all outputs OFF. It cannot energize the PSU and never sends `OUTP 0`.
+
+```bash
+python3 tools/r4_4_display_qualify.py --config config/bench.local.toml
+# After reviewing DRY RUN, physical wiring and operator confirmations:
+python3 tools/r4_4_display_qualify.py --config config/bench.local.toml --execute
+```
+
+The `--execute` form is manual, gated, and not part of CI. Its result must be
+reviewed together with the JSONL evidence. It does **not** verify native
+`MEAS:POW?` or `FETC:*`: their own low-power, profile-bound test is separate.
+See `docs/R4_4_HARDWARE_PLAN.ru.md` for permissions and abort behavior.

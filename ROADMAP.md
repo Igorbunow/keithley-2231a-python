@@ -293,3 +293,16 @@ behavior until individually justified. No changes to `src/` or hardware tests.
   and separate pyserial-equipped verification on the user environment.
 - Next: move to R4 SCPI work rather than extending R3.5 migration indefinitely.
   R4 changes affecting actual output power need separate authorization.
+
+## R4.4-B — bounded OFF-only display query stage (software prepared, HW NOT_RUN)
+
+- New explicit TTY-gated `tools/r4_4_display_qualify.py` and a constrained
+  `tests/hardware/r4_4_display_stage.py` with one `DISP?` via the real driver.
+- No profile, outputs, setpoints or topology changes; only REM/LOC and temporary
+  channel selection for OFF checks. Query errors/timeouts never retry or
+  attempt an unverified shutdown.
+- Virtual-UART tests verify exact wire, readback validation, ON refusal,
+  error-queue polling, no later SCPI after uncertain replies, and dry-run.
+- **Do not declare hardware-qualified until real evidence has been reviewed.**
+  Scalar measurement queries need a separate low-power R4.4-C gated phase;
+  see `docs/R4_4_HARDWARE_PLAN.ru.md`.

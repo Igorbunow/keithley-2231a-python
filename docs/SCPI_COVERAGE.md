@@ -53,7 +53,7 @@
 | CALibration 5-7…5-9 | `CAL:SAVe` | **X** | Постоянное сохранение калибровки |
 | CALibration 5-7…5-9 | `CAL:INITial` | **X** | Инициализация калибровки |
 | CALibration 5-7…5-9 | `CAL:STRing` | **X** | Калибровочные данные |
-| DISPlay 5-9…5-10 | `DISP[:WIND][:STATe] / ?` | **W** | R4.4-A: `display_enabled()` uses query-only `DISP?`; **writes unsupported**, SIM TESTED; HW NOT_RUN |
+| DISPlay 5-9…5-10 | `DISP[:WIND][:STATe] / ?` | **W** | R4.4-A `display_enabled()` query-only `DISP?`; R4.4-B bounded OFF-only runner software-tested, **hardware NOT_RUN**; writes unsupported |
 | DISPlay 5-9…5-10 | `DISP[:WIND]:TEXT[:DATA]` | **U** | Пользовательский текст |
 | DISPlay 5-9…5-10 | `DISP[:WIND]:TEXT:CLEar` | **U** | Очистка текста |
 | INSTrument 5-10…5-12 | `INST[:SELect] / ?` | **U** | Выбор по имени; core применяет NSEL |
@@ -385,3 +385,17 @@ read-only responses, invalid requests before I/O, profile drift before a scalar
 query, strict malformed reply terminal faults, lost responses without unsafe
 post-fault commands, and display reading before profile installation. The peer
 provides canned replies only, **not an electrical model or measurement source**.
+
+## R4.4-B — hardware DISPLAY? OFF-only protocol prepared (HW NOT_RUN)
+
+`tools/r4_4_display_qualify.py` provides an explicit dry-run and a separately
+operator-gated `--execute` for **one** `DISP?` query. A strict stage adapter
+restricts the wire to identity, selected-channel/OFF/topology checks, one
+`DISP?`, and post-query `SYST:ERR?` error-queue consumption. Only
+`SYST:REM`, `INST:NSEL 1/2/3` and `SYST:LOC` session writes are allowed.
+The stage refuses any ON output, combined topology, bad readback, malformed
+boolean or UART loss before further commands; it never sends `OUTP 0`.
+Software simulation checks stage policy; a real hardware execution has not
+yet occurred. A display query is **not** proof of output-off state. The
+other four R4.4-A scalar queries remain SIM TESTED / HW NOT_RUN and await a
+separate low-power approved phase. See `docs/R4_4_HARDWARE_PLAN.ru.md`.
