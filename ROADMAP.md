@@ -35,7 +35,10 @@ not use outdated `v0.2/v0.3/v0.4/v0.5` sketches as engineering milestones.
    R3.5.45 starts a **separate service-profile, typed OFFLINE-ONLY
    plan compiler** for dangerous and calibration commands, with no runtime
    transport and no live service execution. The ordinary driver even blocks
-   service SCPI in diagnostic bypass. See `docs/R4_3_SERVICE_MODE.ru.md`.
+   service SCPI in diagnostic bypass. R3.5.46 adds a **fake-only service
+   state machine** with one-use sequence acknowledgements, independent critical
+   approval, calibration point completion guards and injected-fault stop; it
+   has no live transport. See `docs/R4_3_SERVICE_MODE.ru.md`.
 4. **R4.4 verification:** trace auditor, firmware caveats, documented exclusions,
    targeted operator-approved hardware checks only if indispensable.
 

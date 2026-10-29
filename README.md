@@ -39,7 +39,12 @@ The documented calibration planning scope is `CAL:SEC` / ordered voltage
 independent privileges for saving and destructive initialization. A complete
 calibration adjustment guide is **not** supplied by the reference manual §5;
 real adjustment is prohibited pending vendor service procedure and a separate
-approved execution boundary. See [service mode and calibration guide (RU)](docs/R4_3_SERVICE_MODE.ru.md).
+approved execution boundary. R3.5.46 adds a **synthetic-only service simulator**
+with sequential per-operation approvals, independent critical-action acknowledgement,
+synthetic OFF/idle/identity checks, complete per-channel V/I point ordering,
+and fail-closed fault injection; this simulator has **NO transport**, and its
+`SIMULATED_PASS` must never be interpreted as real PSU evidence.
+See [service mode and calibration guide (RU)](docs/R4_3_SERVICE_MODE.ru.md).
 
 ## Hardware and safety first
 

@@ -85,3 +85,26 @@ access by untrusted Python code is outside library protection. `*TST?` and
 The calibration sequence is an offline proposal only; no complete manufacturer
 adjustment method, hardware verification, external references or runtime gateway
 has been qualified. See `R4_3_SERVICE_MODE.ru.md`; **HW NOT_RUN** throughout.
+
+
+## R4.3-E simulated service actions (R3.5.46)
+
+`service_simulator.ServiceSimulator` executes **no physical SCPI** and accepts
+no transport or prebuilt command plans. It recompiles each approved action
+from a `ServiceProfile` and `ServicePlanner` into a synthetic trace. Strict
+fixture identity/OFF/independent/idle/known-link, fresh operation-specific
+profile acknowledgement, unique sequence-bound simulation acknowledgement,
+and a third critical-action acknowledgement are mandatory. In the synthetic
+calibration flow, unlock is followed by complete V P1-P4 and I P1-P2 per
+chosen channel; `CAL:SAV` is refused if any touched channel is incomplete.
+An incomplete cycle may still model `CAL:SEC ON`, but must report
+`SIMULATED_ABORTED` (never a qualified calibration). Synthetic timeout, SCPI
+error or output drift stops the fake session without further steps or retries.
+
+All replies and error checks are expressly marked FAKE. The simulator neither
+checks the manufacturer command parser nor models real output transitions,
+physical metrology, EEPROM endurance or the password/security behavior of
+firmware 1.04-1.04. Its SHA is an integrity check on an in-memory transcript,
+**not** a signature, audit of the live wire, or authorization. `*TST?` and
+`*PSC` write forms remain vendor-syntax unverified. Real service execution
+is still forbidden; see `docs/R4_3_SERVICE_MODE.ru.md`.
