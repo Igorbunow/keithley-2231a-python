@@ -306,3 +306,15 @@ behavior until individually justified. No changes to `src/` or hardware tests.
 - **Do not declare hardware-qualified until real evidence has been reviewed.**
   Scalar measurement queries need a separate low-power R4.4-C gated phase;
   see `docs/R4_4_HARDWARE_PLAN.ru.md`.
+
+## R4.4-B — physical DISP? evidence reviewed (2026-10-29)
+
+- **HW REVIEWED PASS**, scoped to a single `DISP?=1` reply on physical
+  Keithley 2231A-30-3 firmware `1.04-1.04`, with CH1/2/3 twice verified OFF.
+- Audited 254 JSONL records: 57 queries, 10 writes, 33 zero SCPI errors,
+  no power/setpoint/topology writes. Operator physically confirmed final OFF.
+- A standalone fail-closed offline auditor and its regression tests preserve
+  reproducibility without including local evidence or silently editing it.
+- **R4.4-C measurement query hardware status stays NOT_RUN.** The next
+  controlled step is a separately reviewed powered CH1 procedure with KEL103
+  and DMM7510, not a continuation of the OFF-only test session.

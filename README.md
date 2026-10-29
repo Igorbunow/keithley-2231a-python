@@ -902,3 +902,14 @@ The `--execute` form is manual, gated, and not part of CI. Its result must be
 reviewed together with the JSONL evidence. It does **not** verify native
 `MEAS:POW?` or `FETC:*`: their own low-power, profile-bound test is separate.
 See `docs/R4_4_HARDWARE_PLAN.ru.md` for permissions and abort behavior.
+
+
+### R4.4-B hardware evidence review (2026-10-29)
+
+One OFF-only physical `DISP?=1` observation on firmware `1.04-1.04` is
+**HW REVIEWED PASS** after inspection of the full JSONL/SCPI trace, including
+both CH1–CH3 OFF sweeps and 33 zero error-queue responses. This says nothing
+about real `MEAS:POW?` or `FETC:*` operation, which remains **HW NOT_RUN**.
+See `docs/reviews/R4_4_B_DISPLAY_HW_REVIEW_2026-10-29.md` and run the
+offline-only `tools/audit_r4_4_display_evidence.py` against the original
+unchanged evidence file for reproducibility.
