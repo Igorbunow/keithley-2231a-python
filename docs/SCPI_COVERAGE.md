@@ -447,3 +447,7 @@ is not a transfer of previous H03/H04P powered qualification.
 `INST?` and optional OFF-profile CH1 STEP queries; runner presence and virtual
 UART pass **do not** constitute hardware verification. The VOLT:STEP? reply
 remains firmware-dependent/unknown until original on-wire JSONL review.
+
+## R4.5-B: первое аппаратное наблюдение INST? (29.10.2026)
+
+Терминальный протокол подтверждает один `INST? -> CH1` при `INST:NSEL? -> 1`, всех трёх выходах OFF. **TERMINAL REVIEWED PASS; JSONL PENDING**. Независимая трасса не приложена, `VOLT:STEP?`/`CURR:STEP?` остаются `HW NOT_RUN`.

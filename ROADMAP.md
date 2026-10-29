@@ -370,3 +370,7 @@ Added a default-dry-run, two-gate OFF-only stage: `INST?` without profile,
 then optional independent OFF-profile CH1 `VOLT:STEP?`/`CURR:STEP?` after
 a separate operator decision. No ON command is allowlisted. Hardware reply
 semantics and JSONL independent review remain outstanding.
+
+### R4.5-B INST terminal review (2026-10-29)
+
+Коммит `a1af3d5` и 675 тестов OK; реальное `INST? -> CH1`, OFF три раза по каждому каналу; исходный JSONL отсутствует в приложениях. Отдельный офлайн-аудитор добавлен, STEP квалификация остаётся неиспытанной.

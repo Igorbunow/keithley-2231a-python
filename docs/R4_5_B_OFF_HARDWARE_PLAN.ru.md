@@ -53,3 +53,7 @@ python3 tools/r4_5_source_qualify.py --config config/bench.local.toml
 Успешная проверка одной независимой точки CH1 не доказывает форму STEP-ответа
 на других каналах, влияние шага на активном выходе, его сохранение или
 поведение после изменения UP/DOWN.
+
+## Review первого аппаратного запуска 2026-10-29
+
+`INST? = CH1` подтверждён по терминалу, 675 тестов OK; исходный JSONL пока не приложен. Статус **TERMINAL REVIEWED PASS / JSONL PENDING**, не `HW REVIEWED PASS`. Подробности: `docs/reviews/R4_5_B_INST_TERMINAL_REVIEW_2026-10-29.md`. Для независимой проверки нового оригинального JSONL добавлен `tools/audit_r4_5_source_evidence.py`. STEP-фаза не запускалась.
