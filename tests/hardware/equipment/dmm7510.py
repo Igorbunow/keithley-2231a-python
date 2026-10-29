@@ -96,8 +96,13 @@ class DMM7510:
             raise RuntimeError('DMM7510 voltage session is not ready')
         try:
             value = float(self._transfer(':READ?', query=True))
-            if not math.isfinite(value) or self.range_v is None or abs(value) > self.range_v:
-                raise ValueError('Invalid/overrange DMM7510 voltage')
+            if not math.isfinite(value) or self.range_v is None:
+                raise ValueError('Invalid/nonfinite DMM7510 voltage')
+            if abs(value) > self.range_v:
+                # Preserve the actual observed voltage, unlike the old generic
+                # error. Never auto-range or repeat a questionable measurement.
+                raise ValueError(f'DMM7510 read {value:.9g} V outside configured '
+                                 f'{self.range_v:g} V range')
             return {'voltage_v': value}
         except BaseException:
             self.live, self.configured = False, False

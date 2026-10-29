@@ -331,3 +331,8 @@ behavior until individually justified. No changes to `src/` or hardware tests.
 - Test UART faults, power overrange, wrong topology, operator refusal and
   non-atomic readings offline before operator authorizes powered execution.
 - **HW NOT_RUN / NOT_REVIEWED** until manual powered trace is independently audited.
+
+
+### R4.4-C failed hardware trial — 2026-10-29
+
+The first real powered CH1 scalar attempt is **HW ABORTED**, not HW PASS: DMM7510 returned 11.61243 V on configured 10 V DCV range, while Keithley/KEL103 both measured approximately 3.30 V. The runner correctly stopped and confirmed OFF on all PSU channels and KEL INPUT. Do not re-run on power until DMM wiring/measurement is separately investigated. Full evidence audit: `docs/reviews/R4_4_C_SCALAR_ABORT_2026-10-29.md`. The follow-up fix adds diagnostic detail and immediate cross-meter checking; it is **software-only** and does not change the HW qualification result.

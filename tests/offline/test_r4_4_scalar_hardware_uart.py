@@ -183,6 +183,35 @@ class ScalarHardwareUART(unittest.TestCase):
         self.assertEqual(outcome, 'ABORTED')
         self.assertNotIn('CHAN:OUTP 1', peer.rx)
 
+    def test_finite_wrong_dmm_inside_range_aborts_before_scalar_queries(self):
+        class WrongMeter(FakeMeter):
+            def measure(self):
+                super().measure()
+                return {'voltage_v': 9.5}  # Finite and inside DMM 10-V range.
+        outcome, peer, ev, load, _, _ = self.run_stage(meter=WrongMeter())
+        self.assertEqual(outcome, 'ABORTED')
+        self.assertEqual(peer.rx.count('CHAN:OUTP 1'), 1)
+        self.assertNotIn('MEAS:POW?', peer.rx)
+        self.assertNotIn('FETC:VOLT?', peer.rx)
+        self.assertIn('OUTP 0', peer.rx)
+        self.assertEqual(load.input, 'OFF')
+        self.assertTrue(any('Invalid or overrange DMM U' in e.get('detail', '')
+                            for e in ev.events if e['event'] == 'stage_error'))
+
+    def test_finite_dmm_near_live_limit_but_disagreeing_aborts_early(self):
+        class WrongMeter(FakeMeter):
+            def measure(self):
+                super().measure()
+                return {'voltage_v': 3.45}
+        outcome, peer, ev, load, _, _ = self.run_stage(meter=WrongMeter())
+        self.assertEqual(outcome, 'ABORTED')
+        self.assertNotIn('MEAS:POW?', peer.rx)
+        self.assertNotIn('FETC:CURR?', peer.rx)
+        self.assertIn('OUTP 0', peer.rx)
+        self.assertEqual(load.input, 'OFF')
+        self.assertTrue(any('voltage disagrees' in e.get('detail', '')
+                            for e in ev.events if e['event'] == 'stage_error'))
+
     def test_dmm_failure_causes_verified_off(self):
         class BadMeter(FakeMeter):
             def measure(self): raise TimeoutError('DMM link timeout')

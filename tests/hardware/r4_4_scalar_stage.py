@@ -162,6 +162,15 @@ def run_scalar(transport, load, meter, evidence, *, gate=operator_gate):
         measured_at['kel103_s'] = time.monotonic()
         dmm = meter.measure()
         measured_at['dmm7510_s'] = time.monotonic()
+        # A finite but wrong DMM reading (e.g. 9 V on the 10 V range)
+        # must abort before additional scalar/FETC traffic on live outputs.
+        # Range-only rejection in DMM7510.measure() is not enough.
+        du = _number(dmm['voltage_v'], 'DMM U', maximum=3.55)
+        if (abs(du - reading.voltage_v) > .08 or
+                abs(du - kel['kel103_voltage_v']) > .08):
+            raise SafetyError('DMM7510 voltage disagrees with PSU/KEL: '
+                              f'DMM={du:.6g} V, PSU={reading.voltage_v:.6g} V, '
+                              f'KEL={kel["kel103_voltage_v"]:.6g} V')
         scalar = dev.measure_power(1)
         measured_at['meas_power_s'] = time.monotonic()
         fetched = {}

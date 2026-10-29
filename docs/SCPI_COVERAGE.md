@@ -412,3 +412,8 @@ of PSU/KEL/DMM, invalid values, link failures, conditional independent
 shutdown and absence of new commands after uncertain link. No real
 measurement has been made. **All four commands remain HW NOT_RUN**; this
 is not a transfer of previous H03/H04P powered qualification.
+
+
+#### R4.4-C actual low-power CH1 attempt (2026-10-29)
+
+**HW ABORTED**: during a powered trial, `DMM7510 :READ?=11.61243 V` on a 10 V range disagreed with independent PSU/KEL103 readings (~3.3 V). The guarded runner stopped and confirmed PSU/KEL OFF; **`MEAS:POW?` and all `FETC:*?` were never transmitted**. Accordingly all four new scalar queries remain `HW NOT_RUN` despite passing software regression. Evidence SHA256 and safety audit are documented in `docs/reviews/R4_4_C_SCALAR_ABORT_2026-10-29.md`.

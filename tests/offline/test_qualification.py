@@ -577,8 +577,19 @@ class TestQualification(unittest.TestCase):
             self.assertNotIn('SECRET', evidence.path.read_text())
             self.assertLess(io.cmds.index('*IDN?'), io.cmds.index('*RST'))
             self.assertEqual(io.cmds[:3], ['*IDN?', '*LANG?', ':SYST:ERR?'])
+            io.voltage = '11.61243'
+            with self.assertRaisesRegex(ValueError,
+                                        r'11\.61243 V outside configured 10 V range'):
+                meter.measure()
+            self.assertFalse(meter.live)
+            with self.assertRaises(RuntimeError): meter.measure()
+            # A new, independent fixture is used below for sentinel overflow.
+            io = MeterIO()
+            meter = DMM7510(io, evidence)
+            meter.configure_voltage()
             io.voltage = '9.9e37'
-            with self.assertRaises(ValueError): meter.measure()
+            with self.assertRaisesRegex(ValueError, r'outside configured 10 V range'):
+                meter.measure()
             before = list(io.cmds)
             with self.assertRaises(RuntimeError): meter.measure()
             self.assertEqual(io.cmds, before)
