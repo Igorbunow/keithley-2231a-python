@@ -265,3 +265,19 @@ behavior until individually justified. No changes to `src/` or hardware tests.
   `tests/test_driver.py`; preserve the single qualification-runner fixture.
 - Run the full software suite and a separate target check on the user's
   pyserial environment. **Hardware execution is not authorized by this step**.
+
+## R3.5.64 — finish application-level power-only/sweep UART migration (offline)
+
+- Replace `tests/test_profiles_sweep_bench.py` with combined pure-profile unit
+  checks and production-driver virtual-UART cases in
+  `tests/offline/test_profiles_sweep_uart.py`.
+- Assert forward and reverse sequencing, timed steps, restricted APIs, rated
+  limits, readback uncertainty versus coherent OFF, guarded voltage sweeps,
+  CSV/observer results and validation-before-SCPI behavior.
+- Keep historical qualification-runner transport tests and their one existing
+  `tests/support/qualification_transport.py` fixture: these are not a
+  duplicate production SCPI dispatcher or physical qualification.
+- Gates: full offline tests, compilation, stage path/SHA reproducibility,
+  and separate pyserial-equipped verification on the user environment.
+- Next: move to R4 SCPI work rather than extending R3.5 migration indefinitely.
+  R4 changes affecting actual output power need separate authorization.

@@ -839,3 +839,20 @@ regressions. Removed the duplicate stateful `FakeTransport` definition from
 model. The virtual peer returns fixed digital SCPI readbacks, does not simulate
 combined electrical behavior, and cannot supersede H09/H10 evidence. No
 changes to production code, physical topology or live-test authorization.
+
+## R3.5.64 — power-only sequencing and guarded sweep UART regression (offline)
+
+The remaining application-level `tests/test_profiles_sweep_bench.py` transport
+mock has been retired. Its profile-data validation cases stay pure unit tests;
+its driver-facing cases now run against the **production `Keithley2231A`** using
+the existing virtual UART in `tests/offline/test_profiles_sweep_uart.py`.
+Coverage includes rated `unrestricted` bounds, `power_only` access gates,
+two- and three-channel forward/reverse power sequencing and host delays,
+coherent versus lost output readback, voltage-sweep CSV/observer data, invalid
+sweep preflight and safe OFF on completion or observer failure. No independent
+SCPI emulator, new production safety path or hardware-qualification claim.
+
+Remaining `FakeTransport` uses in qualification-runner/stage tests are retained
+intentionally: they exercise runner and evidence mechanisms, not physical
+Keithley operation. The virtual UART only returns digital SCPI responses;
+it cannot establish actual powered Series/Parallel or H09/H10 results.
