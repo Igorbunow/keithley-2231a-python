@@ -60,6 +60,18 @@ CRLF bytes and command order are checked, with `SerialTransport` selected
 when `pyserial` is available. No production driver or hardware runner change.
 The remaining historical fake-backed tests still need selective migration.
 
+**R3.5.52 R4.2 event-query UART migration:** all 12 R4.2-B event-consumption
+regression tests now send SCPI through the actual `Keithley2231A` and a
+strict POSIX virtual UART, replacing the remaining event-test `FakeTransport`
+subclass. The UART peer models three independent read-to-clear event latches:
+`*ESR?`, `STAT:QUES:EVEN?`, `STAT:OPER:EVEN?`. The test confirms exact CRLF
+and preflight order, one explicit destructive query, channel restoration,
+no automatic error-queue polls or extra latch reads, and fail-stop on an ON
+channel, invalid response or lost answer. A simulated latch clear does **not**
+prove that physical firmware cleared it; the 2026-10-29 hardware event run
+remains the only bounded physical qualification. No driver or hardware stage
+was modified.
+
 **Safety hold:** calibration commands, unverified `*TST?`/`*PSC` write syntax,
 and calibration-password handling remain blocked on the driver wire path until
 their vendor procedure is fully reviewed. No service hardware test is authorized.

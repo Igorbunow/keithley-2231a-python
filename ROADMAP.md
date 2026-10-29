@@ -36,6 +36,19 @@ injects an already-armed in-memory driver state (not a physical arming test).
 The test UART returns only canned allowlisted replies; no real instrument,
 calibration or event-consuming reads. Other historical mocks remain pending.
 
+## R3.5.52 — event-consumption tests on actual driver wire
+
+Replace the last R4.2-B `FakeTransport` event-test subclass with the production
+`Keithley2231A` over the existing strict virtual UART. The test peer exposes
+only three read-to-clear latch fixtures and deliberately consumes the latch
+before a response can be lost. Assert exact OFF preflight, channel restoration,
+wire CRLF, one explicitly authorized event query, and no retries or implicit
+`SYST:ERR?`/event clears. Compare the pre-event command sequence against the
+previously independently reviewed R4.2 EVENT evidence, accounting for the
+hardware stage's own separate SCPI error polls. No new hardware or calibration
+commands and no new execution layer. Actual physical latch-clearing effect
+remains unverified by a repeated hardware read.
+
 ## Next: R4 — SCPI coverage (current priority)
 
 1. **R4.1 inventory:** review vendor 2231A reference manual 077100401 §5,

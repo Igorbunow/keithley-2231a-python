@@ -189,6 +189,22 @@
   `*ESR?=128` (PON), QUES=0, OPER=0. Clear-after-read was not tested with a
   second read. See [EVENT review](hardware_reports/R4_2_EVENT_review_2026-10-29.md).
 
+### R3.5.52 — event query virtual-UART regression (NO new HW qualification)
+
+The R4.2-B `consume_status_event()` offline tests now use the **production
+`Keithley2231A` through the normal SCPI dispatcher** and a POSIX virtual UART.
+A minimal peer returns independent clear-on-read fixture values for `*ESR?`,
+`STAT:QUES:EVEN?` and `STAT:OPER:EVEN?`. This checks exact transmitted bytes,
+OFF-preflight selection/restore, explicit acknowledgement and exactly one
+read-to-clear query per call. An invalid/lost event reply is modeled as
+**already consumed**, then the driver must forbid every further command;
+a failed preflight must not consume any event. The test peer is only a UART
+response fixture, not a parallel instrument driver or evidence of an actual
+firmware latch clearing. Previously reviewed R4.2 event hardware evidence
+contains the same preflight sequence modulo explicit `SYST:ERR?` polls made by
+the separate hardware qualification runner. The public event API itself does
+not drain the error queue after the destructive read.
+
 ## R4.2-C — nested status enable masks (SIM TESTED, HW REVIEWED PASS: READ_ONLY 2026-10-29)
 
 - `status_instrument_enable_mask(register, *, channel=None)` reads *only* the

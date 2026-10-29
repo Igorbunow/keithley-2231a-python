@@ -80,6 +80,10 @@ class UARTPeer:
         self.drop = drop
         self.fault_code = fault_code
         self.off_by_channel = off_by_channel or {}
+        # Three documented read-to-clear event latches; the peer is a wire
+        # fixture, not a second implementation of the Keithley driver.
+        self.event_latches = {'*ESR?': '7', 'STAT:QUES:EVEN?': '129',
+                              'STAT:OPER:EVEN?': '255'}
         self.selected = 1
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._serve, daemon=True)
@@ -115,7 +119,8 @@ class UARTPeer:
                     status_reads.update(f'{prefix}:ISUM{ch}:ENAB?' for ch in (1, 2, 3))
                 allowed_reads = {'*IDN?', 'INST:NSEL?', 'CHAN:OUTP?',
                                  'SYST:ERR?', 'OUTP:SER?', 'OUTP:PARALLEL?',
-                                 'OUTP:TRAC?', '*ESE?', '*SRE?', '*PSC?', '*OPC?'} | status_reads
+                                 'OUTP:TRAC?', '*ESE?', '*SRE?', '*PSC?', '*OPC?',
+                                 '*ESR?', 'STAT:QUES:EVEN?', 'STAT:OPER:EVEN?'} | status_reads
                 if cmd not in (allowed_reads if is_query else allowed_writes):
                     self.unsupported.append(cmd)
                     # An unknown write is rejected at the next error poll;
@@ -124,6 +129,13 @@ class UARTPeer:
                         self.fault_code = '130,"Unsupported virtual UART command"'
                 if cmd == self.fault_after:
                     self.fault_code = '120,"Injected SCPI error"'
+                # The event value is consumed as soon as the QUERY reaches the
+                # peer, even when a response is dropped or malformed. A lost
+                # event response must never cause the driver to query again.
+                event_reply = None
+                if cmd in self.event_latches:
+                    event_reply = self.event_latches[cmd]
+                    self.event_latches[cmd] = '0'
                 if not is_query or cmd == self.drop:
                     continue
                 if cmd in self.response_sequences:
@@ -131,6 +143,8 @@ class UARTPeer:
                     response = values.pop(0) if len(values) > 1 else values[0]
                 elif cmd in self.overrides:
                     response = self.overrides[cmd]
+                elif event_reply is not None:
+                    response = event_reply
                 elif cmd == '*IDN?':
                     response = f'Keithley instruments, 2231A-30-3, {self.serial}, 1.04-1.04'
                 elif cmd == 'SYST:MODU?': response = '2231,1.04'
