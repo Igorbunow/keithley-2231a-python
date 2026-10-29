@@ -61,7 +61,8 @@ class UARTPeer:
     """Canned protocol fixture; no independent driver or service state machine."""
     def __init__(self, *, serial='LAB-UNIT-001', response_overrides=None, drop=None,
                  fault_code=None, off_by_channel=None, response_sequences=None,
-                 fault_after=None, profile_registers=False):
+                 fault_after=None, profile_registers=False,
+                 channel_response_sequences=None):
         self.master, slave = os.openpty()
         tty.setraw(self.master)
         tty.setraw(slave)
@@ -77,6 +78,18 @@ class UARTPeer:
         if any(not values for values in self.response_sequences.values()):
             raise ValueError('virtual UART response sequences cannot be empty')
         self.fault_after = fault_after
+        # Explicit per-channel replies for measured digital readbacks. A sequence
+        # is supplied by the test, not calculated from another channel's write:
+        # coupling is firmware/hardware behavior, not part of this fixture.
+        self.channel_response_sequences = {
+            key: list(values) for key, values in (channel_response_sequences or {}).items()
+        }
+        if any(not values or not isinstance(key, tuple) or len(key) != 2 or
+               key[0] not in (1, 2, 3) or key[1] != 'VOLT?'
+               for key, values in self.channel_response_sequences.items()):
+            raise ValueError('selected channel VOLT? sequences must be nonempty')
+        if self.channel_response_sequences and not profile_registers:
+            raise ValueError('channel readback script requires profile_registers')
         self.overrides = response_overrides or {}
         self.drop = drop
         self.fault_code = fault_code
@@ -201,6 +214,9 @@ class UARTPeer:
                     base = 100 if cmd.startswith('STAT:OPER:') else 0
                     channel = int(cmd.split(':ISUM')[-1].split(':')[0]) if ':ISUM' in cmd else 0
                     response = str(base + 11 + channel)
+                elif self.profile_registers and (self.selected, cmd) in self.channel_response_sequences:
+                    replies = self.channel_response_sequences[self.selected, cmd]
+                    response = replies.pop(0) if len(replies) > 1 else replies[0]
                 elif cmd == 'INST:NSEL?': response = str(self.selected)
                 elif cmd == 'CHAN:OUTP?': response = str(self.off_by_channel.get(self.selected, 0))
                 elif self.profile_registers and cmd == 'OUTP:STAT:ALL?':

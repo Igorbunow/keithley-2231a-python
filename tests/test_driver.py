@@ -436,33 +436,6 @@ class TestDevice(unittest.TestCase):
         self.assertIn('OUTP 0', self.fake.cmds)
 
 
-    def test_tracking_voltage_checks_both_channels_and_preserves_ratio(self):
-        for ratio in (1, 2):
-            with self.subTest(ratio=ratio):
-                fake = FakeTransport()
-                dev = Keithley2231A(fake)
-                dev.apply_profile(Profile('tracking', (
-                    ChannelProfile(2, .3, 1, .1),
-                    ChannelProfile(3, .4, ratio, .2),
-                    ChannelProfile(4, .5, .5, .3)), wiring='tracking'), confirmed_wiring='independent')
-                dev.set_tracking_voltage(1, 1.2)
-                self.assertAlmostEqual(fake.values[2]['VOLT'], 1.2 * ratio)
-                dev.set_tracking_voltage(2, ratio)
-                dev.verify_profile()
-                self.assertAlmostEqual(fake.values[1]['VOLT'], 1)
-                # CH1 is within its own cap; the linked CH2 is outside its cap.
-                for ch, value in ((1, 1.6 if ratio == 2 else 2.01),
-                                  (1, 0), (1, float('nan')), (1, .001), (3, 1),
-                                  (2, .01 if ratio == 2 else 3.01)):
-                    before = list(fake.cmds)
-                    with self.assertRaises((LimitsError, SafetyError)):
-                        dev.set_tracking_voltage(ch, value)
-                    self.assertEqual(fake.cmds, before)
-                fake.tracking_fault = True
-                with self.assertRaises(SafetyError): dev.set_tracking_voltage(1, 1.2)
-                self.assertFalse(dev.armed)
-                self.assertIn('OUTP 0', fake.cmds)
-
     def test_parallel_to_independent_requires_new_manual_confirmation(self):
         """An OFF command does not imply physical jumpers were removed."""
         source = FakeTransport()

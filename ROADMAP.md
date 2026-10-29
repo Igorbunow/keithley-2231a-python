@@ -192,3 +192,14 @@ without unsafe retries). The peer exposes only digital SCPI readbacks, no
 independent instrument control logic or electrical simulation. Keep the old
 voltage-coupling and physical Series/Parallel scenarios until a truthful
 bounded test can replace them. No real-hardware testing is implied.
+
+## R3.5.59 — Tracking voltage readbacks via production-driver virtual UART
+
+The historical FakeTransport tracking-voltage test is migrated to three
+production-driver/PTY tests for ratios 1:1 and 1:2: pre-I/O rejection of
+out-of-cap, zero, nonfinite, unresolvable, and wrong-channel setpoints;
+accepted CH1/CH2 SCPI writes with explicit, **per-channel scripted** VOLT?
+responses; and linked-channel readback disagreement causing a fault with
+confirmed OFF. No automatic linked-channel voltage simulation was introduced:
+scripted replies are protocol fixtures, **not** measured coupling or a
+substitute for H08. No change to production SCPI or physical qualifications.

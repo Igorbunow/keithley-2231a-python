@@ -767,3 +767,14 @@ responses; it does not model linked-voltage regulation, actual timer expiry,
 physical connections or real power. Hardware H05/H06/H08/H09/H10 evidence
 and hardware authorization remain unchanged. No production SCPI or safety
 logic was modified.
+
+## R3.5.59 — scripted Tracking readback software qualification
+
+Tracking voltage changes now have three POSIX-PTY regression tests using the
+production `Keithley2231A` driver. They check software ratio calculation,
+pre-command safety gates, separate CH1/CH2 register queries, and a confirmed
+OFF response after a mismatched linked readback. The test peer supplies
+**explicit per-channel `VOLT?` values**, never computes a coupled channel's
+voltage from the other's write. Electrical Tracking 1:1/1:2 remains qualified
+only to the extent established by historical **hardware H08** measurements;
+this patch neither changes the driver nor makes any new hardware claim.
