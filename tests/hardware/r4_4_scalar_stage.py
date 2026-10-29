@@ -129,7 +129,7 @@ def run_scalar(transport, load, meter, evidence, *, gate=operator_gate):
             debug_adapter=lambda wire: R44ScalarScope(wire, evidence))
         io = dev.debug_transport
         identity = dev.identity()
-        evidence.add('psu_identity', response=identity)
+        evidence.add('psu_identity', command='*IDN?', response=identity)
         if 'KEL103' not in load.identify().upper():
             raise SafetyError('Unexpected KEL103 identity')
         if load.input_state() != 'OFF':

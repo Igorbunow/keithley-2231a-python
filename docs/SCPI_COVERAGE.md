@@ -64,11 +64,11 @@
 | INSTrument 5-10…5-12 | `INST:COMBine:OFF` | **U** | Проверить топологические эффекты |
 | INSTrument 5-10…5-12 | `INST:COUPle[:TRIGger] / ?` | **R** | Связь триггеров/каналов |
 | MEASure 5-12…5-13 | `MEAS[:SCAL]:VOLT[:DC]?` | **W** | `read_channel()` вызывает `MEAS:VOLT?` |
-| MEASure 5-12…5-13 | `FETCh[:VOLT][:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "voltage")`, query-only `FETC:VOLT?`, SIM TESTED / HW NOT_RUN |
+| MEASure 5-12…5-13 | `FETCh[:VOLT][:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "voltage")`, query-only `FETC:VOLT?`; R4.4-C HW REVIEWED PASS (one Independent CH1 low-power value 3.2996 V; freshness UNVERIFIED) |
 | MEASure 5-12…5-13 | `MEAS[:SCAL]:CURR[:DC]?` | **W** | `read_channel()` вызывает `MEAS:CURR?` |
-| MEASure 5-12…5-13 | `FETCh:CURR[:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "current")`, query-only `FETC:CURR?`, SIM TESTED / HW NOT_RUN |
-| MEASure 5-12…5-13 | `MEAS[:SCAL]:POW[:DC]?` | **W** | R4.4-A: `measure_power(ch)` performs `MEAS:POW?`; `Reading.power_w` remains U×I; SIM TESTED / HW NOT_RUN |
-| MEASure 5-12…5-13 | `FETCh:POW[:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "power")`, query-only `FETC:POW?`, SIM TESTED / HW NOT_RUN |
+| MEASure 5-12…5-13 | `FETCh:CURR[:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "current")`, query-only `FETC:CURR?`; R4.4-C HW REVIEWED PASS (one CH1 low-power value 0.0811749 A; freshness UNVERIFIED) |
+| MEASure 5-12…5-13 | `MEAS[:SCAL]:POW[:DC]?` | **W** | R4.4-A: `measure_power(ch)` performs `MEAS:POW?`; `Reading.power_w` remains U×I; R4.4-C HW REVIEWED PASS (one CH1 point 0.267863 W) |
+| MEASure 5-12…5-13 | `FETCh:POW[:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "power")`, query-only `FETC:POW?`; R4.4-C HW REVIEWED PASS (one CH1 low-power value 0.267907 W; freshness UNVERIFIED) |
 | OUTPut 5-14…5-16 | `OUTP[:STATe][:ALL] / ?` | **W** | `OUTP 0`, guarded global output, readback |
 | OUTPut 5-14…5-16 | `CHAN:OUTP[:STATe] / ?` | **W** | Один канал; при ON нужны профиль и gate |
 | OUTPut 5-14…5-16 | `OUTP:ENABle / ?` | **U** | EnableChannels semantics ещё не сопоставлены |

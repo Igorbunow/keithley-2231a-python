@@ -336,3 +336,15 @@ behavior until individually justified. No changes to `src/` or hardware tests.
 ### R4.4-C failed hardware trial — 2026-10-29
 
 The first real powered CH1 scalar attempt is **HW ABORTED**, not HW PASS: DMM7510 returned 11.61243 V on configured 10 V DCV range, while Keithley/KEL103 both measured approximately 3.30 V. The runner correctly stopped and confirmed OFF on all PSU channels and KEL INPUT. Do not re-run on power until DMM wiring/measurement is separately investigated. Full evidence audit: `docs/reviews/R4_4_C_SCALAR_ABORT_2026-10-29.md`. The follow-up fix adds diagnostic detail and immediate cross-meter checking; it is **software-only** and does not change the HW qualification result.
+
+
+### R4.4-C one-point hardware review, 2026-10-29
+
+**HW REVIEWED PASS, bounded:** one Independent CH1 3.30 V / 0.150 A limit /
+KEL CR 40 Ω point, with independently consistent PSU, KEL103 and DMM7510
+measurements. Real `MEAS:POW?=0.267863 W`, `FETC:VOLT?=3.2996 V`,
+`FETC:CURR?=0.0811749 A`, `FETC:POW?=0.267907 W`. Buffer freshness and
+synchronized sampling are **not** demonstrated. No new higher-power or topology
+qualification. Review: `docs/reviews/R4_4_C_SCALAR_HW_REVIEW_2026-10-29.md`;
+raw evidence SHA-256 `138942d72bc95c3bacba15ed776372d7207b48333fef7ee4b41f4f76790b340c`.
+Corrected future `psu_identity` event redaction without touching raw evidence.

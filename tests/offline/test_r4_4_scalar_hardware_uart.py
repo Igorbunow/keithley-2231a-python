@@ -95,6 +95,8 @@ class ScalarHardwareUART(unittest.TestCase):
         self.assertEqual(load.input, 'OFF')
         self.assertTrue(load.closed and meter.closed)
         self.assertFalse(peer.unsupported, peer.unsupported)
+        identity_event = next(e for e in ev.events if e['event']=='psu_identity')
+        self.assertEqual(identity_event['command'], '*IDN?')
         measurement = next(e for e in ev.events if e['event']=='scalar_measurements')
         self.assertEqual(measurement['fetch_is_fresh'], 'UNVERIFIED')
 
