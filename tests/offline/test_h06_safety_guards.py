@@ -136,7 +136,7 @@ class H06RecallGuardsTests(unittest.TestCase):
     def test_initial_on_never_starts_recall_profile_or_power_cycle(self):
         from h06_recall import recall
         from qualification import Evidence
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         source = FakeTransport()
         source.values[2]['CHAN:OUTP'] = 1.0
         with tempfile.TemporaryDirectory() as tmp:
@@ -154,7 +154,7 @@ class H06RecallGuardsTests(unittest.TestCase):
     def test_recall_evidence_failure_cannot_skip_emergency_off(self):
         from h06_recall import recall
         from qualification import Evidence
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         class FaultyEvidence(Evidence):
             def add(self, event, **kw):
                 if event in ('recall_boot_observation', 'stage_error'):

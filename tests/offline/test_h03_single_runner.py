@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from bench_config import H03SingleCVCC
 from qualification import Evidence
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 import single_cvcc_stage as stage
 
 

@@ -10,7 +10,7 @@ import sys
 import unittest
 
 from keithley2231a import Keithley2231A, InstrumentError, SafetyError
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tests/hardware'))

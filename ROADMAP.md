@@ -230,3 +230,19 @@ combining, channel current sharing, voltage coupling, or real OFF confirmation.
 The hardware H09/H10 and CH3 firmware caveats remain unchanged. Other
 `FakeTransport` unit tests not yet migrated must retain their original
 behavior until individually justified. No changes to `src/` or hardware tests.
+
+## R3.5.62 — batched offline driver guard migration and fixture ownership
+
+- Replace remaining `tests/test_driver.py` FakeTransport-backed test methods
+  with 11 `Keithley2231A` POSIX virtual-UART cases, including safety around
+  absent replies and invalid host transport types. Explicitly distinguish
+  coherent verified shutdown from uncertain-link no-retry semantics.
+- Move the existing qualification-only FakeTransport implementation unchanged
+  into `tests/support/qualification_transport.py` and update all direct
+  consumers, without introducing compatibility imports, SCPI execution
+  alternatives, or duplicating stage logic.
+- Existing qualification runner tests using a synthetic transport are retained
+  as **offline runner tests**, not converted to electrical evidence. No H09/H10
+  requalification or live output permission is implied by this patch.
+- Gate: full software suite + `compileall`, staged patch SHA match, and no
+  production source modifications.

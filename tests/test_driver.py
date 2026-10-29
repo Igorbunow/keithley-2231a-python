@@ -1,7 +1,6 @@
-import math
 import unittest
-from keithley2231a import (Profile, ProfileError, ChannelProfile, InstrumentError, LimitsError, SafetyError,
-                          SeriesProfile, ParallelProfile, Keithley2231A, Acquisition, ChannelStats, Reading)
+from keithley2231a import (Profile, ProfileError, ChannelProfile, LimitsError,
+                          SeriesProfile, ChannelStats, Reading)
 
 class FakeTransport:
     """Stateful minimal SCPI emulator; validates command sequences, no hardware."""
@@ -132,171 +131,6 @@ class TestProfile(unittest.TestCase):
         self.assertEqual(p.channels[2].max_voltage, 3.3)
         self.assertEqual(p.wiring, 'independent')
 
-class TestDevice(unittest.TestCase):
-    def setUp(self):
-        self.fake = FakeTransport()
-        self.dev = Keithley2231A(self.fake)
-        self.dev.apply_profile(profile(), confirmed_wiring='independent')
-
-
-
-
-
-
-    def test_debug_profile_bypass_is_explicit_and_soft_rejection_sends_nothing(self):
-        class VoltageLimitedFake(FakeTransport):
-            pending_error = False
-
-            def write(self, command):
-                values = self.values[self.active_ch]
-                before = values['VOLT']
-                super().write(command)
-                if (command.startswith('VOLT ') and values['VOLT:LIM:STAT'] and
-                        values['VOLT'] > values['VOLT:LIM']):
-                    values['VOLT'] = before
-                    self.pending_error = True
-
-            def query(self, command):
-                answer = super().query(command)
-                if command == 'SYST:ERR?' and self.pending_error:
-                    self.pending_error = False
-                    return '120,"Out of voltage setting range"'
-                return answer
-
-        fake = VoltageLimitedFake()
-        dev = Keithley2231A(fake, debug=True)
-        dev.apply_profile(profile(), confirmed_wiring='independent')
-        before = list(fake.cmds)
-        with self.assertRaises(LimitsError): dev.diagnostic_write('VOLT 3.31')
-        self.assertEqual(fake.cmds, before)
-        dev.debug_bypass_profile = True
-        with self.assertRaises(LimitsError): dev.set_channel(3, voltage=3.31)
-        self.assertEqual(fake.cmds, before)
-        dev.diagnostic_write('VOLT 3.31')
-        self.assertEqual(fake.cmds[-1], 'VOLT 3.31')
-        self.assertEqual(dev.diagnostic_query('SYST:ERR?'), '120,"Out of voltage setting range"')
-        self.assertEqual(fake.values[3]['VOLT'], 1.0)
-        dev.debug_bypass_profile = False
-        before = list(fake.cmds)
-        with self.assertRaises(LimitsError): dev.diagnostic_write('VOLT 3.31')
-        self.assertEqual(fake.cmds, before)
-        ordinary = Keithley2231A(FakeTransport())
-        with self.assertRaises(SafetyError): ordinary.debug_bypass_profile = True
-        wrong = FakeTransport()
-        dev = Keithley2231A(wrong, debug=True, debug_bypass_profile=True, expected_serial='OTHER')
-        dev.diagnostic_write('SYST:REM')
-        with self.assertRaises(InstrumentError): dev.diagnostic_write('VOLT 1.00')
-        self.assertEqual(wrong.cmds, ['SYST:REM', '*IDN?'])
-
-
-
-
-    def test_non_string_scpi_reply_fails_closed_before_trace_or_more_io(self):
-        class NonStringStatus(FakeTransport):
-            def query(self, command):
-                reply = super().query(command)
-                return None if command == 'SYST:VERS?' else reply
-
-        fake = NonStringStatus()
-        dev = Keithley2231A(fake)
-        dev.apply_profile(profile(), confirmed_wiring='independent')
-        dev.output(1, True)
-        off_before = fake.cmds.count('OUTP 0')
-        with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE'):
-            dev.status()
-        self.assertEqual(fake.cmds[-1], 'SYST:VERS?')
-        self.assertEqual(fake.cmds.count('OUTP 0'), off_before)
-        self.assertTrue(fake.values[1]['CHAN:OUTP'])
-
-
-
-
-    def test_interrupted_wire_query_latches_uncertain_link_for_both_modes(self):
-        from keithley2231a import TransportError
-
-        class InterruptedFake(FakeTransport):
-            def query(self, command):
-                if command == 'CHAN:OUTP?':
-                    self.cmds.append(command)
-                    raise KeyboardInterrupt()
-                return super().query(command)
-
-        for debug in (False, True):
-            with self.subTest(debug=debug):
-                fake = InterruptedFake()
-                dev = Keithley2231A(fake, debug=debug)
-                with self.assertRaises(KeyboardInterrupt): dev.output_states()
-                before = list(fake.cmds)
-                with self.assertRaises(TransportError): dev.emergency_off()
-                self.assertEqual(fake.cmds, before)
-                self.assertTrue(dev.faulted)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    def test_connection_failure_attempts_off(self):
-        self.fake.failed_query = 'VOLT:LIM?'
-        with self.assertRaises(SafetyError): self.dev.verify_profile()
-        self.assertFalse(self.dev.armed)
-        self.assertIn('OUTP 0', self.fake.cmds)
-
-
-
-
-
-
-    def test_status_io_failure_disarms(self):
-        self.fake.failed_query = 'SYST:VERS?'
-        with self.assertRaises(SafetyError): self.dev.status()
-        self.assertTrue(self.dev.faulted)
-        with self.assertRaises(SafetyError): self.dev.output(1, True)
-
-    def test_output_requires_boolean_without_io(self):
-        before = len(self.fake.cmds)
-        with self.assertRaises(ValueError): self.dev.output(1, 'OFF')
-        self.assertEqual(len(self.fake.cmds), before)
-
-    def test_identity_rejects_similar_model_and_channel_requires_integer(self):
-        from keithley2231a import InstrumentError
-        for channel in (1.0, True, '1'):
-            with self.subTest(channel=channel):
-                with self.assertRaises(ValueError): self.dev.output(channel, True)
-        original = self.fake.query
-        self.fake.query = lambda cmd: 'Keithley instruments, 2231A-30-30, TEST, fw' if cmd == '*IDN?' else original(cmd)
-        with self.assertRaises(InstrumentError): self.dev.identity()
-        self.assertFalse(self.dev.armed)
-
-
-
-
-
-
-    def test_generic_profile_rejects_parallel_mode(self):
-        p = profile()
-        with self.assertRaisesRegex(ProfileError, 'ParallelProfile'):
-            Profile('legacy parallel', p.channels, wiring='parallel')
-
-
-    def test_close_safely_disarms(self):
-        self.dev.output(1, True)
-        self.dev.close()
-        self.assertEqual(self.fake.flags['OUTP:STAT:ALL'], 0)
-        self.assertTrue(self.fake.closed)
-
 class TestStats(unittest.TestCase):
     def make(self, timestamp, amps, volts=2, enabled=True):
         return Reading(1, 'utc', timestamp, volts, amps, volts*amps, 'CV', enabled, 'CH1')
@@ -324,26 +158,6 @@ class TestStats(unittest.TestCase):
         s.add(self.make(101,1,enabled=False), max_gap_s=10)
         self.assertEqual(s.ampere_hours,0)
 
-
-    def test_acquisition_does_not_start_sample_after_duration(self):
-        from unittest.mock import patch
-
-        class ClockStop:
-            now = 0.0
-            def is_set(self): return False
-            def wait(self, seconds):
-                self.now += seconds
-                return False
-
-        fake = FakeTransport()
-        dev = Keithley2231A(fake)
-        dev.apply_profile(profile(), confirmed_wiring='independent')
-        stop = ClockStop()
-        acquisition = Acquisition(dev, interval_s=2.0)
-        with patch('keithley2231a.monitor.time.monotonic', lambda: stop.now):
-            acquisition.run(duration_s=1.0, stop_event=stop)
-        self.assertEqual(acquisition.stats[1].voltage.count, 1)
-        self.assertEqual(stop.now, 1.0)
 
 
 class TestTransportNetwork(unittest.TestCase):

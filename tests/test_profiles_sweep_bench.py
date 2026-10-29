@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from test_driver import FakeTransport, profile
+from support.qualification_transport import FakeTransport
+from test_driver import profile
 from keithley2231a import (Profile, ChannelProfile, PowerStep, ProfileError,
                             LimitsError, Keithley2231A, SafetyError, voltage_sweep,
                             )

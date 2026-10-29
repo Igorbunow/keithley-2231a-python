@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 from qualification import Evidence
 from combined_off_stage import run_combined_off
 

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 from qualification import Evidence, main, stages
 from bench_config import EXAMPLE, activate_bench, load_bench
 from connection_gate import required_devices

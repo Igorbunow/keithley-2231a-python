@@ -16,7 +16,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).parent / 'hardware'))
 from h12_stage import H12Scope, h12, safe_profile
 from keithley2231a import Keithley2231A, SafetyError, TransportError
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 
 
 class Evidence:

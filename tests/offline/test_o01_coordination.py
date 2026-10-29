@@ -7,7 +7,8 @@ import unittest
 from dataclasses import replace
 from unittest.mock import patch
 
-from test_driver import FakeTransport, profile
+from support.qualification_transport import FakeTransport
+from test_driver import profile
 from keithley2231a import (Keithley2231A, SafetyError, TimedVoltageObserver,
                             coordinated_voltage_sweep, verify_coordinated_csv)
 

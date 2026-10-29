@@ -195,7 +195,7 @@ class H10FullSequenceTests(unittest.TestCase):
     def test_full_cli_runs_actual_stage_runners_on_fake_hardware(self):
         """Integration: real dispatch + OFF/low/high runners, no physical transports."""
         from qualification import EXAMPLE
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         import h10_powered_stage
         class Source(FakeTransport):
             def __init__(self):

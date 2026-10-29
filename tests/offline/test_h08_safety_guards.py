@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 import h08_stage
 from qualification import Evidence
 from keithley2231a import SafetyError

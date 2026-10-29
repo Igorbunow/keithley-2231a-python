@@ -800,3 +800,22 @@ these tests cannot validate physical Series/Parallel wiring, power delivery,
 output shutdown, or electrical CV/CC operation. Original hardware evidence
 and its limits are not reclassified. `tests/test_driver.py` keeps unrelated
 legacy mocks until their separate cases have appropriate real-driver coverage.
+
+## R3.5.62 — remaining driver guards, isolated qualification fixture (offline)
+
+A batch of 11 production-driver/PTY checks replaces the remaining direct
+`FakeTransport` protocols in `tests/test_driver.py` (including acquisition
+clock boundaries). Explicit diagnostic bypass, serial binding, wrong channel
+types, non-string transport replies, `KeyboardInterrupt`, lost versus coherent
+readbacks, and verified versus uncertain shutdown are tested over the real
+`Keithley2231A` dispatcher. Invalid non-string/interrupt transport behavior
+uses boundary injection **after** the real wire query rather than a second SCPI
+interpreter. No changes to the production package, electrical qualifications,
+or permissions for live tests.
+
+The **unchanged** pre-existing stateful `FakeTransport` is now owned by
+`tests/support/qualification_transport.py` rather than imported from
+`tests/test_driver.py`. It remains an offline fixture for qualification-runner
+logic, topology/status unit scenarios, and evidence tests; its state changes
+are *not* physical-device verification. All historical consumers import this
+single fixture directly, with no compatibility forwarding shim.

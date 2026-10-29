@@ -14,7 +14,7 @@ from keithley2231a import SafetyError
 from h07_stage import _check_live_measurements, h07
 from common import release_psu_and_load
 from qualification import Evidence
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 
 
 def readings():

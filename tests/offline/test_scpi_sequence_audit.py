@@ -17,7 +17,7 @@ from qualification import Evidence, h01
 from tools.audit_hw_scpi import audit, main as audit_main
 from profile_stage import (H02_CHANNELS, H02_HARD_PROBES, H02_PANEL_TOKEN,
                            H02_DEBUG_TOKEN, h02)
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 
 
 class ScpiSequenceAuditTests(unittest.TestCase):

@@ -11,7 +11,7 @@ from unittest import mock
 
 from qualification import Evidence, main
 from aux_revision_stage import SELECTION_PLAN, run_sequence
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 from tools.audit_hw_scpi import audit_aux_revision_records, audit
 
 

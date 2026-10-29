@@ -26,7 +26,7 @@ class TestQualification(unittest.TestCase):
         return qualification
 
     def test_combined_off_diagnostic_never_energizes_and_stops_on_error(self):
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         import importlib.util
         self.assertIsNotNone(importlib.util.find_spec('combined_off_stage'), 'Shared combined OFF runner is missing')
         import combined_off_stage
@@ -99,7 +99,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h09_powered_preflight_is_explicit_and_global_on_is_gated(self):
         import h09_powered_stage
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         from keithley2231a import SafetyError
         with contextlib.redirect_stdout(io.StringIO()) as output:
             h09_powered_stage.preflight('/dev/ttyUSB3', load_transport='serial')
@@ -121,7 +121,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h10_powered_preflight_and_global_on_gate(self):
         import h10_powered_stage
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         from keithley2231a import SafetyError
         with contextlib.redirect_stdout(io.StringIO()) as output:
             h10_powered_stage.preflight('/dev/ttyUSB3', load_transport='serial')
@@ -146,7 +146,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h10_powered_runner_uses_shared_driver_and_checks_cv_cc(self):
         import h10_powered_stage
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         class ParallelSource(FakeTransport):
             def __init__(self):
@@ -262,7 +262,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h10_high_current_runner_requires_4a_cc_measurement_and_final_off(self):
         import h10_powered_stage
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         self.assertTrue(hasattr(h10_powered_stage, 'h10_high_current'),
                         'H10 high-current path is missing')
@@ -390,7 +390,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h10_high_current_mismatched_cv_stops_before_cc(self):
         import h10_powered_stage
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         from keithley2231a import SafetyError
         with tempfile.TemporaryDirectory() as tmp:
             evidence = self.module().Evidence(Path(tmp) / 'events.jsonl', 'H10')
@@ -419,7 +419,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h09_powered_runner_reuses_driver_for_cv_cc_and_restores_all_off(self):
         import h09_powered_stage
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         class SeriesSource(FakeTransport):
             def __init__(self):
@@ -628,7 +628,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h08_tracking_dmm_gates_timer_and_failures(self):
         import h08_stage
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         class Clock:
             now = 10.0
@@ -753,7 +753,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h07_csv_run_and_failure_use_common_driver_path(self):
         import h07_stage
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         from keithley2231a import SafetyError
 
         q = self.module()
@@ -867,7 +867,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h06_recall_records_boot_before_shutdown_and_stops_on_fault(self):
         from h06_recall import recall
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         cases = (('OFF', '111', '000'), ('ON', '101', '101'),
                  ('ON', '010', '010'), ('ON', '000', '000'))
@@ -944,7 +944,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h06_recall_cli_uses_config_and_rechecks_same_adapter(self):
         import h06_recall
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         q = self.module()
         sessions = [FakeTransport(), FakeTransport()]
 
@@ -984,7 +984,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h06_timer_expiry_and_reenable_use_common_driver_path(self):
         from h06_stage import h06
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         class Clock:
             now = 10.0
@@ -1171,7 +1171,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h05_enters_remote_before_channel_queries(self):
         from h05_stage import h05
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         class Load:
             enabled = False
@@ -1204,7 +1204,7 @@ class TestQualification(unittest.TestCase):
             self.assertFalse(any(v['CHAN:OUTP'] for v in raw.values.values()))
 
     def test_probe_uses_driver_remote_setup_without_changing_outputs(self):
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         fake = FakeTransport()
         fake.values[2]['CHAN:OUTP'] = 1.0
@@ -1222,7 +1222,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h03_scope_forbids_global_on(self):
         from channel_stage import H03Scope
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         with tempfile.TemporaryDirectory() as tmp:
             raw = FakeTransport()
             guarded = H03Scope(raw, self.module().Evidence(Path(tmp) / 'scope.jsonl', 'H03'))
@@ -1231,7 +1231,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h03_individual_on_requires_authorization_before_transmission(self):
         from channel_stage import H03Scope
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         with tempfile.TemporaryDirectory() as tmp:
             for authorized in (None, 1, 3):
@@ -1594,7 +1594,7 @@ class TestQualification(unittest.TestCase):
         """Exercise the bounded H03 source/load flow using simulated I/O only."""
         q = self.module()
         from channel_stage import h03
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         def operator_answers(disagree_cc=False):
             answers = []
@@ -1888,7 +1888,7 @@ class TestQualification(unittest.TestCase):
         from profile_stage import (H02Scope, H02_DEBUG_TOKEN, H02_HARD_PROBES,
                                    H02_PANEL_TOKEN,
                                    TOKEN as H02_TOKEN, guarded_profile, h02)
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         settings = guarded_profile().channels
         self.assertEqual([(p.initial_voltage, p.initial_current, p.max_voltage, p.max_current)
                           for p in settings],
@@ -1991,7 +1991,7 @@ class TestQualification(unittest.TestCase):
         """Require panel, public API, and explicitly armed instrument-limit probes."""
         q = self.module()
         from profile_stage import H02Scope, H02_DEBUG_TOKEN, H02_HARD_PROBES, H02_PANEL_TOKEN, h02
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         class LimitFake(FakeTransport):
             pending_error = None
@@ -2064,7 +2064,7 @@ class TestQualification(unittest.TestCase):
     def test_h04_offline_runner_stays_off_and_detects_power_only_tampering(self):
         q = self.module()
         from profile_stage import H04Scope, H04_MAXV_TOKEN, h04
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = FakeTransport()
@@ -2196,7 +2196,7 @@ class TestQualification(unittest.TestCase):
     def test_h04p_offline_runner_auto_measures_and_pauses_only_for_load_moves(self):
         q = self.module()
         from powered_profile_stage import H04P_MAXV_TOKEN, H04PoweredScope, h04_powered
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
 
         class LoadFake:
             def __init__(self):
@@ -2340,7 +2340,7 @@ class TestQualification(unittest.TestCase):
 
     def test_h01_validates_off_identity_and_error_without_output_writes(self):
         q = self.module()
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         for bad in ('none', 'old170', 'new170', 'on', 'model', 'error', 'timeout'):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as tmp:
                 fake = FakeTransport()
@@ -2481,7 +2481,7 @@ class TestKEL103FailClosedMalformedReply(unittest.TestCase):
 
     def test_h05_malformed_load_reply_stops_load_link_but_shuts_down_psu(self):
         from h05_stage import h05
-        from test_driver import FakeTransport
+        from support.qualification_transport import FakeTransport
         from tests.offline.test_h05_powered_guard import Scope
         from qualification import Evidence
         responses = ['KORAD-KEL103 V3.30', 'OFF', 'OFF', 'CR', 'CR',

@@ -13,7 +13,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 HARDWARE = ROOT / 'tests/hardware'
 sys.path.insert(0, str(HARDWARE))
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 from keithley2231a import SafetyError
 from r4_status_stage import R4StatusScope, run_status, EVENT_TOKEN, FINAL_TOKEN
 

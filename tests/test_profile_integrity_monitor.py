@@ -3,7 +3,8 @@ import threading
 import time
 import unittest
 from keithley2231a import Keithley2231A, SafetyError, ParallelProfile, ChannelProfile
-from tests.test_driver import FakeTransport, profile
+from support.qualification_transport import FakeTransport
+from tests.test_driver import profile
 
 
 class ProfileIntegrityMonitorTests(unittest.TestCase):

@@ -7,7 +7,8 @@ from dataclasses import replace
 
 from keithley2231a import (ChannelProfile, Keithley2231A, ParallelProfile,
                           SafetyError, SeriesProfile)
-from tests.test_driver import FakeTransport, profile
+from support.qualification_transport import FakeTransport
+from tests.test_driver import profile
 
 
 class CombinedSource(FakeTransport):

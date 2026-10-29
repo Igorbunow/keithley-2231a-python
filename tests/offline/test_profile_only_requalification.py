@@ -14,7 +14,7 @@ from bench_config import EXAMPLE, load_bench
 from connection_gate import connection_token
 from profile_stage import (H02_HARD_PROBES, PROFILE_ONLY_TOKEN,
                            H02_CHANNELS, h02)
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 
 
 class ProfileOnlyTests(unittest.TestCase):

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 from qualification import Evidence
 from h11_stage import h11
 from keithley2231a import SafetyError

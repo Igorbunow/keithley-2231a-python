@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from keithley2231a import SafetyError
 from h05_stage import h05, validate_rail, verify_load_measurement
-from test_driver import FakeTransport
+from support.qualification_transport import FakeTransport
 from qualification import Evidence
 
 
