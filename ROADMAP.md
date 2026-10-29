@@ -32,18 +32,22 @@ not use outdated `v0.2/v0.3/v0.4/v0.5` sketches as engineering milestones.
    [`docs/R4_3_RISK_REGISTER.md`](docs/R4_3_RISK_REGISTER.md); review
    trigger/apply/step/save/recall/display commands separately. Never expose
    arbitrary write access or bypass existing profile and output gates.
-   R3.5.45 starts a **separate service-profile, typed OFFLINE-ONLY
-   plan compiler** for dangerous and calibration commands, with no runtime
-   transport and no live service execution. The ordinary driver even blocks
-   service SCPI in diagnostic bypass. R3.5.46 adds a **fake-only service
-   state machine** with one-use sequence acknowledgements, independent critical
-   approval, calibration point completion guards and injected-fault stop; it
-   has no live transport. See `docs/R4_3_SERVICE_MODE.ru.md`.
+   R3.5.49 removes synthetic service execution layers, routes service SCPI
+   through the single driver under explicit service-profile authorization,
+   and tests actual driver/transport bytes over a POSIX virtual UART.
 4. **R4.4 verification:** trace auditor, firmware caveats, documented exclusions,
    targeted operator-approved hardware checks only if indispensable.
 
 Completion: every vendor SCPI **family** has an explicit disposition, including
 unsupported/unsafe commands. Completeness never means blindly executing them.
+
+## R4.3-H architecture correction (R3.5.49)
+
+Removed the three duplicate synthetic service execution layers. One real
+`Keithley2231A` driver and its guarded SCPI dispatcher are now exercised over
+a virtual UART for service-path tests. Separate service profile authorizes each
+operation; dangerous or unverified calibration commands remain wire-blocked.
+A virtual UART test is NOT a real-firmware or metrology qualification.
 
 ## R5 — ergonomic high-level API and capabilities
 
@@ -89,21 +93,3 @@ and full JSONL evidence has **HW REVIEWED PASS (bounded idle-only,
 unchanged zero ESE/SRE masks. No general asynchronous timing,
 status latch preservation, or trigger verification is claimed. See
 [the independent review](docs/hardware_reports/R4_3_OPC_review_2026-10-29.md).
-
-### R4.3-F — сервисный in-memory gateway (R3.5.47)
-
-Сверка профиля/плана/автомата и отдельного фиктивного SCPI-контура с
-`FAKE_ERROR_POLL`, ограниченным числом шагов и отказами send/reply/error/output:
-**OFFLINE SIMULATED ONLY**, никакой связи с Keithley, никаких live-команд
-калибровки. Реальный сервисный gateway остаётся отдельным будущим этапом
-после проверки документации, внешней авторизации и метрологической методики.
-
-### R4.3-G / R3.5.48 — offline service authority model
-
-The offline service session now has fake normal/service exclusivity, a unique
-per-action permit bound to full profile/serial/plan/synthetic-fixture hashes,
-explicit action approval and terminal fail-closed behavior on changes or faults.
-Only a FakeBench is accepted; `HW NOT_RUN` and **real service execution remains
-blocked**. Remaining before any live gateway: real exclusive device ownership,
-trustworthy operator authorization, independent evidence, exact vendor service
-procedure and external calibrated measurement hardware.

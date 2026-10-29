@@ -63,9 +63,13 @@ class Keithley2231A:
                  debug: bool = False, debug_bypass_profile: bool = False,
                  debug_trace: Callable[[dict], None] | None = None,
                  debug_wire_trace: Callable[[dict], None] | None = None,
-                 debug_adapter: Callable[[Transport], Transport] | None = None):
-        if type(debug) is not bool or type(debug_bypass_profile) is not bool:
-            raise TypeError('debug flags must be bool')
+                 debug_adapter: Callable[[Transport], Transport] | None = None,
+                 service_mode: bool = False):
+        if (type(debug) is not bool or type(debug_bypass_profile) is not bool
+                or type(service_mode) is not bool):
+            raise TypeError('debug/service flags must be bool')
+        if service_mode and (debug or debug_bypass_profile or debug_adapter is not None):
+            raise ValueError('Service mode is exclusive of normal debug/bypass')
         if not debug and (debug_bypass_profile or debug_adapter is not None or
                           debug_trace is not None or debug_wire_trace is not None):
             raise ValueError('diagnostic options require debug=True')
@@ -87,6 +91,10 @@ class Keithley2231A:
         self._debug_bypass_profile = debug_bypass_profile
         self._debug_trace = debug_trace
         self._dispatch_depth = 0
+        self._service_mode = service_mode
+        self._service_command = None
+        self._service_busy = False
+        self._service_used_tokens = set()
         self._remote_mode = False
         self._link_uncertain = False
         self._selected_channel = None
@@ -187,9 +195,9 @@ class Keithley2231A:
     def _service_only_command(command: str) -> bool:
         """Never let normal or debug-bypass dispatch reach service SCPI.
 
-        This is a logical API boundary, not a security sandbox against code
-        accessing the underlying physical transport directly. Service preview
-        plans deliberately have no live dispatch implementation.
+        A service operation requires explicit service_mode, profile-hash and
+        SCPI-plan-hash approvals. This is an API policy, not an OS security
+        sandbox against direct external access to the physical UART.
         """
         cmd = command.strip().upper()
         if re.match(r'^CAL[A-Z]*:', cmd):
@@ -212,9 +220,11 @@ class Keithley2231A:
             if not self._dispatch_depth:
                 raise SafetyError('Use the driver API; direct adapter sends are forbidden')
             self._command(command, query=query)
-            if self._service_only_command(command):
-                raise SafetyError('Service-only SCPI is blocked by the ordinary driver'
-                                  ' (including debug bypass); offline plan only')
+            if self._service_mode and not self._service_busy and command not in ('*IDN?', 'SYST:LOC'):
+                raise SafetyError('Service-owned session forbids ordinary SCPI operations')
+            if self._service_only_command(command) and command != self._service_command:
+                raise SafetyError('Service-only SCPI forbidden outside an explicitly '
+                                  'authorized driver service operation')
             if self._link_uncertain:
                 raise TransportError('UNKNOWN OUTPUT STATE: link uncertain; no commands or automatic reconnect')
             session_command = self._session_command(command)
@@ -243,6 +253,92 @@ class Keithley2231A:
                         '(link uncertain; no retry)')
                 self._trace('reply', command, response=answer)
             return answer
+
+    def service_operation(self, service_profile_path, operation: str, *,
+                          acknowledgement: str, service_confirmation: str,
+                          critical_confirmation: str = '', **parameters):
+        """Execute one explicit service-profile operation via the SAME SCPI dispatcher.
+
+        This is a privileged, deliberately opt-in API; NEVER call from normal
+        automation or against production equipment without a manufacturer-
+        approved procedure. No arbitrary raw SCPI, retries or automatic recovery.
+        Profile bytes are re-read for each operation. Virtual UART tests exercise
+        this exact method, not a parallel simulated service state machine.
+        """
+        from .service import ServicePlanner, ServiceProfile, RISK
+        import hashlib
+        import json
+        with self._lock:
+            if not self._service_mode:
+                raise SafetyError('Service API disabled: construct explicit service_mode=True session')
+            if self._service_busy or self._service_command is not None:
+                raise SafetyError('Nested/concurrent service operation forbidden')
+            if (self._faulted or self._link_uncertain or self._armed or
+                    self._profile is not None or self._sequencing or
+                    (self._profile_monitor_thread is not None and
+                     self._profile_monitor_thread.is_alive())):
+                raise SafetyError('Service requires a fresh healthy unarmed profile-free session')
+            profile = ServiceProfile.load(service_profile_path)
+            planner = ServicePlanner(profile)
+            plan = planner.plan(operation, acknowledgement=acknowledgement,
+                                **parameters)
+            plan_hash = hashlib.sha256(json.dumps(
+                [(step.command, step.query) for step in plan.steps],
+                separators=(',', ':'), ensure_ascii=True).encode('ascii')).hexdigest()
+            token = (f'EXECUTE SERVICE {operation} {profile.serial} '
+                     f'{profile.source_sha256[:12]} {plan_hash[:12]}')
+            if token in self._service_used_tokens:
+                raise SafetyError('Previously used service approval cannot be replayed')
+            if service_confirmation != token:
+                raise SafetyError('Explicit service execution confirmation required')
+            if RISK[operation] == 'critical' and critical_confirmation != (
+                    f'CRITICAL SERVICE {operation} {profile.serial} '
+                    f'{profile.source_sha256[:12]} {plan_hash[:12]}'):
+                raise SafetyError('Independent critical-operation confirmation required')
+            # Syntax which has not been independently verified must not be sent.
+            if operation in ('self_test', 'power_on_status_write', 'calibration_unlock'):
+                raise SafetyError('Unverified service SCPI syntax/password handling: no on-wire execution')
+            if any('<' in s.command or '>' in s.command for s in plan.steps):
+                raise SafetyError('Unresolved service command placeholder: no on-wire execution')
+            # An operator-approved procedure and independent trace are mandatory
+            # for CAL writes; expose no live calibration execution in this revision.
+            if operation.startswith('calibration_'):
+                raise SafetyError('Calibration not wire-enabled without reviewed manufacturer procedure')
+            self._service_used_tokens.add(token)  # consume before any I/O; never retry
+            self._service_busy = True
+            try:
+                self.identity()  # authenticates model and configured serial
+                if self._instrument_key is None or self._instrument_key[2] != profile.serial:
+                    raise SafetyError('Service profile serial does not match physical *IDN?')
+                self._ensure_remote()
+                if (self._bool(self._query('OUTP:SER?')) or
+                        self._bool(self._query('OUTP:PARALLEL?')) or
+                        self._bool(self._query('OUTP:TRAC?'))):
+                    raise SafetyError('Service preflight requires Independent topology')
+                if any(self.output_states().values()):
+                    raise SafetyError('Service preflight requires CH1/CH2/CH3 OFF')
+                # The on-disk authorization source must not drift during preflight.
+                if ServiceProfile.load(service_profile_path).source_sha256 != profile.source_sha256:
+                    raise SafetyError('Service profile changed during preflight')
+                replies = []
+                for step in plan.steps:
+                    self._service_command = step.command
+                    try:
+                        response = self._query(step.command) if step.query else self._write(step.command)
+                    finally:
+                        self._service_command = None
+                    if step.query:
+                        replies.append(response)
+                    self.check_errors()  # one checked error poll after each successful command
+                if any(self.output_states().values()):
+                    raise SafetyError('Service postflight outputs are not all OFF')
+                return tuple(replies)
+            except BaseException:
+                self._latch_fault()  # no retry / no automatic ON/OFF or reconnect
+                raise
+            finally:
+                self._service_command = None
+                self._service_busy = False
 
     def diagnostic_query(self, command: str) -> str:
         """Read a raw SCPI reply through the normal session; debug must be enabled."""

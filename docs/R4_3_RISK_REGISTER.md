@@ -87,45 +87,11 @@ adjustment method, hardware verification, external references or runtime gateway
 has been qualified. See `R4_3_SERVICE_MODE.ru.md`; **HW NOT_RUN** throughout.
 
 
-## R4.3-E simulated service actions (R3.5.46)
+## R3.5.49: архитектурная корректировка
 
-`service_simulator.ServiceSimulator` executes **no physical SCPI** and accepts
-no transport or prebuilt command plans. It recompiles each approved action
-from a `ServiceProfile` and `ServicePlanner` into a synthetic trace. Strict
-fixture identity/OFF/independent/idle/known-link, fresh operation-specific
-profile acknowledgement, unique sequence-bound simulation acknowledgement,
-and a third critical-action acknowledgement are mandatory. In the synthetic
-calibration flow, unlock is followed by complete V P1-P4 and I P1-P2 per
-chosen channel; `CAL:SAV` is refused if any touched channel is incomplete.
-An incomplete cycle may still model `CAL:SEC ON`, but must report
-`SIMULATED_ABORTED` (never a qualified calibration). Synthetic timeout, SCPI
-error or output drift stops the fake session without further steps or retries.
-
-All replies and error checks are expressly marked FAKE. The simulator neither
-checks the manufacturer command parser nor models real output transitions,
-physical metrology, EEPROM endurance or the password/security behavior of
-firmware 1.04-1.04. Its SHA is an integrity check on an in-memory transcript,
-**not** a signature, audit of the live wire, or authorization. `*TST?` and
-`*PSC` write forms remain vendor-syntax unverified. Real service execution
-is still forbidden; see `docs/R4_3_SERVICE_MODE.ru.md`.
-
-### R4.3-F / R3.5.47: отдельная offline-граница исполнения
-
-`OfflineServiceGateway` проверяет, что после планирования никаких непроверенных
-SCPI-строк не добавляется, каждый фиктивный запрос получает соответствующую
-фиктивную пару «ответ / error-poll», а исключение немедленно обрывает дальнейшую
-последовательность. Только `FakeBench`, **никакого аппаратного транспорта**.
-Это не устраняет опасность применения этих команд на настоящем приборе;
-перенос такой модели на реальный UART без нового safety-review **запрещён**.
-`*TST?` и синтаксис записи `*PSC` остаются со статусом `UNVERIFIED`.
-
-### R4.3-G / R3.5.48 — симуляция явного service ownership и per-plan permits
-
-Новый `OfflineServiceAuthority` моделирует mutually-exclusive normal/service
-в пределах **одного фиктивного объекта**, полную привязку одноразового permit
-к серийному номеру/профилю/состоянию FakeBench/точным параметрам и SHA256
-плана, повторную проверку файла профиля непосредственно перед fake dispatch,
-отдельное разрешение конкретного плана и terminal latch при ошибках.
-Никаких физических блокировок, OS-level mutex, криптографической идентификации
-или действующей live-авторизации нет. Перенос в настоящий UART запрещён без
-отдельного hardening, независимых readback и утверждённой сервисной процедуры.
+Синтетические service simulator/gateway/authority удалены. ServiceProfile и
+ServicePlanner теперь выполняют только политику и проверку грамматики;
+реальный `Keithley2231A.service_operation()` выполняет разрешённые шаги через
+общий dispatcher/Transport. Программная квалификация через псевдо-UART: это
+проверка байтов и fail-closed пути, **не hardware PASS**. Калибровка и
+неоднозначные команды по-прежнему не имеют wire-допуска.

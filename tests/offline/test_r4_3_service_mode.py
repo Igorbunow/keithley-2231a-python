@@ -38,7 +38,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_default_plan_cannot_execute_or_get_transport(self):
         plan = self.plan('self_test')
-        self.assertEqual(plan.mode, 'SIMULATION_ONLY')
+        self.assertEqual(plan.mode, 'SERVICE_REVIEW')
         self.assertEqual([s.command for s in plan.steps], ['*TST?'])
         self.assertTrue(plan.warning)
         for name in ('execute', 'connect', 'transport', 'send', 'write', 'query'):
@@ -218,7 +218,7 @@ class ServiceTests(unittest.TestCase):
                           '--service-profile',str(self.path),'--operation','self_test',
                           '--ack',p.required_ack('self_test')],capture_output=True,text=True)
         self.assertEqual(out.returncode,0,out.stderr)
-        self.assertIn('SIMULATION_ONLY',out.stdout)
+        self.assertIn('SERVICE_REVIEW',out.stdout)
         self.assertIn('*TST?',out.stdout)
 
     def test_provenance_changes_on_profile_byte_change(self):

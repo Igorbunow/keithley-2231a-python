@@ -12,7 +12,7 @@ from keithley2231a.service import ServicePlanner, ServicePolicyError, ServicePro
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description='SIMULATION ONLY; NEVER sends SCPI')
+    parser = argparse.ArgumentParser(description='SERVICE PLAN REVIEW; NEVER sends SCPI')
     parser.add_argument('--service-profile', required=True)
     parser.add_argument('--operation', required=True)
     parser.add_argument('--params-json', default='{}', help='explicit JSON object, no unsafe raw SCPI')
@@ -30,7 +30,7 @@ def main(argv=None) -> int:
         if type(params) is not dict:
             raise ServicePolicyError('params-json must be an object')
         plan = planner.plan(args.operation, acknowledgement=args.ack, **params)
-        print('SIMULATION_ONLY / NO HARDWARE ACCESS / NOT A CALIBRATION PROCEDURE')
+        print('SERVICE_REVIEW / NO HARDWARE ACCESS / NOT A CALIBRATION PROCEDURE')
         for idx, step in enumerate(plan.steps, 1):
             print(f'{idx:02d} [{step.risk.upper()}] {step.command} '
                   f'(manual §5 p.{step.manual_page})')

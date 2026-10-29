@@ -225,3 +225,13 @@ Hardware qualification protocol for A/C masks and B event reads is
 gated, separate real-PSU runs. Step A must be reviewed before step B. No
 programmatic PASS or simulation claim upgrades SCPI families to HW VERIFIED.
 Next: [R4.3-A risk disposition](R4_3_RISK_REGISTER.md), without new live writes.
+
+## R3.5.49: SERVICE (virtual UART, NOT HARDWARE QUALIFIED)
+
+`Keithley2231A.service_operation()` с `service_mode=True` и отдельным
+`ServiceProfile` использует единственный общий SCPI dispatcher. Через POSIX
+псевдо-UART проверены точные байты `*CLS`, `*WAI`, `*RST`, опрос ошибок и OFF;
+три дублирующих fake-layer удалены. Всё это **только программные тесты**,
+не успешная квалификация данных команд на физическом источнике.
+Калибровка, `*TST?`, запись `*PSC` и разблокировка пароля по-прежнему
+запрещены для отправки до уточнения документации.

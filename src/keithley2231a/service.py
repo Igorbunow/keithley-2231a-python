@@ -1,9 +1,9 @@
-"""Offline-only service command planning for the Keithley 2231A-30-3.
+"""Typed service-profile and SCPI grammar for the Keithley device driver.
 
 This module intentionally has NO transport import, execute method or physical
-hardware access. A plan is a reviewable design artifact, NOT authorization to
-send its SCPI to a real instrument. Future service execution needs a separate,
-fail-closed runtime gateway and independent operator review.
+hardware access. Planning alone cannot transmit SCPI. The guarded device.service_operation()
+method is the sole driver service-dispatch path and is disabled for calibration
+without a reviewed manufacturer procedure.
 """
 from __future__ import annotations
 
@@ -159,10 +159,10 @@ class ServicePlanner:
         cmd = self._build(operation, kwargs)
         steps = tuple(ServiceStep(c, q, operation, SOURCES[operation], RISK[operation], note)
                       for c, q, note in cmd)
-        return ServicePlan('SIMULATION_ONLY', self.profile.serial,
+        return ServicePlan('SERVICE_REVIEW', self.profile.serial,
                            self.profile.source_sha256, operation, steps,
-                           'DO NOT SEND TO HARDWARE. External calibrated references and'
-                           ' separate service gateway are mandatory.')
+                           'Service commands require an approved manufacturer procedure and'
+                           ' explicit driver authorization; do not use without necessity.')
 
     @staticmethod
     def _build(operation: str, args: Mapping[str, object]) -> tuple[tuple[str, bool, str], ...]:

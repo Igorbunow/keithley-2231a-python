@@ -21,30 +21,29 @@ Provides SCPI over USB–TTL UART, optional transparent TCP–UART bridges, immu
 - **Measurement and automation:** per-channel CSV logs, min/max/mean/population σ, Ah/Wh integration; guarded voltage sweeps with optional DMM callback; optional external readings via an observer callback.
 - **Replaceable transports:** UART `SerialTransport('/dev/ttyUSB1')`, future MCU bridge `TcpTransport('psu-lab.local', 5025)`; TCP is a transparent UART tunnel, **not native Ethernet, VISA or VXI-11**.
 
-## Service-only command planning (R3.5.45; **OFFLINE ONLY**)
+## Service commands — guarded real driver, UART tests (R3.5.49)
 
-Dangerous commands, including calibration, are intentionally **not callable
-through the normal driver**, even using its debug profile bypass. A separate
-`keithley2231a.service.ServiceProfile` explicitly lists individual permitted
-service operations, binds the plan to the actual instrument serial and exact
-profile file SHA256, and requires an operation-specific acknowledgement.
-`ServicePlanner` outputs immutable, **SIMULATION_ONLY** typed SCPI plans without
-any transport, execute, send, or device connection capability. This is NOT
-hardware qualification and is NOT authorization to issue SCPI from a terminal.
-**Do not use service commands unless they are strictly necessary** and an
-appropriately qualified engineer has a verified service procedure.
+**Dangerous service commands are not ordinary API operations. Do not use without
+an actual maintenance requirement and a qualified engineer.** The only service
+path is `Keithley2231A.service_operation(...)` using the common guarded driver
+SCPI dispatcher. A separate `ServiceProfile` file with exact model/serial and
+explicit per-operation rights, profile-hash-bound approval and an additional
+execution approval are required. Critical operations require a third approval.
+The ordinary `diagnostic_write()` and `debug_bypass_profile` can NEVER access
+service commands. Strict OFF-only/Independent preflight and identity checks run
+before any service command. A fault stops the sequence without retry.
 
-The documented calibration planning scope is `CAL:SEC` / ordered voltage
-`P1..P4` and current `P1..P2` / `CAL:SAV` / `CAL:INIT` / `CAL:STR`, with
-independent privileges for saving and destructive initialization. A complete
-calibration adjustment guide is **not** supplied by the reference manual §5;
-real adjustment is prohibited pending vendor service procedure and a separate
-approved execution boundary. R3.5.46 adds a **synthetic-only service simulator**
-with sequential per-operation approvals, independent critical-action acknowledgement,
-synthetic OFF/idle/identity checks, complete per-channel V/I point ordering,
-and fail-closed fault injection; this simulator has **NO transport**, and its
-`SIMULATED_PASS` must never be interpreted as real PSU evidence.
-See [service mode and calibration guide (RU)](docs/R4_3_SERVICE_MODE.ru.md).
+Tests exercise the **actual driver through a pseudo-terminal (virtual UART)**;
+this validates driver command bytes/ordering/fault logic, NOT undocumented
+physical firmware behavior. The former synthetic service simulator, offline
+gateway and offline authority layers were removed. The `ServicePlanner` retained
+inside driver policy only validates typed operation arguments and builds the
+allowlisted wire sequence; it is NOT a separate execution engine.
+
+**Safety hold:** calibration commands, unverified `*TST?`/`*PSC` write syntax,
+and calibration-password handling remain blocked on the driver wire path until
+their vendor procedure is fully reviewed. No service hardware test is authorized.
+See [service and calibration guide](docs/R4_3_SERVICE_MODE.ru.md).
 
 ## Hardware and safety first
 
@@ -675,21 +674,3 @@ Hardware **HW REVIEWED PASS**, limited to one idle `*OPC?=1` response
 observed in 0.207 s on 2026-10-29. No pending-work, status-latch,
 execution-time bound or side-effect preservation claim. See the
 [independent review](docs/hardware_reports/R4_3_OPC_review_2026-10-29.md).
-
-**Service gateway (R4.3-F, offline only).** `tools/service_gateway_offline.py`
-проверяет разрешения отдельного `ServiceProfile`, подтверждения действия и
-фиктивные SCPI-трассы; **настоящий транспорт и сервисные команды на приборе
-не доступны**. См. `docs/R4_3_SERVICE_MODE.ru.md`. Для опасных операций,
-особенно `CAL:*`, не используйте эти планы без необходимости: они не
-являются проверенной заводской методикой калибровки.
-
-### R3.5.48 — fake service-session authorization (no hardware)
-
-`service_authority_offline.OfflineServiceAuthority` adds an **offline-only**
-per-plan, one-shot service authorization model. It separates fake normal/service
-ownership, binds each simulated action to the exact service-profile file,
-serial, parameters, synthetic OFF/idle fixture and typed SCPI-plan SHA256,
-then rechecks them before the fake gateway. Any error latches a terminal
-unknown state. This is **not a physical serial-port lock, user authentication,
-calibration validation or permission to operate a PSU**. See the service guide;
-**do not use dangerous service commands unless necessary**.
