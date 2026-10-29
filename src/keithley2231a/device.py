@@ -1339,6 +1339,108 @@ class Keithley2231A:
             except Exception as exc:
                 self._trip(f'Status query failed: {exc}')
 
+    def module_info(self) -> str:
+        """Read the instrument's SYST:MODU? text without changing settings.
+
+        The documented reply resembles ``2231,1.04``, but its firmware text
+        is observational only: it is NOT an identity or serial-number guard.
+        No event register or SCPI error queue is consumed. As with all public
+        queries, the driver may first identify the PSU and enter Remote.
+        """
+        with self._lock:
+            if self._faulted:
+                raise SafetyError('Faulted session cannot query module info')
+            response = self._query('SYST:MODU?')
+            if (not response.strip() or len(response) > 128 or
+                    any(ord(char) < 32 or ord(char) == 127 for char in response)):
+                self._malformed_value(f'Invalid SYST:MODU? reply: {response!r}')
+            return response.strip()
+
+    def status_enable_mask(self, register: str) -> int:
+        """Read one ENABLE MASK (0..255), never a read-to-clear EVENT latch.
+
+        Accepted register names: ``standard_event``, ``service_request``,
+        ``questionable`` and ``operation``. This method does NOT call *ESR?,
+        STAT:*:EVEN?, *CLS, nor write status configuration. The register name
+        is selected from an exact whitelist, never interpolated into SCPI.
+        """
+        queries = {
+            'standard_event': '*ESE?',
+            'service_request': '*SRE?',
+            'questionable': 'STAT:QUES:ENAB?',
+            'operation': 'STAT:OPER:ENAB?',
+        }
+        if type(register) is not str or register not in queries:
+            raise ValueError('Unsupported status enable register')
+        with self._lock:
+            if self._faulted:
+                raise SafetyError('Faulted session cannot query status enable masks')
+            return self._uint(queries[register], maximum=255)
+
+    def status_instrument_enable_mask(self, register: str, *, channel: int | None = None) -> int:
+        """Read a nested STATUS INSTrument enable mask without clearing events.
+
+        ``register`` is exactly ``questionable`` or ``operation``. With no
+        channel, read the instrument-level enable mask; with channel=1, 2, 3,
+        read that channel's ISUMmary enable mask. The channel is an index in
+        the documented SCPI path, NOT a request to select a live channel.
+
+        No SET, event (read-to-clear), status preset, output or channel-select
+        command is issued. Values are bounded to the documented 8-bit range.
+        This is an observation of one Keithley, not a multi-device coordinator.
+        """
+        if type(register) is not str or register not in ('questionable', 'operation'):
+            raise ValueError('Unsupported instrument status enable register')
+        if channel is not None and (type(channel) is not int or channel not in (1, 2, 3)):
+            raise ValueError('Instrument status channel must be exactly 1, 2, or 3')
+        group = {'questionable': 'STAT:QUES:INST',
+                 'operation': 'STAT:OPER:INST'}[register]
+        command = (f'{group}:ENAB?' if channel is None else
+                   f'{group}:ISUM{channel}:ENAB?')
+        with self._lock:
+            if self._faulted or self._link_uncertain:
+                raise SafetyError('Faulted/uncertain session cannot query instrument masks')
+            return self._uint(command, maximum=255)
+
+    def consume_status_event(self, register: str, *, acknowledge_clear: bool) -> int:
+        """Explicitly consume one 8-bit event latch; may clear its contents.
+
+        This is NOT a status snapshot. The caller must expressly acknowledge
+        loss of the accumulated events on every invocation. Only a fresh,
+        unarmed session is accepted; all three physical outputs must report OFF
+        immediately before the destructive query. Validation and the OFF
+        preflight happen before the event query. Neither successful reads nor
+        failures trigger an automatic second event read or an event clear.
+
+        The OFF check is sequential, not a physical interlock or an atomic
+        guarantee against external controllers changing the output afterward.
+        Event values cannot be reconstructed after a malformed/lost reply.
+        """
+        queries = {
+            'standard_event': '*ESR?',
+            'questionable': 'STAT:QUES:EVEN?',
+            'operation': 'STAT:OPER:EVEN?',
+        }
+        if type(register) is not str or register not in queries:
+            raise ValueError('Unsupported status event register')
+        if type(acknowledge_clear) is not bool or acknowledge_clear is not True:
+            raise ValueError('Explicit acknowledge_clear=True required to consume events')
+        with self._lock:
+            if self._faulted or self._link_uncertain:
+                raise SafetyError('Faulted/uncertain session cannot consume events')
+            if self._armed or self._profile is not None:
+                raise SafetyError('Event consumption requires an unarmed, profile-free session')
+            try:
+                states = self._output_states()
+            except BaseException:
+                self._latch_fault()
+                raise
+            if set(states) != {1, 2, 3} or any(type(v) is not bool for v in states.values()):
+                self._malformed_value('Invalid physical OFF preflight result')
+            if any(states.values()):
+                raise SafetyError('Cannot consume events: all three outputs must report OFF')
+            return self._uint(queries[register], maximum=255)
+
     def error(self) -> str:
         with self._lock: return self._query('SYST:ERR?')
 

@@ -387,7 +387,7 @@ from keithley2231a import TcpTransport
 | [Матрица проверок](VERIFICATION.ru.md) | [Verification matrix](VERIFICATION.md) |
 | [Аппаратные испытания](HARDWARE_TESTS.ru.md) | [Hardware testing](HARDWARE_TESTS.md) |
 | [Участие в проекте](CONTRIBUTING.ru.md) | [Contributing](../CONTRIBUTING.md) |
-| [Дорожная карта](ROADMAP.ru.md) | [Roadmap](../ROADMAP.md) |
+| [Актуальный roadmap](../ROADMAP.md) | [Roadmap](../ROADMAP.md) |
 
 **Статусы:** `HW VERIFIED` — подтверждено реальным прибором и полным протоколом; `HW OBSERVED` — замечена успешная физическая работа, пока без полного протокола; `SIM TESTED` — прошли тесты на эмуляторе; `HW UNVERIFIED` — на железе ещё не проверено; `PLANNED` — только запланировано. Список разнесён по функциям, версиям прошивок и протоколам.
 

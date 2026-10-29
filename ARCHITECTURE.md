@@ -29,12 +29,13 @@ The library provides a **guarded, testable Python API for a single Keithley 2231
                  Keithley public API   KEL103 / DMM7510 / TDS3064
 ```
 
-**Important:** Multiple-instrument control and hardware synchronization belong to a future separate project. Sequential measurements and host timestamps are not synchronized hardware capture.
+**Important:** The former `src/keithley2231a/dual_offline.py` has been **moved**, not retained as an alias. It is now the quarantined **experimental draft** `experiments/o02_dual_psu/dual_offline.py` (simulation only), excluded from packaging and forbidden as a dependency of the Keithley API. O02-B/C are frozen. Multiple-instrument control and hardware synchronization belong to a future separate project. Sequential measurements and host timestamps are not synchronized hardware capture.
 
 ## Module map
 
 | Location | Responsibility | Boundaries |
 | --- | --- | --- |
+| `experiments/o02_dual_psu/dual_offline.py` | **EXPERIMENTAL DRAFT O02-A**, synthetic dual-PSU state machine | Outside `src/`, not packaged; never used by the Keithley API or HW qualification; not part of R4–R6 |
 | `transport.py` | One-line SCPI UART and raw TCP transactions; explicit timeouts | No device-level safety, no VISA or telnet protocol |
 | `profile.py` | Immutable `Profile`, `ChannelProfile`, `PowerStep`, JSON validation, `unrestricted()` | Nameplate values always bound V/I; no file-based arbitrary SCPI injection |
 | `device.py` | `Keithley2231A`, SCPI mapping, outputs, timers, monitoring interlocks, profile verification | All mutating guarded commands require an armed profile |
@@ -95,6 +96,10 @@ For multi-supply experiments, use independent instrument libraries and a future 
 ## Verification and release discipline
 
 Hardware evidence has three axes: **software version/commit**, **instrument model/firmware**, and **scenario conditions**. Hardware qualification is not inherited automatically by changed code or different firmware. Each row of [`docs/VERIFICATION.md`](docs/VERIFICATION.md) points to a reproducible procedure/report (see `docs/hardware_reports/`). CI covers simulator tests only. A release should not claim `HW VERIFIED` beyond specifically observed operations.
+
+## Roadmap authority
+
+[`ROADMAP.md`](ROADMAP.md) is the **only current roadmap**. `docs/ROADMAP.ru.md` was deleted as an obsolete sketch. Next: R4 SCPI inventory and review, then R5 channel API/capabilities and R6 release hardening. Prototypes under `experiments/` do not define the roadmap.
 
 ## Known tradeoffs / future work
 
