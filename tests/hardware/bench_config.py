@@ -90,6 +90,23 @@ class H03SingleCVCC:
 
 
 @dataclass(frozen=True)
+class R44ScalarPoint:
+    """Exactly one previously bounded CH1 CV point; never expand via TOML."""
+    voltage_v: float
+    current_limit_a: float
+    load_resistance_ohm: float
+    max_power_w: float
+
+    def validate(self):
+        for key, required in (('voltage_v', 3.30), ('current_limit_a', .150),
+                              ('load_resistance_ohm', 40.0), ('max_power_w', .60)):
+            value = getattr(self, key)
+            if type(value) not in (int, float) or not math.isfinite(value) or value != required:
+                raise ValueError(f'R4.4-C {key} must equal reviewed point {required}')
+        return self
+
+
+@dataclass(frozen=True)
 class BenchConfig:
     psu: Instrument
     load: Instrument
@@ -98,10 +115,13 @@ class BenchConfig:
     h03_single_cvcc: H03SingleCVCC | None
     source: Path
     sha256: str
+    r44_scalar: R44ScalarPoint | None = None
 
     def validate(self):
         if self.h03_single_cvcc is not None:
             self.h03_single_cvcc.validate()
+        if self.r44_scalar is not None:
+            self.r44_scalar.validate()
         for name, device in (("psu", self.psu), ("load", self.load),
                              ("meter", self.meter), ("scope", self.scope)):
             if not device.model or not isinstance(device.timeout_s, (float, int)) or not 0 < device.timeout_s <= 120:
@@ -136,24 +156,33 @@ def load_bench(path: str | Path):
        set(data['devices']) != {'psu', 'load', 'meter', 'scope'}:
         raise ValueError('bench config must define devices and optional qualification section')
     point = None
+    scalar = None
     if 'qualification' in data:
-        if set(data['qualification']) != {'h03_single_cvcc'}:
-            raise ValueError('only qualification.h03_single_cvcc is currently supported')
-        raw_point = data['qualification']['h03_single_cvcc']
-        if not isinstance(raw_point, dict) or set(raw_point) != set(H03SingleCVCC.__dataclass_fields__):
-            raise ValueError('H03 single: specify the complete exact configuration schema')
-        for key in ('initial_voltage_v', 'initial_current_a', 'voltage_cap_v', 'current_cap_a'):
-            if not isinstance(raw_point[key], list):
-                raise ValueError(f'H03 single {key}: expected array')
-            raw_point[key] = tuple(raw_point[key])
-        point = H03SingleCVCC(**raw_point).validate()
+        sections = data['qualification']
+        if not isinstance(sections, dict) or not sections or set(sections) - {'h03_single_cvcc', 'r44_scalar'}:
+            raise ValueError('unsupported qualification section')
+        if 'h03_single_cvcc' in sections:
+            raw_point = sections['h03_single_cvcc']
+            if not isinstance(raw_point, dict) or set(raw_point) != set(H03SingleCVCC.__dataclass_fields__):
+                raise ValueError('H03 single: specify complete configuration schema')
+            raw_point = dict(raw_point)
+            for key in ('initial_voltage_v', 'initial_current_a', 'voltage_cap_v', 'current_cap_a'):
+                if not isinstance(raw_point[key], list):
+                    raise ValueError(f'H03 single {key}: expected array')
+                raw_point[key] = tuple(raw_point[key])
+            point = H03SingleCVCC(**raw_point).validate()
+        if 'r44_scalar' in sections:
+            raw_scalar = sections['r44_scalar']
+            if not isinstance(raw_scalar, dict) or set(raw_scalar) != set(R44ScalarPoint.__dataclass_fields__):
+                raise ValueError('R4.4-C: exact complete four-field configuration required')
+            scalar = R44ScalarPoint(**raw_scalar).validate()
     kwargs = {}
     for name, options in data["devices"].items():
         allowed = set(Instrument.__dataclass_fields__)
         if not isinstance(options, dict) or set(options) - allowed:
             raise ValueError(f"{name}: unknown configuration field")
         kwargs[name] = Instrument(**options)
-    return BenchConfig(**kwargs, h03_single_cvcc=point, source=source, sha256=hashlib.sha256(raw).hexdigest()).validate()
+    return BenchConfig(**kwargs, h03_single_cvcc=point, r44_scalar=scalar, source=source, sha256=hashlib.sha256(raw).hexdigest()).validate()
 
 
 def activate_bench(config: BenchConfig):

@@ -913,3 +913,16 @@ about real `MEAS:POW?` or `FETC:*` operation, which remains **HW NOT_RUN**.
 See `docs/reviews/R4_4_B_DISPLAY_HW_REVIEW_2026-10-29.md` and run the
 offline-only `tools/audit_r4_4_display_evidence.py` against the original
 unchanged evidence file for reproducibility.
+
+### R4.4-C — scalar measurement hardware preparation (HW NOT_RUN)
+
+The restricted `tools/r4_4_scalar_qualify.py` is DRY RUN by default.
+Its powered mode is separately gated and must not be executed until the new
+hardware plan and software patch are reviewed. It performs one fixed CH1
+low-power measurement with KEL103 CR40Ω and external DMM7510 voltage,
+using the production driver, then requires independent OFF readbacks and
+operator confirmation. The exact four-field `[qualification.r44_scalar]`
+block must be added to local bench TOML; sample values and strict ceilings
+are in `docs/R4_4_HARDWARE_PLAN.ru.md`. The FETC results are observational:
+freshness and simultaneity are explicitly **unverified**. The runner's
+`PASS` does not itself mark these commands hardware qualified.

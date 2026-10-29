@@ -401,3 +401,14 @@ JSONL evidence trace. See `docs/reviews/R4_4_B_DISPLAY_HW_REVIEW_2026-10-29.md`.
 A display query is **not** proof of output-off state. The
 other four R4.4-A scalar queries remain SIM TESTED / HW NOT_RUN and await a
 separate low-power approved phase. See `docs/R4_4_HARDWARE_PLAN.ru.md`.
+
+## R4.4-C — scalar low-power hardware procedure prepared, HW NOT_RUN
+
+`tools/r4_4_scalar_qualify.py` and `tests/hardware/r4_4_scalar_stage.py`
+prepare one operator-authorized Independent CH1/CR40Ω/DCV10V test of the
+already SIM-tested `MEAS:POW?`, `FETC:VOLT?`, `FETC:CURR?`, `FETC:POW?`.
+14 offline UART tests cover allowed SCPI, explicit power gate, comparison
+of PSU/KEL/DMM, invalid values, link failures, conditional independent
+shutdown and absence of new commands after uncertain link. No real
+measurement has been made. **All four commands remain HW NOT_RUN**; this
+is not a transfer of previous H03/H04P powered qualification.

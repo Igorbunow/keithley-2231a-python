@@ -318,3 +318,16 @@ behavior until individually justified. No changes to `src/` or hardware tests.
 - **R4.4-C measurement query hardware status stays NOT_RUN.** The next
   controlled step is a separately reviewed powered CH1 procedure with KEL103
   and DMM7510, not a continuation of the OFF-only test session.
+
+## R4.4-C — bounded scalar + external metrology preparation (software-only)
+
+- One independent low-power CH1 point, PSU/KEL103/DMM7510 operator-gated.
+- Configuration from validated bench TOML; exact fixed 3.30 V / 0.150 A / CR40Ω / 0.60 W.
+- Shared production driver, strict SCPI allowlist, no extra SCPI gateway.
+- DMM7510 10 V DC mode, independent load OFF control, one CH1 ON authorization,
+  readback-confirmed PSU/LOAD shutdown, physical final OFF gate.
+- Compare native `MEAS:POW?` with source U×I and KEL power; observe FETC
+  with finite/range checks but *without claiming freshness or simultaneity*.
+- Test UART faults, power overrange, wrong topology, operator refusal and
+  non-atomic readings offline before operator authorizes powered execution.
+- **HW NOT_RUN / NOT_REVIEWED** until manual powered trace is independently audited.
