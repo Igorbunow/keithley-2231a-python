@@ -214,3 +214,19 @@ The peer chooses **literal scripted digital readbacks** when a topology mode
 is selected; it never computes branch current, coupled voltage, or aggregate
 limit from independent settings. No electrical proof, physical wiring check,
 firmware behavior simulation, new SCPI permission, or H09/H10 status change.
+
+## R3.5.61 — batched production-UART driver regression (offline only)
+
+A single software-only increment replaces 22 remaining `FakeTransport` test
+methods with 23 production-`Keithley2231A` / POSIX virtual-UART tests across
+`test_combined_workflow_uart.py` and `test_output_measurement_uart.py`.
+Scope: explicit Series/Parallel operator gating, aggregate CH1+CH2 setpoints,
+CH3 limits, safe mode exit confirmation, digital output/readback disagreement,
+verified global OFF + individual OFF fallback, profile and setpoint limits,
+measured overvoltage/overcurrent, CH3 CV/CC status evidence, read-to-clear-free
+measurement, acquisition and selective `record=False` safety.
+The UART peer returns fixed digital text and never implements electrical
+combining, channel current sharing, voltage coupling, or real OFF confirmation.
+The hardware H09/H10 and CH3 firmware caveats remain unchanged. Other
+`FakeTransport` unit tests not yet migrated must retain their original
+behavior until individually justified. No changes to `src/` or hardware tests.

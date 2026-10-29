@@ -1,6 +1,5 @@
 import math
 import unittest
-from dataclasses import replace
 from keithley2231a import (Profile, ProfileError, ChannelProfile, InstrumentError, LimitsError, SafetyError,
                           SeriesProfile, ParallelProfile, Keithley2231A, Acquisition, ChannelStats, Reading)
 
@@ -232,202 +231,22 @@ class TestDevice(unittest.TestCase):
                 self.assertEqual(fake.cmds, before)
                 self.assertTrue(dev.faulted)
 
-    def test_outputs_off_after_apply(self):
-        self.assertEqual(self.fake.flags['OUTP:STAT:ALL'],0)
-        self.assertTrue(self.dev.armed)
-        self.dev.verify_profile()
-        self.assertEqual(self.fake.values[1]['VOLT:LIM'],3.3)
-
-    def test_set_allowed_then_forbid_overshoot(self):
-        self.dev.set_channel(1, voltage=2.5, current=.15)
-        self.assertEqual(self.fake.values[1]['VOLT'], 2.5)
-        before = len(self.fake.cmds)
-        with self.assertRaises(LimitsError): self.dev.set_channel(1, voltage=3.31)
-        self.assertEqual(len(self.fake.cmds), before)
-
-    def test_set_channel_uses_shared_validation_before_io(self):
-        for ch, kwargs in (
-                (1, {'voltage': True}),
-                (1, {'current': float('nan')}),
-                (2, {'voltage': 5.001}),
-                (3, {'current': .1001}),
-                (3, {'voltage': -0.01}),
-                (3, {'voltage': float('inf')})):
-            with self.subTest(channel=ch, kwargs=kwargs):
-                before = list(self.fake.cmds)
-                with self.assertRaises(LimitsError):
-                    self.dev.set_channel(ch, **kwargs)
-                self.assertEqual(self.fake.cmds, before)
-                self.assertTrue(self.dev.armed)
-
-        before = len(self.fake.cmds)
-        self.dev.set_channel(1, voltage=2.5, current=.15)
-        commands = self.fake.cmds[before:]
-        self.assertLess(commands.index('CURR 0.150'), commands.index('VOLT 2.50'))
-        self.assertTrue(self.dev.armed)
-        self.dev.verify_profile()
-
-    def test_set_channel_detects_readback_change_and_trips(self):
-        class BadReadback(FakeTransport):
-            corrupt = False
-            def query(self, command):
-                response = super().query(command)
-                if self.corrupt and command == 'VOLT?' and self.active_ch == 3:
-                    return str(float(response) + .01)
-                return response
-
-        fake = BadReadback()
-        dev = Keithley2231A(fake)
-        dev.apply_profile(profile(), confirmed_wiring='independent')
-        fake.corrupt = True
-        with self.assertRaises(SafetyError):
-            dev.set_channel(3, voltage=2.0, current=.08)
-        self.assertFalse(dev.armed)
-        self.assertTrue(dev.faulted)
-        self.assertIn('OUTP 0', fake.cmds)
-
-    def test_on_off_and_profile_lock(self):
-        self.dev.output(1, True)
-        self.assertTrue(self.fake.values[1]['CHAN:OUTP'])
-        with self.assertRaises(SafetyError): self.dev.apply_profile(profile(), confirmed_wiring='independent')
-        self.dev.output(1, False)
-        self.assertFalse(self.fake.values[1]['CHAN:OUTP'])
-
-    def test_guard_detects_external_change(self):
-        self.fake.values[2]['VOLT:LIM'] = 5.01
-        with self.assertRaises(SafetyError): self.dev.verify_profile()
-        self.assertFalse(self.dev.armed)
-        self.assertTrue(self.dev.faulted)
-        self.assertEqual(self.fake.flags['OUTP:STAT:ALL'],0)
-
-    def test_trips_on_measured_excess(self):
-        self.dev.output(1, True)
-        self.fake.values[1]['VOLT'] = 5.0
-        with self.assertRaises(SafetyError): self.dev.read_channel(1)
-        self.assertEqual(self.fake.flags['OUTP:STAT:ALL'], 0)
-
-    def test_stage_then_measure(self):
-        sample = self.dev.read_channel(1)
-        self.assertEqual(sample.voltage_v, 1.0)
-        self.assertEqual(sample.current_a, .05)
-        self.assertEqual(sample.power_w, .05)
-        self.assertEqual(sample.voltage_set_v, 1.0)
-        self.assertEqual(sample.current_limit_set_a, .1)
-        self.assertEqual(sample.regulation, 'OFF')
-
-    def test_read_channel_preserves_unknown_when_both_mode_registers_are_empty(self):
-        self.fake.values[1]['CHAN:OUTP'] = 1.0
-        self.fake.operation_status_masks[1] = 0
-        self.fake.questionable_status_masks[1] = 0
-        reading = self.dev.read_channel(1)
-        self.assertTrue(reading.enabled)
-        self.assertEqual(reading.regulation, 'UNKNOWN')
-        self.assertEqual(reading.operation_status_mask, 0)
-        self.assertEqual(reading.questionable_status_mask, 0)
-
-    def test_regulation_uses_documented_questionable_status_when_operation_mode_is_clear(self):
-        self.dev.output(3, True)
-        self.fake.operation_status_masks[3] = 8
-        self.fake.questionable_status_masks[3] = 1
-
-        sample = self.dev.read_channel(3)
-
-        self.assertEqual(sample.regulation, 'CV')
-        self.assertEqual(sample.operation_status_mask, 8)
-        self.assertEqual(sample.questionable_status_mask, 1)
-        self.assertEqual(sample.regulation_source, 'questionable')
-
-        self.fake.questionable_status_masks[3] = 2
-        cc_sample = self.dev.read_channel(3)
-        self.assertEqual(cc_sample.regulation, 'CC')
-        self.assertEqual(cc_sample.regulation_source, 'questionable')
-        self.assertEqual(cc_sample.operation_status_mask, 8)
-
-        self.fake.operation_status_masks[3] = 9
-        self.fake.questionable_status_masks[3] = 2
-        conflicting = self.dev.read_channel(3)
-        self.assertEqual(conflicting.regulation, 'UNKNOWN')
-        self.assertEqual(conflicting.operation_status_mask, 9)
-        self.assertEqual(conflicting.questionable_status_mask, 2)
-        self.assertIsNone(conflicting.regulation_source)
-
-        self.fake.operation_status_masks[3] = 9
-        self.fake.questionable_status_masks[3] = 3
-        ambiguous = self.dev.read_channel(3)
-        self.assertEqual(ambiguous.regulation, 'UNKNOWN')
-        self.assertIsNone(ambiguous.regulation_source)
-
-    def test_regulation_source_reports_evidence_without_extra_queries(self):
-        self.dev.output(3, True)
-        for operation, questionable, mode, source in (
-                (9, 1, 'CV', 'both'), (10, 2, 'CC', 'both'),
-                (9, 0, 'CV', 'operation'), (10, 0, 'CC', 'operation'),
-                (8, 1, 'CV', 'questionable'), (8, 2, 'CC', 'questionable'),
-                (8, 0, 'UNKNOWN', None), (8, 3, 'UNKNOWN', None),
-                (11, 1, 'UNKNOWN', None), (9, 2, 'UNKNOWN', None)):
-            with self.subTest(operation=operation, questionable=questionable):
-                self.fake.operation_status_masks[3] = operation
-                self.fake.questionable_status_masks[3] = questionable
-                before = len(self.fake.cmds)
-                sample = self.dev.read_channel(3)
-                self.assertEqual(sample.regulation, mode)
-                self.assertEqual(sample.regulation_source, source)
-                status_queries = [cmd for cmd in self.fake.cmds[before:]
-                                  if cmd.startswith('STAT:')]
-                self.assertEqual(status_queries, [
-                    'STAT:OPER:INST:ISUM3:COND?', 'STAT:QUES:INST:ISUM3:COND?'])
-        self.dev.output(3, False)
-        off = self.dev.read_channel(3)
-        self.assertEqual(off.regulation, 'OFF')
-        self.assertIsNone(off.regulation_source)
-        unchecked = self.dev.read_channel(3, with_regulation=False)
-        self.assertIsNone(unchecked.regulation_source)
-        self.assertIsNone(unchecked.operation_status_mask)
-        self.assertIsNone(unchecked.questionable_status_mask)
-
-    def test_ch3_questionable_workaround_preserves_expected_regulation_trip(self):
-        for expected, mask in (('cv', 1), ('cc', 2)):
-            with self.subTest(expected=expected):
-                settings = profile()
-                settings = replace(settings, channels=(
-                    settings.channels[0], settings.channels[1],
-                    replace(settings.channels[2], expected_regulation=expected)))
-                fake = FakeTransport()
-                dev = Keithley2231A(fake)
-                dev.apply_profile(settings, confirmed_wiring='independent')
-                dev.set_channel(3, voltage=2.0, current=.08)
-                dev.output(3, True)
-                fake.operation_status_masks[3] = 8
-                fake.questionable_status_masks[3] = mask
-                sample = dev.read_channel(3)
-                self.assertTrue(sample.enabled)
-                self.assertEqual(sample.voltage_set_v, 2.0)
-                self.assertEqual(sample.current_limit_set_a, .08)
-                self.assertEqual(sample.regulation, expected.upper())
-                self.assertEqual(sample.regulation_source, 'questionable')
-                # A clear error queue must not turn absent mode evidence into success.
-                fake.questionable_status_masks[3] = 0
-                with self.assertRaises(SafetyError):
-                    dev.read_channel(3)
-                self.assertTrue(dev.faulted)
-                self.assertFalse(dev.armed)
-                self.assertTrue(all(not value['CHAN:OUTP'] for value in fake.values.values()))
 
 
 
-    def test_emergency_off_enters_remote_before_output_command(self):
-        before = len(self.fake.cmds)
-        self.dev.emergency_off()
-        self.assertEqual(self.fake.cmds[before:before + 2], ['SYST:REM', 'OUTP 0'])
 
-    def test_profile_forbids_releasing_lock(self):
-        with self.assertRaises(SafetyError): self.dev.remote(lock_panel=False)
-        self.dev.remote(lock_panel=True)
 
-    def test_regulation_check_cannot_be_bypassed(self):
-        self.dev.emergency_off()
-        self.dev.apply_profile(profile(expected='cv'), confirmed_wiring='independent')
-        with self.assertRaises(SafetyError): self.dev.read_channel(1, with_regulation=False)
+
+
+
+
+
+
+
+
+
+
+
 
     def test_connection_failure_attempts_off(self):
         self.fake.failed_query = 'VOLT:LIM?'
@@ -436,121 +255,9 @@ class TestDevice(unittest.TestCase):
         self.assertIn('OUTP 0', self.fake.cmds)
 
 
-    def test_parallel_to_independent_requires_new_manual_confirmation(self):
-        """An OFF command does not imply physical jumpers were removed."""
-        source = FakeTransport()
-        dev = Keithley2231A(source)
-        combined = ParallelProfile('parallel', 3.0, .3, 2.0, .1,
-                                   ChannelProfile(4.0, .5, 1.0, .1))
-        dev.apply_profile(combined, confirmed_wiring='parallel')
-        dev.emergency_off()
-        before = list(source.cmds)
-        for confirmed in (None, 'parallel', 'series'):
-            with self.subTest(confirmed=confirmed):
-                with self.assertRaisesRegex(SafetyError, 'NO external Series/Parallel jumpers'):
-                    dev.apply_profile(profile(), confirmed_wiring=confirmed)
-                self.assertEqual(source.cmds, before)
-                self.assertIs(dev.profile, combined)
-        # The following represents an operator who has physically checked and
-        # removed both Parallel jumpers while PSU outputs were OFF.
-        dev.apply_profile(profile(), confirmed_wiring='independent')
-        self.assertTrue(dev.armed)
-        self.assertFalse(source.flags['OUTP:PARALLEL'])
-        self.assertEqual(dev.output_states(), {1: False, 2: False, 3: False})
 
-    def test_combined_physical_wiring_confirmation(self):
-        class SeriesSource(FakeTransport):
-            def write(self, command):
-                if command == 'INST:NSEL 2' and self.flags['OUTP:SER']:
-                    self.cmds.append(command)
-                    self.active_ch = 1
-                    return
-                if command == 'OUTP:SER 1':
-                    super().write(command)
-                    self.values[1]['VOLT:LIM'] = self.values[1]['VOLT:LIM'] + self.values[2]['VOLT:LIM']
-                    self.values[1]['VOLT:LIM:STAT'] = 0.
-                    return
-                if command == 'OUTP:SER 0' and self.flags['OUTP:SER']:
-                    combined_voltage = self.values[1]['VOLT']
-                    super().write(command)
-                    for ch in (1, 2):
-                        self.values[ch]['VOLT'] = combined_voltage / 2
-                        self.values[ch]['VOLT:LIM:STAT'] = 1.
-                    return
-                if command == 'VOLT:LIM:STAT 1' and self.flags['OUTP:SER']:
-                    self.cmds.append(command)
-                    self.values[1]['VOLT:LIM:STAT'] = 0.
-                    return
-                super().write(command)
 
-            def query(self, command):
-                if command == 'VOLT:LIM?' and self.flags['OUTP:SER'] and self.active_ch == 1:
-                    self.cmds.append(command)
-                    return str(self.values[1]['VOLT:LIM'])
-                if command == 'VOLT:LIM:STAT?' and self.flags['OUTP:SER'] and self.active_ch == 1:
-                    self.cmds.append(command)
-                    return '0'
-                return super().query(command)
 
-        source = SeriesSource()
-        dev = Keithley2231A(source)
-        series = SeriesProfile('safe series', (2., 3.), 4.5, .3, 2., .1,
-                               ChannelProfile(4., .5, 2., .3))
-        with self.assertRaises(SafetyError): dev.apply_profile(series)
-        dev.apply_profile(series, confirmed_wiring='series')
-        self.assertTrue(dev.armed)
-        self.assertEqual(dev.output_states(), {1: False, 2: False, 3: False})
-        with self.assertRaises(SafetyError): dev.combined_outputs(True)
-        dev.combined_outputs(True, confirm_all_channels_safe=True)
-        reading = dev.read_channel(1)
-        self.assertEqual(reading.label, 'CH1+CH2')
-        self.assertEqual(reading.voltage_set_v, 2.)
-        self.assertEqual(reading.current_limit_set_a, .1)
-        with self.assertRaises(SafetyError): dev.read_channel(2)
-        self.assertEqual(dev.read_channel(3).label, 'CH3')
-        before = list(source.cmds)
-        with self.assertRaises(LimitsError): dev.set_channel(1, voltage=4.51)
-        with self.assertRaises(SafetyError): dev.set_channel(2, voltage=1.)
-        self.assertEqual(source.cmds, before)
-        dev.set_channel(1, voltage=2.5, current=.2)
-        before = list(source.cmds)
-        with self.assertRaises(LimitsError):
-            dev.set_channel(3, voltage=4.01)
-        self.assertEqual(source.cmds, before)
-        dev.set_channel(3, voltage=2.5, current=.4)
-        self.assertEqual(source.values[3]['VOLT'], 2.5)
-        self.assertEqual(dev.read_channel(1).voltage_set_v, 2.5)
-        dev.emergency_off()
-        self.assertEqual(source.flags['OUTP:STAT:ALL'], 0.)
-        self.assertFalse(dev.armed)
-        # A single changed aggregate step must trip for Series, as in Parallel.
-        dev.apply_profile(series, confirmed_wiring='series')
-        source.values[1]['VOLT'] += .01
-        with self.assertRaises(SafetyError): dev.verify_profile()
-        self.assertTrue(dev.faulted)
-        self.assertFalse(dev.armed)
-
-    def test_global_off_must_check_each_channel(self):
-        original = self.fake.write
-        def stuck_off(command):
-            original(command)
-            if command in ('OUTP 0', 'CHAN:OUTP 0'):
-                self.fake.values[2]['CHAN:OUTP'] = 1
-        self.fake.write = stuck_off
-        with self.assertRaises(SafetyError): self.dev.emergency_off()
-        self.assertFalse(self.dev.armed)
-        self.assertTrue(self.dev.faulted)
-
-    def test_emergency_off_falls_back_to_individual_channel_off(self):
-        self.dev.output(1, True)
-        original = self.fake.write
-        def global_off_ignored(command):
-            original(command)
-            if command == 'OUTP 0': self.fake.values[1]['CHAN:OUTP'] = 1
-        self.fake.write = global_off_ignored
-        self.dev.emergency_off()
-        self.assertFalse(self.fake.values[1]['CHAN:OUTP'])
-        self.assertIn('CHAN:OUTP 0', self.fake.cmds)
 
     def test_status_io_failure_disarms(self):
         self.fake.failed_query = 'SYST:VERS?'
@@ -577,64 +284,6 @@ class TestDevice(unittest.TestCase):
 
 
 
-    def test_parallel_profile_uses_aggregate_setpoint_and_software_voltage_cap(self):
-        class ParallelTransport(FakeTransport):
-            def write(self, cmd):
-                if cmd.startswith('CURR '):
-                    requested = float(cmd.split()[1])
-                    if not self.flags['OUTP:PARALLEL'] and requested > 3.0:
-                        raise AssertionError('independent channel current exceeds 3 A')
-                    if self.flags['OUTP:PARALLEL'] and requested > 6.0:
-                        raise AssertionError('parallel aggregate current exceeds 6 A')
-                super().write(cmd)
-                if cmd == 'OUTP:PARALLEL 1':
-                    self.values[1]['VOLT:LIM:STAT'] = 0.
-                    self.values[2]['VOLT:LIM:STAT'] = 0.
-                elif cmd == 'OUTP:PARALLEL 0':
-                    total_i = self.values[1]['CURR']
-                    self.values[1]['CURR'] = total_i / 2
-                    self.values[2]['CURR'] = total_i / 2
-                    self.values[2]['VOLT'] = self.values[1]['VOLT']
-                    self.values[1]['VOLT:LIM:STAT'] = 0.
-                    self.values[2]['VOLT:LIM:STAT'] = 0.
-            def query(self, cmd):
-                if self.flags['OUTP:PARALLEL'] and cmd == 'INST:NSEL?':
-                    self.cmds.append(cmd)
-                    return '1' if self.active_ch == 2 else str(self.active_ch)
-                if self.flags['OUTP:PARALLEL'] and self.active_ch in (1, 2) and cmd == 'VOLT:LIM:STAT?':
-                    self.cmds.append(cmd)
-                    return '0'
-                return super().query(cmd)
-
-        fake = ParallelTransport()
-        dev = Keithley2231A(fake)
-        p = ParallelProfile('bounded parallel', 3.0, .300, 2.0, .100,
-                            ChannelProfile(4., .5, 1., .1), lock_front_panel=False)
-        dev.apply_profile(p, confirmed_wiring='parallel')
-        self.assertTrue(dev.armed)
-        self.assertEqual(fake.flags['OUTP:PARALLEL'], 1)
-        self.assertEqual(dev.read_channel(1, with_regulation=False).label, 'CH1+CH2')
-        with self.assertRaises(SafetyError): dev.read_channel(2)
-        dev.set_channel(1, voltage=2.5, current=.2)
-        before = list(fake.cmds)
-        with self.assertRaises(LimitsError):
-            dev.set_channel(3, current=.501)
-        self.assertEqual(fake.cmds, before)
-        dev.set_channel(3, voltage=2.0, current=.2)
-        self.assertEqual(fake.values[3]['VOLT'], 2.0)
-        with self.assertRaises(SafetyError): dev.set_channel(2, voltage=2.5)
-        dev.combined_outputs(True, confirm_all_channels_safe=True)
-        self.assertEqual(dev.output_states(), {1: True, 2: True, 3: True})
-        with self.assertRaises(LimitsError): dev.set_channel(1, voltage=3.01)
-        dev.combined_outputs(False)
-        self.assertEqual(dev.output_states(), {1: False, 2: False, 3: False})
-        dev.emergency_off()
-        # Both combined modes use the same aggregate setpoint integrity guard.
-        dev.apply_profile(p, confirmed_wiring='parallel')
-        fake.values[1]['CURR'] += .001
-        with self.assertRaises(SafetyError): dev.verify_profile()
-        self.assertTrue(dev.faulted)
-        self.assertFalse(dev.armed)
 
     def test_generic_profile_rejects_parallel_mode(self):
         p = profile()
@@ -675,11 +324,6 @@ class TestStats(unittest.TestCase):
         s.add(self.make(101,1,enabled=False), max_gap_s=10)
         self.assertEqual(s.ampere_hours,0)
 
-    def test_acquisition(self):
-        fake=FakeTransport(); dev=Keithley2231A(fake); dev.apply_profile(profile(), confirmed_wiring='independent')
-        a=Acquisition(dev,interval_s=.1)
-        self.assertEqual(len(a.sample()),3)
-        self.assertEqual(a.stats[1].voltage.count,1)
 
     def test_acquisition_does_not_start_sample_after_duration(self):
         from unittest.mock import patch
@@ -760,16 +404,5 @@ class TestTransportNetwork(unittest.TestCase):
         with self.assertRaises(TransportError): io.write('CHAN:OUTP 1')
         io.close()
 
-    def test_unrecorded_still_checked(self):
-        p=Profile('record selective',(
-            ChannelProfile(3.3,.2,1,.1,record=False),
-            ChannelProfile(5.,.2,1,.1),
-            ChannelProfile(3.3,.1,1,.05)))
-        fake=FakeTransport(); dev=Keithley2231A(fake); dev.apply_profile(p, confirmed_wiring='independent')
-        dev.output(1, True)
-        fake.values[1]['VOLT'] = 9.
-        a=Acquisition(dev)
-        with self.assertRaises(SafetyError): a.sample()
-        self.assertEqual(fake.flags['OUTP:STAT:ALL'], 0)
 
 if __name__ == '__main__': unittest.main()

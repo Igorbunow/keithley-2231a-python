@@ -789,3 +789,14 @@ The peer chooses **literal scripted digital readbacks** when a topology mode
 is selected; it never computes branch current, coupled voltage, or aggregate
 limit from independent settings. No electrical proof, physical wiring check,
 firmware behavior simulation, new SCPI permission, or H09/H10 status change.
+
+### R3.5.61: larger offline UART regression batch
+
+The combined-mode, output-safety, and measurement/regulation driver tests
+were migrated as one software-only patch: 22 older `FakeTransport` tests
+replaced by 23 narrower checks using the *production* driver on POSIX PTY.
+The canned SCPI replies verify software wire sequencing and fail-stop logic;
+these tests cannot validate physical Series/Parallel wiring, power delivery,
+output shutdown, or electrical CV/CC operation. Original hardware evidence
+and its limits are not reclassified. `tests/test_driver.py` keeps unrelated
+legacy mocks until their separate cases have appropriate real-driver coverage.
