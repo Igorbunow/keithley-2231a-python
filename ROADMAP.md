@@ -17,6 +17,15 @@ not use outdated `v0.2/v0.3/v0.4/v0.5` sketches as engineering milestones.
   Aux revision behavior, unmeasured Parallel branch-sharing, USB-loss hardware
   fault not performed. Tests or observed output do not imply metrology calibration.
 
+## R3.5.50 — extend actual driver + virtual UART testing
+
+The existing R4.3 `*PSC?` and idle `*OPC?` hardware qualification functions now
+run against a strict POSIX virtual UART peer, through the production driver and,
+when installed, `SerialTransport`. Assert exact 75-command traces and fail-stop
+on invalid readback/timeout/SCPI error/output ON. This adds **offline evidence**
+only. Historical mock-transport tests remain and will be migrated selectively,
+without inventing a parallel driver or service execution layer.
+
 ## Next: R4 — SCPI coverage (current priority)
 
 1. **R4.1 inventory:** review vendor 2231A reference manual 077100401 §5,

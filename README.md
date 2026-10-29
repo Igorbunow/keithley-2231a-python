@@ -40,6 +40,17 @@ gateway and offline authority layers were removed. The `ServicePlanner` retained
 inside driver policy only validates typed operation arguments and builds the
 allowlisted wire sequence; it is NOT a separate execution engine.
 
+**R3.5.50 virtual-UART status qualification:** the unchanged R4.3 PSC/OPC
+hardware-stage code is exercised through the real `Keithley2231A` dispatcher
+and a POSIX pseudo-terminal. Tests independently assert the complete 75-command
+wire trace (including 37 `SYST:ERR?` polls), both output-OFF sweeps, exact
+CRLF bytes, and fail-stop after malformed replies, timeouts, SCPI errors,
+non-OFF outputs and status-enable drift. The UART peer now rejects unknown
+commands rather than answering `1`. On hosts with `pyserial`, the tests use
+production `SerialTransport`; the test-only PTY transport is a fallback.
+Other historical fake-transport tests have not yet been migrated; do not
+conflate these virtual-wire results with new physical qualification.
+
 **Safety hold:** calibration commands, unverified `*TST?`/`*PSC` write syntax,
 and calibration-password handling remain blocked on the driver wire path until
 their vendor procedure is fully reviewed. No service hardware test is authorized.

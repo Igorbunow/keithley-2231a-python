@@ -1,14 +1,16 @@
-"""Real POSIX pseudo-terminal pair. NOT a service simulator or instrument model.
+"""Real POSIX pseudo-terminal pair for testing the production SCPI path.
 
-The peer only responds to a strict canned test protocol and records raw ASCII
-lines; tests exercise the production Keithley2231A dispatcher over a character
-stream. No pyserial/physical device required.
+The peer implements a small, explicitly allowlisted response fixture and records
+raw ASCII lines. Unknown commands are never silently acknowledged as success.
+Tests exercise the production Keithley2231A dispatcher over a character stream.
+No physical device is opened.
 """
 from __future__ import annotations
 import os
 import select
 import tty
 import threading
+import time
 
 
 class PTYTransport:
@@ -57,7 +59,8 @@ class PTYTransport:
 class UARTPeer:
     """Canned protocol fixture; no independent driver or service state machine."""
     def __init__(self, *, serial='LAB-UNIT-001', response_overrides=None, drop=None,
-                 fault_code=None, off_by_channel=None):
+                 fault_code=None, off_by_channel=None, response_sequences=None,
+                 fault_after=None):
         self.master, slave = os.openpty()
         tty.setraw(self.master)
         tty.setraw(slave)
@@ -66,6 +69,13 @@ class UARTPeer:
         self.serial = serial
         self.rx = []
         self.rx_bytes = []
+        self._rx_cond = threading.Condition()
+        self.unsupported = []
+        self.response_sequences = {cmd: list(values) for cmd, values in
+                                   (response_sequences or {}).items()}
+        if any(not values for values in self.response_sequences.values()):
+            raise ValueError('virtual UART response sequences cannot be empty')
+        self.fault_after = fault_after
         self.overrides = response_overrides or {}
         self.drop = drop
         self.fault_code = fault_code
@@ -89,24 +99,56 @@ class UARTPeer:
             while b'\n' in buf:
                 raw_line, _, rest = buf.partition(b'\n')
                 buf = bytearray(rest)
-                self.rx_bytes.append(bytes(raw_line) + b'\n')
                 cmd = raw_line.rstrip(b'\r').decode('ascii')
-                self.rx.append(cmd)
-                if cmd.startswith('INST:NSEL '):
+                with self._rx_cond:
+                    self.rx_bytes.append(bytes(raw_line) + b'\n')
+                    self.rx.append(cmd)
+                    self._rx_cond.notify_all()
+                if cmd.startswith('INST:NSEL ') and cmd[-1:] in ('1', '2', '3'):
                     self.selected = int(cmd[-1])
-                if not cmd.endswith('?') or cmd == self.drop:
+                is_query = cmd.endswith('?')
+                allowed_writes = {'SYST:REM', 'SYST:LOC', '*CLS', '*WAI', '*RST',
+                                  'INST:NSEL 1', 'INST:NSEL 2', 'INST:NSEL 3'}
+                allowed_reads = {'*IDN?', 'INST:NSEL?', 'CHAN:OUTP?',
+                                 'SYST:ERR?', 'OUTP:SER?', 'OUTP:PARALLEL?',
+                                 'OUTP:TRAC?', '*ESE?', '*SRE?', '*PSC?', '*OPC?'}
+                if cmd not in (allowed_reads if is_query else allowed_writes):
+                    self.unsupported.append(cmd)
+                    # An unknown write is rejected at the next error poll;
+                    # an unknown query receives an unmistakably invalid reply.
+                    if not is_query:
+                        self.fault_code = '130,"Unsupported virtual UART command"'
+                if cmd == self.fault_after:
+                    self.fault_code = '120,"Injected SCPI error"'
+                if not is_query or cmd == self.drop:
                     continue
-                if cmd in self.overrides:
+                if cmd in self.response_sequences:
+                    values = self.response_sequences[cmd]
+                    response = values.pop(0) if len(values) > 1 else values[0]
+                elif cmd in self.overrides:
                     response = self.overrides[cmd]
                 elif cmd == '*IDN?':
                     response = f'Keithley instruments, 2231A-30-3, {self.serial}, 1.04-1.04'
                 elif cmd == 'INST:NSEL?': response = str(self.selected)
                 elif cmd == 'CHAN:OUTP?': response = str(self.off_by_channel.get(self.selected, 0))
                 elif cmd == 'SYST:ERR?': response = self.fault_code or '0,"No error"'
-                elif cmd in ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?'): response = '0'
-                else: response = '1'  # fixed canned response, not an instrument model
+                elif cmd in ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?',
+                             '*ESE?', '*SRE?', '*PSC?'): response = '0'
+                elif cmd == '*OPC?': response = '1'
+                else: response = 'INVALID VIRTUAL UART QUERY'
                 try: os.write(self.master, (response + '\n').encode('ascii'))
                 except OSError: return
+
+    def await_received(self, count, timeout=.4):
+        """Synchronize with peer reader before asserting last unacknowledged write."""
+        deadline = time.monotonic() + timeout
+        with self._rx_cond:
+            while len(self.rx) < count:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._rx_cond.wait(remaining)
+            return True
 
     def close(self):
         self.stop.set()

@@ -235,3 +235,25 @@ Next: [R4.3-A risk disposition](R4_3_RISK_REGISTER.md), without new live writes.
 не успешная квалификация данных команд на физическом источнике.
 Калибровка, `*TST?`, запись `*PSC` и разблокировка пароля по-прежнему
 запрещены для отправки до уточнения документации.
+
+## R3.5.50 — virtual UART wire regression for R4.3 PSC/OPC
+
+In `tests/offline/test_r4_3_status_virtual_uart.py`, the existing R4.3 hardware
+functions `run_psc` and `run_opc` invoke the production driver through a POSIX
+virtual serial port. Both full successful scripts must match the independently
+specified 75-command trace byte for byte: 65 queries, 10 writes, 37
+`SYST:ERR?` polls, one target query, six OFF readbacks, no output writes.
+Fault injection covers missing replies, malformed responses, non-OFF channels,
+changed ESE masks and SCPI error after the target query. Unknown commands are
+rejected by the peer instead of receiving a fabricated success reply.
+
+These are **software UART tests**; the previously reviewed physical R4.3 PASS
+claims are unchanged. Other legacy FakeTransport tests are not claimed to be
+migrated in this increment. No actual CAL/service SCPI is sent to hardware.
+
+The expected 75-command sequence was independently compared against the
+low-level `driver_trace` command order in the previously reviewed real
+`R43PSC` (2026-10-29T11:12 UTC) and `R43OPC` (2026-10-29T11:51 UTC)
+evidence: **75/75 positions match for both**. The higher-level scope `query`
+records may precede an automatically injected `SYST:REM`; therefore those
+records must not be mistaken for raw UART transmission order.
