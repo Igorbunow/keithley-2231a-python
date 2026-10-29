@@ -27,7 +27,7 @@
 | --- | --- | :---: | --- |
 | Common 5-2…5-6 | `*CLS` | **U** | Очистка статуса; опасность потери диагностик |
 | Common 5-2…5-6 | `*ESE / *ESE?` | **W** | R4.2: `status_enable_mask("standard_event")` reads `*ESE?` only; writing `*ESE` stays unsupported |
-| Common 5-2…5-6 | `*ESR?` | **W** | R4.2-B: `consume_status_event("standard_event", acknowledge_clear=True)`; destructive read, OFF-only, SIM TESTED |
+| Common 5-2…5-6 | `*ESR?` | **W** | R4.2-B: `consume_status_event("standard_event", acknowledge_clear=True)`; destructive read, OFF-only, HW REVIEWED PASS EVENT 2026-10-29 (one-shot; clear effect not independently measured) |
 | Common 5-2…5-6 | `*IDN?` | **W** | `Keithley2231A.identity()` |
 | Common 5-2…5-6 | `*OPC / *OPC?` | **U** | Completion/query |
 | Common 5-2…5-6 | `*RST` | **R** | Сброс конфигурации может изменить условия безопасности |
@@ -81,7 +81,7 @@
 | SYSTem 5-17…5-18 | `SYST:RWLock` | **W** | Блокировка панели, не safety interlock |
 | SYSTem 5-17…5-18 | `SYST:MODUle?` | **W** | R4.2: `module_info()` via `SYST:MODU?`; module text ≠ identity/serial check; HW REVIEWED PASS READ_ONLY 2026-10-29 |
 | SYSTem 5-17…5-18 | `SYST:BEEPer` | **W** | `beep()` |
-| STATus 5-19…5-23 | `STAT:QUES[:EVENt]?` | **W** | R4.2-B: `consume_status_event("questionable", acknowledge_clear=True)`; read-to-clear, OFF-only, SIM TESTED |
+| STATus 5-19…5-23 | `STAT:QUES[:EVENt]?` | **W** | R4.2-B: `consume_status_event("questionable", acknowledge_clear=True)`; read-to-clear, OFF-only, HW REVIEWED PASS EVENT 2026-10-29 (one-shot; actual clearing not independently demonstrated) |
 | STATus 5-19…5-23 | `STAT:QUES:ENABle / ?` | **W** | R4.2: `status_enable_mask("questionable")` queries `...:ENAB?` only; writes unsupported |
 | STATus 5-19…5-23 | `STAT:QUES:CONDition?` | **W** | `status_snapshot()` |
 | STATus 5-19…5-23 | `STAT:PRESet` | **U** | Сброс status config |
@@ -90,7 +90,7 @@
 | STATus 5-19…5-23 | `STAT:QUES:INST:ISUM<x>[:EVENt]?` | **U** | Event/read-to-clear |
 | STATus 5-19…5-23 | `STAT:QUES:INST:ISUM<x>:ENABle / ?` | **W** | R4.2-C `status_instrument_enable_mask("questionable", channel=1..3)`; queries only; HW REVIEWED PASS READ_ONLY 2026-10-29 |
 | STATus 5-19…5-23 | `STAT:QUES:INST:ISUM<x>:COND?` | **W** | `read_channel()` mode decoding |
-| STATus 5-19…5-23 | `STAT:OPER[:EVENt]?` | **W** | R4.2-B: `consume_status_event("operation", acknowledge_clear=True)`; potentially destructive event read, OFF-only, SIM TESTED |
+| STATus 5-19…5-23 | `STAT:OPER[:EVENt]?` | **W** | R4.2-B: `consume_status_event("operation", acknowledge_clear=True)`; potentially destructive event read, OFF-only, HW REVIEWED PASS EVENT 2026-10-29 (one-shot) |
 | STATus 5-19…5-23 | `STAT:OPER:COND?` | **W** | `status_snapshot()` |
 | STATus 5-19…5-23 | `STAT:OPER:ENABle / ?` | **W** | R4.2: `status_enable_mask("operation")` queries `...:ENAB?` only; writes unsupported |
 | STATus 5-19…5-23 | `STAT:OPER:INST[:EVENt]?` | **U** | Event/read-to-clear |
@@ -159,7 +159,7 @@
 
 Официальный источник: 077100401 §5, страницы 5-2–5-4, 5-18–5-22.
 
-## R4.2-B — explicit event consumption (SIM TESTED, HW NOT_RUN)
+## R4.2-B — explicit event consumption (SIM TESTED, HW REVIEWED PASS: EVENT 2026-10-29; clear effect not independently measured)
 
 - `consume_status_event(register, *, acknowledge_clear=True)` supports **only**
   `standard_event` → `*ESR?`, `questionable` → `STAT:QUES:EVEN?`, and
@@ -183,8 +183,10 @@
   or second event query consumes other evidence.
 - Vendor reference: 077100401, §5, pages 5-3, 5-19, 5-21–5-22.
   `*ESR?` and `STAT:QUES[:EVENt]?` have documented clear-on-query behavior;
-  all event queries are treated as potentially destructive pending firmware-
-  specific validation. **No HW test authorized by this patch.**
+  all event queries remain treated as potentially destructive.
+  **One-shot event queries HW REVIEWED PASS** on 2026-10-29:
+  `*ESR?=128` (PON), QUES=0, OPER=0. Clear-after-read was not tested with a
+  second read. See [EVENT review](hardware_reports/R4_2_EVENT_review_2026-10-29.md).
 
 ## R4.2-C — nested status enable masks (SIM TESTED, HW REVIEWED PASS: READ_ONLY 2026-10-29)
 
@@ -215,7 +217,10 @@
 All 12 enable-mask queries and `SYST:MODU?` were observed on one real PSU;
 zero values are valid readbacks, **not** interrupt-behavior validation.
 Evidence review: [`hardware_reports/R4_2_READ_ONLY_review_2026-10-29.md`](hardware_reports/R4_2_READ_ONLY_review_2026-10-29.md).
-**Event B HW NOT_RUN.** Hardware qualification protocol for A/C masks and B destructive events is
+**Event B HW REVIEWED PASS** (2026-10-29, one-shot reads; no independent
+clearing proof): [review](hardware_reports/R4_2_EVENT_review_2026-10-29.md).
+Hardware qualification protocol for A/C masks and B event reads is
 [`R4_2_HARDWARE.ru.md`](R4_2_HARDWARE.ru.md). It consists of two manually
 gated, separate real-PSU runs. Step A must be reviewed before step B. No
 programmatic PASS or simulation claim upgrades SCPI families to HW VERIFIED.
+Next: [R4.3-A risk disposition](R4_3_RISK_REGISTER.md), without new live writes.

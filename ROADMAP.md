@@ -26,9 +26,11 @@ not use outdated `v0.2/v0.3/v0.4/v0.5` sketches as engineering milestones.
 2. **R4.2 safe gaps:** add justified status/identity/readback operations only
    through the shared dispatcher; unit tests and fail-closed behavior first.
    R4.2-A/C read-only status group: HW REVIEWED PASS (2026-10-29, bounded);
-   R4.2-B event-consuming queries: HW NOT_RUN until separate approval and review.
-3. **R4.3 risky gaps:** review trigger/apply/step/save/recall/display commands
-   separately. Never expose arbitrary write access or bypass existing profile
+   R4.2-B event-consuming queries: **HW REVIEWED PASS** in a bounded one-shot
+   OFF-only run (2026-10-29); actual latch clearing was not measured.
+3. **R4.3 risky gaps:** start with the command-level risk disposition
+   [`docs/R4_3_RISK_REGISTER.md`](docs/R4_3_RISK_REGISTER.md); review
+   trigger/apply/step/save/recall/display commands separately. Never expose arbitrary write access or bypass existing profile
    and output gates. CALibration/service commands are **inventory only**.
 4. **R4.4 verification:** trace auditor, firmware caveats, documented exclusions,
    targeted operator-approved hardware checks only if indispensable.

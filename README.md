@@ -570,7 +570,7 @@ O01: ограниченный интерактивный аппаратный п
 после проверки схемы `python3 tools/hw_qualify.py run O01 --config config/bench.local.toml --execute --allow-o01-on`.
 Без `--allow-o01-on` порты не открываются. См. `docs/O01_STAGE_PREFLIGHT.ru.md`.
 
-### R4.2-A non-destructive SCPI diagnostics (SIM TESTED)
+### R4.2-A non-destructive SCPI diagnostics (SIM TESTED; HW REVIEWED PASS: READ_ONLY)
 
 `device.module_info()` reads `SYST:MODU?` as metadata only; it does not
 replace `device.identity()` or enforce a firmware/Aux revision.
@@ -578,10 +578,10 @@ replace `device.identity()` or enforce a firmware/Aux revision.
 `service_request`, `questionable`, or `operation`, and reads the corresponding
 **enable mask**, 0–255. Neither method reads or clears an EVENT latch or the
 error queue, and neither method enables a power output. The session may first
-identify the PSU and enter Remote. The commands are covered by offline tests,
-not independently hardware-qualified. See `docs/SCPI_COVERAGE.md`.
+identify the PSU and enter Remote. The commands are covered by offline tests and independently reviewed on
+a real PSU in the limited read-only 2026-10-29 run. See `docs/SCPI_COVERAGE.md`.
 
-### R4.2-B: explicit event-latch consumption (offline-validated only)
+### R4.2-B: explicit event-latch consumption (HW REVIEWED PASS: bounded EVENT)
 
 `psu.consume_status_event("standard_event", acknowledge_clear=True)` reads
 `*ESR?`. The same method accepts `"questionable"` and `"operation"` for the
@@ -592,9 +592,14 @@ all three channels must be reported OFF immediately before the read. Unlike
 `psu.status_enable_mask(...)` or `psu.status()`, this call is **not** suitable
 for routine polling. A failed response cannot be retried to recover its events.
 The OFF preflight itself is sequential and does not prove an external
-controller cannot energize the outputs afterward. HW status: **NOT_RUN**.
+controller cannot energize the outputs afterward. HW status: **REVIEWED PASS**
+for the one-shot OFF-only 2026-10-29 run:
+`*ESR? = 128` (PON bit), `STAT:QUES:EVEN? = 0`,
+`STAT:OPER:EVEN? = 0`; 96 clean error-queue polls. No second event read
+was made, so *actual latch clearing is not independently measured*.
+See [the independent EVENT review](docs/hardware_reports/R4_2_EVENT_review_2026-10-29.md).
 
-### R4.2-C: nested STATUS enable masks (offline-only, non-destructive)
+### R4.2-C: nested STATUS enable masks (HW REVIEWED PASS: READ_ONLY)
 
 `Keithley2231A.status_instrument_enable_mask("questionable", channel=2)`
 reads one documented nested enable mask (0..255). The register can instead
@@ -607,9 +612,13 @@ values fail before I/O; malformed/lost replies fault the current session.
 
 ### R4.2 physical SCPI verification
 
-The new status API is only **SIM TESTED** until manually reviewed real-PSU
-traces exist. An independent OFF-only hardware gate, with a separate explicit
-opt-in for destructive event reads, is described in
+The R4.2-A/B/C status API has **bounded HW REVIEWED PASS** from separate
+READ_ONLY and EVENT runs on 2026-10-29. This does not prove status-mask
+configurability or event-latch clear-after-read behavior. An independent
+OFF-only hardware gate, with a separate explicit opt-in for destructive event
+reads, is described in
 [`docs/R4_2_HARDWARE.ru.md`](docs/R4_2_HARDWARE.ru.md).
 Default `python3 tools/r4_status_qualify.py --config config/bench.local.toml` is
 **dry run**. It must never be launched with `--execute` unattended.
+Next R4.3 work requires [a fresh command-level risk review](docs/R4_3_RISK_REGISTER.md),
+not another unapproved live SCPI experiment.
