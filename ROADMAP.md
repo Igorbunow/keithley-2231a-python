@@ -72,6 +72,18 @@ injected-fault traces; it does **not** simulate combined hardware behavior or
 establish safe electrical wiring. Physical H09/H10 evidence is unchanged.
 No new production code, hardware tests, or service operations.
 
+## R4.4-A — safe scalar/display reads (software-only)
+
+After R3.5.64, five documented query forms are exposed through the existing
+production driver and exercised with an explicit-reply POSIX UART peer:
+`DISP?`, `MEAS:POW?`, `FETC:VOLT?`, `FETC:CURR?`, `FETC:POW?`.
+No display write, triggered source action, reset, persistent configuration,
+status-latch consumption, hardware power enable, or new execution engine.
+`measure_power()` does not replace `read_channel()`'s sequential U×I; fetch
+values are not guaranteed fresh or synchronized. **SIM TESTED, HW NOT_RUN**;
+independent hardware confirmation is a separate operator gate.
+See `docs/SCPI_COVERAGE.md` and `docs/R4_3_RISK_REGISTER.md`.
+
 ## Next: R4 — SCPI coverage (current priority)
 
 1. **R4.1 inventory:** review vendor 2231A reference manual 077100401 §5,

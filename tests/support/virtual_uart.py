@@ -172,7 +172,7 @@ class UARTPeer:
                     status_reads.add(f'{prefix}:ENAB?')
                     status_reads.update(f'{prefix}:ISUM{ch}:ENAB?' for ch in (1, 2, 3))
                 allowed_reads = {'*IDN?', 'INST:NSEL?', 'CHAN:OUTP?',
-                                 'SYST:ERR?', 'OUTP:SER?', 'OUTP:PARALLEL?',
+                                 'SYST:ERR?', 'DISP?', 'OUTP:SER?', 'OUTP:PARALLEL?',
                                  'OUTP:TRAC?', '*ESE?', '*SRE?', '*PSC?', '*OPC?',
                                  '*ESR?', 'STAT:QUES:EVEN?', 'STAT:OPER:EVEN?'} | status_reads
                 if self.profile_registers:
@@ -185,7 +185,8 @@ class UARTPeer:
                                               'OUTP:TIM:DEL?',
                                               'OUTP:STAT:ALL?', 'SYST:VERS?', '*STB?',
                                               'STAT:QUES:COND?', 'STAT:OPER:COND?',
-                                              'MEAS:VOLT?', 'MEAS:CURR?'})
+                                              'MEAS:VOLT?', 'MEAS:CURR?', 'MEAS:POW?',
+                                              'FETC:VOLT?', 'FETC:CURR?', 'FETC:POW?'})
                     else:
                         allowed_writes.update({'SYST:RWLOCK', 'OUTP:SER 0',
                                                'OUTP:PARALLEL 0', 'OUTP:TRAC 0',
@@ -222,6 +223,7 @@ class UARTPeer:
                 elif cmd == '*IDN?':
                     response = f'Keithley instruments, 2231A-30-3, {self.serial}, 1.04-1.04'
                 elif cmd == 'SYST:MODU?': response = '2231,1.04'
+                elif cmd == 'DISP?': response = '1'
                 elif cmd == 'STAT:QUES:ENAB?': response = '17'
                 elif cmd == 'STAT:OPER:ENAB?': response = '255'
                 elif cmd.startswith(('STAT:QUES:INST', 'STAT:OPER:INST')) and cmd in status_reads:

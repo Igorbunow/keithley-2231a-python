@@ -856,3 +856,32 @@ Remaining `FakeTransport` uses in qualification-runner/stage tests are retained
 intentionally: they exercise runner and evidence mechanisms, not physical
 Keithley operation. The virtual UART only returns digital SCPI responses;
 it cannot establish actual powered Series/Parallel or H09/H10 results.
+
+
+## R4.4-A — direct scalar and display queries (SIM TESTED; HW NOT_RUN)
+
+New read-only API methods (single instrument, no unreviewed mutations):
+
+```python
+# After normal Keithley2231A connection and validation:
+print(psu.display_enabled())         # DISP? (front-panel display, not power state)
+psu.apply_profile(profile, confirmed_wiring="independent")
+watts = psu.measure_power(1)          # MEAS:POW? (new native power measurement)
+volts = psu.fetch_measurement(1, "voltage")  # FETC:VOLT? (existing/current reading)
+amps = psu.fetch_measurement(1, "current")   # FETC:CURR?
+watts_cached = psu.fetch_measurement(1, "power")  # FETC:POW?
+```
+
+For clarity, `read_channel().power_w` **still computes the product of two
+sequentially measured U and I**; do not interpret it as an atomic instrument
+power measurement. `FETC` freshness is not established, and requests on
+unarmed/faulted sessions or with unknown scalar kinds are rejected. Each scalar
+request rechecks the active profile (including topology and output integrity)
+before sending its single measurement command, so the extra API cannot bypass
+prior protection. Errors or loss of synchronization remain fail-closed. No
+hardware verification of these five query forms is claimed; their behavior
+must be qualified on the actual connected instrument before relying on it in
+an application or replacing established measurement workflows.
+
+No additional privileged service route or independent SCPI implementation is
+introduced. See `docs/SCPI_COVERAGE.md` for the per-family evidence state.

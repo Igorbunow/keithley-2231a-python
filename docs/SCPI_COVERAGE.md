@@ -53,7 +53,7 @@
 | CALibration 5-7…5-9 | `CAL:SAVe` | **X** | Постоянное сохранение калибровки |
 | CALibration 5-7…5-9 | `CAL:INITial` | **X** | Инициализация калибровки |
 | CALibration 5-7…5-9 | `CAL:STRing` | **X** | Калибровочные данные |
-| DISPlay 5-9…5-10 | `DISP[:WIND][:STATe] / ?` | **U** | Управление экраном |
+| DISPlay 5-9…5-10 | `DISP[:WIND][:STATe] / ?` | **W** | R4.4-A: `display_enabled()` uses query-only `DISP?`; **writes unsupported**, SIM TESTED; HW NOT_RUN |
 | DISPlay 5-9…5-10 | `DISP[:WIND]:TEXT[:DATA]` | **U** | Пользовательский текст |
 | DISPlay 5-9…5-10 | `DISP[:WIND]:TEXT:CLEar` | **U** | Очистка текста |
 | INSTrument 5-10…5-12 | `INST[:SELect] / ?` | **U** | Выбор по имени; core применяет NSEL |
@@ -64,11 +64,11 @@
 | INSTrument 5-10…5-12 | `INST:COMBine:OFF` | **U** | Проверить топологические эффекты |
 | INSTrument 5-10…5-12 | `INST:COUPle[:TRIGger] / ?` | **R** | Связь триггеров/каналов |
 | MEASure 5-12…5-13 | `MEAS[:SCAL]:VOLT[:DC]?` | **W** | `read_channel()` вызывает `MEAS:VOLT?` |
-| MEASure 5-12…5-13 | `FETCh[:VOLT][:DC]?` | **U** | Отдельное чтение сохранённого результата |
+| MEASure 5-12…5-13 | `FETCh[:VOLT][:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "voltage")`, query-only `FETC:VOLT?`, SIM TESTED / HW NOT_RUN |
 | MEASure 5-12…5-13 | `MEAS[:SCAL]:CURR[:DC]?` | **W** | `read_channel()` вызывает `MEAS:CURR?` |
-| MEASure 5-12…5-13 | `FETCh:CURR[:DC]?` | **U** | Нет прямого вызова core |
-| MEASure 5-12…5-13 | `MEAS[:SCAL]:POW[:DC]?` | **U** | Core вычисляет V×I, нет on-wire MEAS:POW |
-| MEASure 5-12…5-13 | `FETCh:POW[:DC]?` | **U** | Нет прямого вызова core |
+| MEASure 5-12…5-13 | `FETCh:CURR[:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "current")`, query-only `FETC:CURR?`, SIM TESTED / HW NOT_RUN |
+| MEASure 5-12…5-13 | `MEAS[:SCAL]:POW[:DC]?` | **W** | R4.4-A: `measure_power(ch)` performs `MEAS:POW?`; `Reading.power_w` remains U×I; SIM TESTED / HW NOT_RUN |
+| MEASure 5-12…5-13 | `FETCh:POW[:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "power")`, query-only `FETC:POW?`, SIM TESTED / HW NOT_RUN |
 | OUTPut 5-14…5-16 | `OUTP[:STATe][:ALL] / ?` | **W** | `OUTP 0`, guarded global output, readback |
 | OUTPut 5-14…5-16 | `CHAN:OUTP[:STATe] / ?` | **W** | Один канал; при ON нужны профиль и gate |
 | OUTPut 5-14…5-16 | `OUTP:ENABle / ?` | **U** | EnableChannels semantics ещё не сопоставлены |
@@ -359,3 +359,29 @@ never claim physical output OFF, certified firmware behavior or new service
 rights. Both production device.py and transport.py remain unchanged. The
 legacy FakeTransport is retained for topology, tracking, sweep and other
 currently non-migrated test cases; no compatibility layer is introduced.
+
+## R4.4-A — Scalar measurement + display query-only bundle (SIM TESTED, HW NOT_RUN)
+
+Based on Reference Manual 077100401 §5, pages **5-10**, **5-13–5-14**,
+`display_enabled()` reads only `DISP?` with strict 0/1 or ON/OFF parsing.
+This is **front-panel visibility**, not proof that any power output is OFF.
+It may be used without an applied profile; faulted or uncertain-link sessions
+cannot be reused. Nothing writes display text or visibility.
+
+`measure_power(ch)` initiates one `MEAS:POW?`; `fetch_measurement(ch, kind)`
+queries one `FETC:VOLT?` / `FETC:CURR?` / `FETC:POW?` for an existing/current
+instrument value. Both require an armed profile, validate the request before
+SCPI, run the existing full profile-integrity check, and select the channel
+using the same guarded dispatcher. For Series/Parallel CH2 is not an independent
+logical output and is rejected. No implicit power-on/off, status-event reading,
+error-queue consumption, retries, or trigger commands. This software check
+**does not** establish actual firmware replies, accuracy, age of FETC data, or
+simultaneity with `read_channel()`; real-device testing requires an independent
+operator-approved protocol. `Reading.power_w` remains sequential V×I, not
+replaced with or silently corrected by the new direct instrument power query.
+
+POSIX virtual-UART tests exercise exact CRLF bytes, command allowlisting,
+read-only responses, invalid requests before I/O, profile drift before a scalar
+query, strict malformed reply terminal faults, lost responses without unsafe
+post-fault commands, and display reading before profile installation. The peer
+provides canned replies only, **not an electrical model or measurement source**.

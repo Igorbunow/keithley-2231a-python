@@ -1461,6 +1461,60 @@ class Keithley2231A:
             except Exception as exc:
                 self._trip(f'Status query failed: {exc}')
 
+    def display_enabled(self) -> bool:
+        """Query only ``DISP?`` (display visibility, never PSU output state).
+
+        This neither changes front-panel display settings nor reads status
+        event latches. It is valid before profile application, but a faulted
+        or transport-uncertain session cannot be reused.
+        """
+        with self._lock:
+            if self._faulted or self._link_uncertain:
+                raise SafetyError('Faulted/uncertain session cannot query display state')
+            return self._bool(self._query('DISP?'))
+
+    def _scalar_measurement(self, ch: int, kind: str, *, cached: bool) -> float:
+        """One guarded, non-atomic scalar query through the shared SCPI path.
+
+        FETC reports the instrument's existing reading; MEAS starts a new
+        reading. Do not mistake either for simultaneous voltage/current/power
+        acquisition or guaranteed cross-channel coherence.
+        """
+        commands = {'voltage': 'VOLT?', 'current': 'CURR?', 'power': 'POW?'}
+        if type(kind) is not str or kind not in commands:
+            raise ValueError('kind must be voltage, current or power')
+        self._check_channel(ch)
+        with self._lock:
+            self._require_ready()
+            if self._profile.wiring in ('series', 'parallel') and ch == 2:
+                raise SafetyError('Combined CH2 metering is replaced by CH1+CH2; request channel 1')
+            try:
+                # Do not permit this additional measurement API to bypass the
+                # integrity checks used by read_channel().
+                self.verify_profile()
+                self._select(ch)
+                command = ('FETC:' if cached else 'MEAS:') + commands[kind]
+                return self._num(command)
+            except Exception as exc:
+                self._trip(f'Scalar measurement failed: {exc}')
+
+    def measure_power(self, ch: int) -> float:
+        """Initiate a fresh ``MEAS:POW?`` reading in W on the selected channel.
+
+        Unlike ``Reading.power_w`` (sequential U × I), this value is reported
+        directly by the instrument. Firmware behavior is SIM-only until a
+        bounded operator-approved hardware comparison has been completed.
+        """
+        return self._scalar_measurement(ch, 'power', cached=False)
+
+    def fetch_measurement(self, ch: int, kind: str) -> float:
+        """Read the currently available instrument scalar value (not new ACQ).
+
+        ``kind`` is strictly one of voltage/current/power. FETC replies are
+        not guaranteed to be refreshed or synchronized across channels.
+        """
+        return self._scalar_measurement(ch, kind, cached=True)
+
     def module_info(self) -> str:
         """Read the instrument's SYST:MODU? text without changing settings.
 

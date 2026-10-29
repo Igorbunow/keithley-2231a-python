@@ -17,7 +17,7 @@ authorize use or establish firmware 1.04-1.04 compatibility for untested forms.
 | `APPLy`, `APPLy:VOLT`, `APPLy:CURR` | Can change several channels/limits at once | **DEFER**. No raw/bulk bypass of per-channel caps, topology invariants or per-command readbacks |
 | `VOLT/CURR:UP`, `DOWN`, `STEP` | Increment/decrement and step state may depend on current channel and previous settings | **DEFER**. Must never bypass bounded absolute setpoint validation or live profile integrity |
 | `*SAV`, `*RCL` | Nonvolatile persistence; recall may change current settings or output-recall assumptions | **DEFER**. No automatic invocation or startup restore |
-| `DISPlay`/text control | May obscure physical warnings/panel presentation, unrelated to safety-critical supply control | **LOW PRIORITY**; not required in the guarded core |
+| `DISPlay`/text control | Display writes can obscure physical warnings; state query is observational only | **R4.4-A QUERY-ONLY `DISP?` SIM TESTED**; all display/text writes remain blocked, HW NOT_RUN |
 | `CALibration:*` | Calibration/service settings can irreversibly alter the instrument | **SEPARATE OFFLINE service-profile plans only** (R3.5.45); no live execution, standard/debug driver blocks service commands |
 
 ## Gates for the next technical increment
@@ -25,8 +25,10 @@ authorize use or establish firmware 1.04-1.04 compatibility for untested forms.
 1. Validate **exact spelling, argument range and read/write side effects** for
    each chosen leaf command against its individual §5 manual page; the R4.1
    family table is not a verified allowlist.
-2. Select **at most one** narrowly useful query or mutation per increment,
-   and show why existing APIs do not already cover the need. Explicitly assess
+2. Independent **query-only software operations may be bundled** when each has
+   its own reviewed syntax, authorization and failure tests. Risky mutations
+   require a separate gate and narrowly scoped increment. Show why existing
+   APIs do not already cover the need. Explicitly assess
    on-wire side effects and whether the operation would consume event/error
    evidence. `*OPC?` is not automatically an innocuous passive read.
 3. Keep the existing fail-closed common SCPI dispatcher, bounded response
@@ -95,3 +97,13 @@ ServicePlanner теперь выполняют только политику и 
 общий dispatcher/Transport. Программная квалификация через псевдо-UART: это
 проверка байтов и fail-closed пути, **не hardware PASS**. Калибровка и
 неоднозначные команды по-прежнему не имеют wire-допуска.
+
+## R4.4-A query-only observation (offline)
+
+The official manual separates `DISP?` (0/1 display visibility) from writes
+that change what the operator can see. The new `display_enabled()` does not
+write or clear display text and does not inspect PSU output state. `MEAS:POW?`
+and the three `FETC` readings are guarded by the normal active profile and do
+not issue a trigger; `FETC` freshness and powered firmware replies are not
+confirmed. All five commands are **SIM TESTED ONLY**, and do not grant any
+permission for live output, display mutations, or calibration commands.
