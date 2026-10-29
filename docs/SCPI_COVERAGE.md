@@ -257,3 +257,21 @@ low-level `driver_trace` command order in the previously reviewed real
 evidence: **75/75 positions match for both**. The higher-level scope `query`
 records may precede an automatically injected `SYST:REM`; therefore those
 records must not be mistaken for raw UART transmission order.
+
+## R3.5.51 — migrated R4.2-A/C status enable tests (software PTY)
+
+`tests/offline/test_r4_2_status_reads.py` and
+`tests/offline/test_r4_2_nested_enable.py` no longer inherit fake drivers.
+The production `Keithley2231A` API goes through `SerialTransport` (when
+installed) or the test-only POSIX PTY transport, with a peer in
+`tests/support/virtual_uart.py` returning allowlisted readback fixtures.
+Verified literal command order and CRLF wire bytes for `SYST:MODU?`, `*ESE?`,
+`*SRE?`, `STAT:QUES:ENAB?`, `STAT:OPER:ENAB?`, and eight
+`STAT:{QUES,OPER}:INST[:ISUM1/2/3]:ENAB?` queries. Invalid register/channel
+inputs emit zero SCPI. Malformed or lost replies latch fault and prevent
+retry; neither events (`*ESR?`, `*:EVEN?`) nor clears, output writes or
+channel-selection commands are emitted by mask tests. The armed-flag test
+injects the in-memory state only; it is not a full physical profile exercise.
+No production driver changes or new physical hardware evidence. These status
+mask commands retain their previous bounded hardware review claims; no new
+`HW PASS` is implied by this software test refactor.

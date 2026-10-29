@@ -12,8 +12,7 @@ from pathlib import Path
 import sys
 import unittest
 
-from keithley2231a import SerialTransport
-from support.virtual_uart import PTYTransport, UARTPeer
+from support.virtual_uart import PTYTransport, UARTPeer, open_test_transport
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tests/hardware'))
@@ -52,12 +51,7 @@ class StatusHardwareVirtualUartTests(unittest.TestCase):
     def stage(self, operation, **peer_options):
         peer = UARTPeer(**peer_options)
         self.addCleanup(peer.close)
-        try:
-            import serial  # noqa: F401
-        except ImportError:
-            wire = PTYTransport(peer.path, timeout=.17)
-        else:
-            wire = SerialTransport(peer.path, timeout=.17)
+        wire = open_test_transport(peer, timeout=.17)
         # R4.3 stages own and close the transport; a double close is not needed.
         ev = Evidence()
         with contextlib.redirect_stdout(io.StringIO()):

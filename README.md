@@ -51,6 +51,15 @@ production `SerialTransport`; the test-only PTY transport is a fallback.
 Other historical fake-transport tests have not yet been migrated; do not
 conflate these virtual-wire results with new physical qualification.
 
+**R3.5.51 R4.2 status-mask UART migration:** the existing R4.2-A/C tests
+now use the real `Keithley2231A` API over a strictly allowlisted POSIX
+virtual UART instead of two `FakeTransport` subclasses. All four top-level
+and eight nested enable-mask reads, `SYST:MODU?`, invalid inputs, missing or
+malformed replies, and no-event-consumption wire rules are exercised. Exact
+CRLF bytes and command order are checked, with `SerialTransport` selected
+when `pyserial` is available. No production driver or hardware runner change.
+The remaining historical fake-backed tests still need selective migration.
+
 **Safety hold:** calibration commands, unverified `*TST?`/`*PSC` write syntax,
 and calibration-password handling remain blocked on the driver wire path until
 their vendor procedure is fully reviewed. No service hardware test is authorized.

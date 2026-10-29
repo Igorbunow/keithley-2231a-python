@@ -1,136 +1,110 @@
-"""R4.2-A: read-only documented SCPI, without consuming event latches."""
+"""R4.2-A non-destructive status API through the real driver and virtual UART."""
 from __future__ import annotations
+
+import os
 import unittest
 
-from keithley2231a import Keithley2231A, SafetyError, InstrumentError, TransportError
-from test_driver import FakeTransport
+from keithley2231a import Keithley2231A, SafetyError, InstrumentError
+from support.virtual_uart import UARTPeer, open_test_transport
 
 
-class ReadOnlyTransport(FakeTransport):
-    def __init__(self):
-        super().__init__()
-        self.module = '2231,1.04'
-        self.masks = {'*ESE?': '33', '*SRE?': '128',
-                      'STAT:QUES:ENAB?': '17', 'STAT:OPER:ENAB?': '255'}
-        self.bad_reply = None
-
-    def query(self, cmd):
-        if cmd == 'SYST:MODU?' or cmd in self.masks:
-            self.cmds.append(cmd)
-            if not self.remote:
-                raise AssertionError('R4 diagnostic bypassed Remote')
-            return self.bad_reply if self.bad_reply is not None else (
-                self.module if cmd == 'SYST:MODU?' else self.masks[cmd])
-        return super().query(cmd)
-
-
+@unittest.skipUnless(os.name == 'posix', 'requires POSIX virtual UART')
 class StatusReadOnlyTests(unittest.TestCase):
-    def test_module_and_enable_masks_exact_order_without_event_reset(self):
-        wire = ReadOnlyTransport()
-        psu = Keithley2231A(wire)
-        self.assertEqual(psu.module_info(), '2231,1.04')
-        for name, value in [('standard_event', 33), ('service_request', 128),
-                            ('questionable', 17), ('operation', 255)]:
-            self.assertEqual(psu.status_enable_mask(name), value)
-        self.assertEqual(wire.cmds, [
-            '*IDN?', 'SYST:REM', 'SYST:MODU?', '*ESE?', '*SRE?',
-            'STAT:QUES:ENAB?', 'STAT:OPER:ENAB?'])
-        self.assertFalse(psu.armed)
-        self.assertFalse(psu.faulted)
-        self.assertNotIn('OUTP', ' '.join(wire.cmds))
-        self.assertTrue(all(':EVEN' not in x and x != '*ESR?' and x != '*CLS'
-                            for x in wire.cmds))
+    def device(self, **peer_options):
+        peer = UARTPeer(**peer_options)
+        self.addCleanup(peer.close)
+        wire = open_test_transport(peer, timeout=.12)
+        self.addCleanup(wire.close)
+        return Keithley2231A(wire), peer
 
-    def test_invalid_register_rejected_without_any_scpi(self):
-        wire = ReadOnlyTransport()
-        psu = Keithley2231A(wire)
-        for name in ('*ESR?', 'operation:EVEN', 'STAT:QUES:ENAB?', 'module',
-                     '', 'Operation', None, 5, True, ('operation',), 'operation\n*CLS'):
-            with self.subTest(name=name), self.assertRaises(ValueError):
-                psu.status_enable_mask(name)
-        self.assertEqual(wire.cmds, [])
+    def assert_wire(self, peer, expected):
+        self.assertEqual(peer.rx, expected)
+        self.assertEqual(peer.rx_bytes, [(x + '\r\n').encode('ascii') for x in expected])
+        self.assertEqual(peer.unsupported, [])
+        self.assertFalse(any(x in expected for x in ('*ESR?', '*CLS', 'STAT:PRES')))
+        self.assertFalse(any(':EVEN?' in x for x in expected))
 
-    def test_module_revision_is_not_device_identity(self):
-        wire = ReadOnlyTransport()
-        wire.module = '2231,0.01'
-        psu = Keithley2231A(wire, expected_serial='TEST')
-        self.assertEqual(psu.module_info(), '2231,0.01')
-        self.assertIn('2231A-30-3', psu.instrument_id)
-        self.assertEqual(psu.instrument_key[2], 'TEST')
-        self.assertEqual(wire.cmds.count('*IDN?'), 1)
+    def test_module_and_four_enable_masks_exact_wire(self):
+        dev, peer = self.device(response_overrides={'*ESE?': '33', '*SRE?': '128'})
+        self.assertEqual(dev.module_info(), '2231,1.04')
+        for group, expected in [('standard_event', 33), ('service_request', 128),
+                                ('questionable', 17), ('operation', 255)]:
+            self.assertEqual(dev.status_enable_mask(group), expected)
+        self.assert_wire(peer, ['*IDN?', 'SYST:REM', 'SYST:MODU?', '*ESE?', '*SRE?',
+                                'STAT:QUES:ENAB?', 'STAT:OPER:ENAB?'])
+        self.assertFalse(dev.armed)
+        self.assertFalse(dev.faulted)
 
-    def test_module_query_does_not_change_on_or_profile(self):
-        wire = ReadOnlyTransport()
-        # Pretend a channel is physically ON: this read must not change it.
-        wire.values[1]['CHAN:OUTP'] = 1
-        psu = Keithley2231A(wire)
-        self.assertEqual(psu.module_info(), '2231,1.04')
-        self.assertEqual(wire.values[1]['CHAN:OUTP'], 1)
-        self.assertFalse(any(c.startswith('OUTP ') or c.startswith('CHAN:OUTP ')
-                             for c in wire.cmds))
+    def test_invalid_registers_rejected_before_uart(self):
+        dev, peer = self.device()
+        for group in ('*ESR?', 'operation:EVEN', 'STAT:QUES:ENAB?', 'module', '',
+                      'Operation', None, 5, True, ('operation',), 'operation\n*CLS'):
+            with self.subTest(group=group), self.assertRaises(ValueError):
+                dev.status_enable_mask(group)
+        self.assert_wire(peer, [])
 
-    def test_malformed_module_latches_unknown_without_next_command(self):
-        for response in ('', ' \t ', '2231\t1.04', 'X' * 129):
-            with self.subTest(response=response):
-                wire = ReadOnlyTransport()
-                wire.module = response
-                psu = Keithley2231A(wire)
+    def test_module_aux_drift_observed_without_identity_change(self):
+        dev, peer = self.device(serial='LAB-A', response_overrides={'SYST:MODU?': '2231,0.01'})
+        self.assertEqual(dev.module_info(), '2231,0.01')
+        self.assertEqual(dev.instrument_key[2], 'LAB-A')
+        self.assertEqual(peer.rx.count('*IDN?'), 1)
+        self.assert_wire(peer, ['*IDN?', 'SYST:REM', 'SYST:MODU?'])
+
+    def test_read_only_module_with_output_on(self):
+        dev, peer = self.device(off_by_channel={1: 1})
+        self.assertEqual(dev.module_info(), '2231,1.04')
+        self.assert_wire(peer, ['*IDN?', 'SYST:REM', 'SYST:MODU?'])
+
+    def test_malformed_module_faults_no_retry(self):
+        for reply in ('', ' \t ', '2231\t1.04', 'X' * 129):
+            with self.subTest(reply=reply):
+                dev, peer = self.device(response_overrides={'SYST:MODU?': reply})
                 with self.assertRaises(InstrumentError):
-                    psu.module_info()
-                trace = wire.cmds[:]
+                    dev.module_info()
+                self.assertTrue(dev.faulted)
+                before = list(peer.rx)
                 with self.assertRaises(SafetyError):
-                    psu.module_info()
-                self.assertEqual(wire.cmds, trace)
-                self.assertTrue(psu.faulted)
+                    dev.module_info()
+                self.assert_wire(peer, before)
+                self.assertEqual(before[-1], 'SYST:MODU?')
 
-    def test_bad_numeric_mask_is_terminal_no_retry(self):
-        for response in ('NaN', '1.0', '-1', '256', '00100.0', '', '1e2', '99999'):
-            with self.subTest(response=response):
-                wire = ReadOnlyTransport()
-                wire.bad_reply = response
-                psu = Keithley2231A(wire)
+    def test_malformed_mask_faults_no_retry(self):
+        for reply in ('NaN', '1.0', '-1', '256', '00100.0', '', '1e2', '99999'):
+            with self.subTest(reply=reply):
+                dev, peer = self.device(response_overrides={'STAT:OPER:ENAB?': reply})
                 with self.assertRaises(InstrumentError):
-                    psu.status_enable_mask('operation')
-                trace = wire.cmds[:]
+                    dev.status_enable_mask('operation')
+                before = list(peer.rx)
                 with self.assertRaises(SafetyError):
-                    psu.status_enable_mask('standard_event')
-                self.assertEqual(wire.cmds, trace)
+                    dev.status_enable_mask('standard_event')
+                self.assertTrue(dev.faulted)
+                self.assertEqual(before[-1], 'STAT:OPER:ENAB?')
+                self.assert_wire(peer, before)
 
-    def test_transport_failure_does_not_send_additional_commands(self):
-        wire = ReadOnlyTransport()
-        wire.failed_query = 'SYST:MODU?'
-        psu = Keithley2231A(wire)
-        # Simulate actual I/O break on an otherwise valid transport.
-        orig = wire.query
-        def fail(cmd):
-            if cmd == 'SYST:MODU?':
-                wire.cmds.append(cmd)
-                raise OSError('lost reply')
-            return orig(cmd)
-        wire.query = fail
+    def test_timeout_terminal_no_followup(self):
+        dev, peer = self.device(drop='SYST:MODU?')
         with self.assertRaises(OSError):
-            psu.module_info()
-        trace = wire.cmds[:]
+            dev.module_info()
+        before = list(peer.rx)
         with self.assertRaises(SafetyError):
-            psu.module_info()
-        self.assertEqual(wire.cmds, trace)
+            dev.status_enable_mask('operation')
+        self.assertEqual(before[-1], 'SYST:MODU?')
+        self.assertTrue(dev.faulted)
+        self.assert_wire(peer, before)
 
-    def test_fresh_session_no_accidental_status_clear(self):
-        wire = ReadOnlyTransport()
-        psu = Keithley2231A(wire)
-        self.assertEqual(psu.status_enable_mask('questionable'), 17)
-        self.assertEqual(wire.cmds, ['*IDN?', 'SYST:REM', 'STAT:QUES:ENAB?'])
-        self.assertNotIn('SYST:ERR?', wire.cmds)
+    def test_fresh_session_one_mask_no_clear(self):
+        dev, peer = self.device()
+        self.assertEqual(dev.status_enable_mask('questionable'), 17)
+        self.assert_wire(peer, ['*IDN?', 'SYST:REM', 'STAT:QUES:ENAB?'])
 
-    def test_faulted_session_rejects_even_when_remote(self):
-        wire = ReadOnlyTransport()
-        psu = Keithley2231A(wire)
-        self.assertEqual(psu.module_info(), '2231,1.04')
-        psu._latch_fault()  # model an external semantic fault, no new SCPI
-        trace = wire.cmds[:]
+    def test_faulted_session_does_not_send_scpi(self):
+        dev, peer = self.device()
+        self.assertEqual(dev.module_info(), '2231,1.04')
+        dev._latch_fault()
+        before = list(peer.rx)
         with self.assertRaises(SafetyError):
-            psu.status_enable_mask('operation')
-        self.assertEqual(wire.cmds, trace)
+            dev.status_enable_mask('operation')
+        self.assert_wire(peer, before)
 
 
 if __name__ == '__main__':

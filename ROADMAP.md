@@ -26,6 +26,16 @@ on invalid readback/timeout/SCPI error/output ON. This adds **offline evidence**
 only. Historical mock-transport tests remain and will be migrated selectively,
 without inventing a parallel driver or service execution layer.
 
+## R3.5.51 — R4.2 status-mask tests on actual driver wire
+
+Migrate the two R4.2-A/C test modules from `FakeTransport` subclasses to
+production `Keithley2231A` over the strict POSIX virtual UART. Check full
+wire order, CRLF bytes, four top-level and eight nested enable masks, module
+revision observation and fail-stop on malformed/missing replies. One test
+injects an already-armed in-memory driver state (not a physical arming test).
+The test UART returns only canned allowlisted replies; no real instrument,
+calibration or event-consuming reads. Other historical mocks remain pending.
+
 ## Next: R4 — SCPI coverage (current priority)
 
 1. **R4.1 inventory:** review vendor 2231A reference manual 077100401 §5,

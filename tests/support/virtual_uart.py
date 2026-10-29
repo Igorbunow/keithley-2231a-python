@@ -109,9 +109,13 @@ class UARTPeer:
                 is_query = cmd.endswith('?')
                 allowed_writes = {'SYST:REM', 'SYST:LOC', '*CLS', '*WAI', '*RST',
                                   'INST:NSEL 1', 'INST:NSEL 2', 'INST:NSEL 3'}
+                status_reads = {'SYST:MODU?', 'STAT:QUES:ENAB?', 'STAT:OPER:ENAB?'}
+                for prefix in ('STAT:QUES:INST', 'STAT:OPER:INST'):
+                    status_reads.add(f'{prefix}:ENAB?')
+                    status_reads.update(f'{prefix}:ISUM{ch}:ENAB?' for ch in (1, 2, 3))
                 allowed_reads = {'*IDN?', 'INST:NSEL?', 'CHAN:OUTP?',
                                  'SYST:ERR?', 'OUTP:SER?', 'OUTP:PARALLEL?',
-                                 'OUTP:TRAC?', '*ESE?', '*SRE?', '*PSC?', '*OPC?'}
+                                 'OUTP:TRAC?', '*ESE?', '*SRE?', '*PSC?', '*OPC?'} | status_reads
                 if cmd not in (allowed_reads if is_query else allowed_writes):
                     self.unsupported.append(cmd)
                     # An unknown write is rejected at the next error poll;
@@ -129,6 +133,13 @@ class UARTPeer:
                     response = self.overrides[cmd]
                 elif cmd == '*IDN?':
                     response = f'Keithley instruments, 2231A-30-3, {self.serial}, 1.04-1.04'
+                elif cmd == 'SYST:MODU?': response = '2231,1.04'
+                elif cmd == 'STAT:QUES:ENAB?': response = '17'
+                elif cmd == 'STAT:OPER:ENAB?': response = '255'
+                elif cmd.startswith(('STAT:QUES:INST', 'STAT:OPER:INST')) and cmd in status_reads:
+                    base = 100 if cmd.startswith('STAT:OPER:') else 0
+                    channel = int(cmd.split(':ISUM')[-1].split(':')[0]) if ':ISUM' in cmd else 0
+                    response = str(base + 11 + channel)
                 elif cmd == 'INST:NSEL?': response = str(self.selected)
                 elif cmd == 'CHAN:OUTP?': response = str(self.off_by_channel.get(self.selected, 0))
                 elif cmd == 'SYST:ERR?': response = self.fault_code or '0,"No error"'
@@ -155,3 +166,13 @@ class UARTPeer:
         self.thread.join(.25)
         os.close(self.master)
         os.close(self._slave_guard)
+
+
+def open_test_transport(peer, *, timeout=.17):
+    """Use production SerialTransport when installed; otherwise thin POSIX PTY I/O."""
+    try:
+        import serial  # noqa: F401
+    except ImportError:
+        return PTYTransport(peer.path, timeout=timeout)
+    from keithley2231a import SerialTransport
+    return SerialTransport(peer.path, timeout=timeout)
