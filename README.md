@@ -743,3 +743,14 @@ physical identity/serial and observational Aux revision, diagnostic dispatch,
 and malformed numeric/status replies. Only test code and documentation change;
 no hardware access, new driver execution layers or service permissions.
 See [SCPI coverage](docs/SCPI_COVERAGE.md#r3556--four-production-driver-uart-migrations-software-only).
+
+## R3.5.57 — safety/topology gates tested over virtual UART
+
+Seven historical `FakeTransport` test methods were replaced by eight
+production-driver/PTY tests: explicit wiring confirmation before any SCPI,
+all-topology cleanup on an injected profile-integrity fault, selected-channel
+alias detection, inherited timer disable, fixed and changed setpoint integrity,
+and unauthorized output activation. The fixture allows combined-mode **writes
+only in the injected-fault scenario**, without pretending to simulate an actual
+Series/Parallel electrical connection. Historical physical H09/H10 results are
+unchanged. These tests never connect to or energize real equipment.

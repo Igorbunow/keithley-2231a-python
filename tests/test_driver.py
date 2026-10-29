@@ -514,22 +514,6 @@ class TestDevice(unittest.TestCase):
                 self.assertFalse(dev.armed)
                 self.assertIn('OUTP 0', fake.cmds)
 
-    def test_independent_and_tracking_require_physical_no_jumper_confirmation(self):
-        """No physical wiring assertion means NO SCPI, even on a new session."""
-        for wiring in ('independent', 'tracking'):
-            for confirmation in (None, 'series', 'parallel', 'tracking', ''):
-                with self.subTest(wiring=wiring, confirmation=confirmation):
-                    source = FakeTransport()
-                    dev = Keithley2231A(source)
-                    setting = profile(wiring)
-                    before = list(source.cmds)
-                    with self.assertRaisesRegex(SafetyError, 'NO external Series/Parallel jumpers'):
-                        dev.apply_profile(setting, confirmed_wiring=confirmation)
-                    self.assertEqual(source.cmds, before)
-                    self.assertFalse(dev.armed)
-                    self.assertFalse(dev.faulted)
-                    self.assertIsNone(dev.profile)
-
     def test_parallel_to_independent_requires_new_manual_confirmation(self):
         """An OFF command does not imply physical jumpers were removed."""
         source = FakeTransport()
@@ -624,32 +608,6 @@ class TestDevice(unittest.TestCase):
         self.assertTrue(dev.faulted)
         self.assertFalse(dev.armed)
 
-    def test_all_profile_application_failures_share_fault_cleanup(self):
-        """All topologies clear the profile and attempt only best-effort OFF."""
-        candidates = (
-            ('independent', profile(), 'independent'),
-            ('series', SeriesProfile('series', (2., 3.), 4.5, .3, 2., .1,
-                                     ChannelProfile(4., .5, 2., .3)), 'series'),
-            ('parallel', ParallelProfile('parallel', 3.0, .3, 2.0, .1,
-                                         ChannelProfile(4., .5, 1., .1)), 'parallel'),
-        )
-        for name, configured, wiring in candidates:
-            with self.subTest(wiring=name):
-                source = FakeTransport()
-                dev = Keithley2231A(source)
-
-                def fail_wiring():
-                    raise SafetyError('injected profile validation failure')
-
-                dev._check_wiring_mode = fail_wiring
-                with self.assertRaisesRegex(SafetyError, 'injected profile validation failure'):
-                    dev.apply_profile(configured, confirmed_wiring=wiring)
-                self.assertTrue(dev.faulted)
-                self.assertFalse(dev.armed)
-                self.assertIsNone(dev.profile)
-                self.assertEqual(source.cmds[-1], 'OUTP 0')
-                self.assertNotIn('OUTP 1', source.cmds)
-
     def test_both_combined_modes_check_ch3_limit_integrity(self):
         """Shared CH3 guard must detect one-step external changes in both modes."""
         class SeriesTransport(FakeTransport):
@@ -695,33 +653,6 @@ class TestDevice(unittest.TestCase):
         self.assertTrue(dev.faulted)
         self.assertNotIn('OUTP 1', source.cmds)
 
-    def test_output_states_refuses_a_channel_selection_alias(self):
-        class AliasedSource(FakeTransport):
-            def write(self, command):
-                super().write(command)
-                if command == 'INST:NSEL 2': self.active_ch = 1
-        source = AliasedSource()
-        dev = Keithley2231A(source)
-        with self.assertRaises(SafetyError): dev.output_states()
-        self.assertTrue(dev.faulted)
-
-    def test_fixed_setpoint_tampering_within_caps_trips(self):
-        for key, value in (('VOLT', 1.01), ('CURR', .101)):
-            with self.subTest(key=key):
-                fake = FakeTransport(); dev = Keithley2231A(fake)
-                base = profile()
-                dev.apply_profile(Profile('fixed', base.channels, access='power_only'), confirmed_wiring='independent')
-                fake.values[1][key] = value
-                with self.assertRaises(SafetyError): dev.verify_profile()
-                self.assertFalse(dev.armed)
-                self.assertFalse(fake.values[1]['CHAN:OUTP'])
-
-    def test_control_remembers_authorized_setpoints(self):
-        self.dev.set_channel(1, voltage=2.5, current=.15)
-        self.dev.verify_profile()
-        self.fake.values[1]['VOLT'] = 2.49
-        with self.assertRaises(SafetyError): self.dev.verify_profile()
-
     def test_global_off_must_check_each_channel(self):
         original = self.fake.write
         def stuck_off(command):
@@ -743,11 +674,6 @@ class TestDevice(unittest.TestCase):
         self.dev.emergency_off()
         self.assertFalse(self.fake.values[1]['CHAN:OUTP'])
         self.assertIn('CHAN:OUTP 0', self.fake.cmds)
-
-    def test_external_output_on_is_not_authorized(self):
-        self.fake.values[3]['CHAN:OUTP'] = 1
-        with self.assertRaises(SafetyError): self.dev.verify_profile()
-        self.assertFalse(self.dev.armed)
 
     def test_status_io_failure_disarms(self):
         self.fake.failed_query = 'SYST:VERS?'
@@ -772,13 +698,6 @@ class TestDevice(unittest.TestCase):
 
 
 
-
-
-    def test_apply_disables_inherited_timers(self):
-        self.dev.emergency_off()
-        for values in self.fake.values.values(): values['OUTP:TIM:STAT'] = 1
-        self.dev.apply_profile(profile(), confirmed_wiring='independent')
-        self.assertTrue(all(values['OUTP:TIM:STAT'] == 0 for values in self.fake.values.values()))
 
 
     def test_parallel_profile_uses_aggregate_setpoint_and_software_voltage_cap(self):

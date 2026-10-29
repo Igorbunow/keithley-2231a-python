@@ -157,6 +157,7 @@ class UARTPeer:
                     else:
                         allowed_writes.update({'SYST:RWLOCK', 'OUTP:SER 0',
                                                'OUTP:PARALLEL 0', 'OUTP:TRAC 0',
+                                               'OUTP:SER 1', 'OUTP:PARALLEL 1',
                                                'OUTP 0',
                                                'CHAN:OUTP 0', 'CHAN:OUTP 1'})
                         if reg_write:
@@ -228,6 +229,12 @@ class UARTPeer:
                     return False
                 self._rx_cond.wait(remaining)
             return True
+
+    def await_command(self, command, occurrences=1, timeout=.4):
+        """Wait for an unacknowledged write to arrive on the peer thread."""
+        with self._rx_cond:
+            return self._rx_cond.wait_for(
+                lambda: self.rx.count(command) >= occurrences, timeout=timeout)
 
     def close(self):
         self.stop.set()

@@ -58,6 +58,20 @@ only the few typed registers needed for real `apply_profile()` and `output()`.
 No new service abstraction or live hardware execution; actual physical
 shutdown still requires operator-confirmed hardware evidence.
 
+## R3.5.57 — topology gates and profile-integrity checks over virtual UART
+
+Replace seven historical test methods from the stateful `FakeTransport`
+fixture with eight production-driver tests over the strict POSIX UART. Preserve the
+physical-wiring approval gates for Independent/Tracking/Series/Parallel,
+verify zero bytes before an invalid confirmation, and cover post-configuration
+fail-stop cleanup in all three applicable profile-application paths. Verify
+selected-channel alias detection, inherited timer disable, frozen and updated
+setpoint integrity, and unauthorized external output activation. The minimal
+UART fixture permits `OUTP:SER 1` / `OUTP:PARALLEL 1` only for deterministic
+injected-fault traces; it does **not** simulate combined hardware behavior or
+establish safe electrical wiring. Physical H09/H10 evidence is unchanged.
+No new production code, hardware tests, or service operations.
+
 ## Next: R4 — SCPI coverage (current priority)
 
 1. **R4.1 inventory:** review vendor 2231A reference manual 077100401 §5,
