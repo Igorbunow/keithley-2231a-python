@@ -734,3 +734,12 @@ runner сохранены, поскольку выполняют отдельн�
 Проверяются CRLF, отсутствие повторов, реакция на плохие ответы/тайм-ауты,
 дрейф четырёх параметров профиля и запрет аварийного OFF после потери связи.
 Это программные проверки, **не новая аппаратная квалификация**.
+
+## R3.5.56 — four bundled virtual-UART test migrations
+
+Fifteen older `FakeTransport` tests are replaced by 15 tests sending actual
+`Keithley2231A` commands over POSIX virtual UART: output-state inspection,
+physical identity/serial and observational Aux revision, diagnostic dispatch,
+and malformed numeric/status replies. Only test code and documentation change;
+no hardware access, new driver execution layers or service permissions.
+See [SCPI coverage](docs/SCPI_COVERAGE.md#r3556--four-production-driver-uart-migrations-software-only).

@@ -139,63 +139,10 @@ class TestDevice(unittest.TestCase):
         self.dev = Keithley2231A(self.fake)
         self.dev.apply_profile(profile(), confirmed_wiring='independent')
 
-    def test_output_states_handles_initial_local_without_changing_outputs(self):
-        fake = FakeTransport()
-        fake.values[2]['CHAN:OUTP'] = 1.0
-        # The physical output query is authoritative. The status-register ON
-        # bit can be absent while CC is active on this instrument firmware.
-        fake.operation_status_masks[2] = 0
-        dev = Keithley2231A(fake)
-        self.assertEqual(dev.output_states(), {1: False, 2: True, 3: False})
-        self.assertEqual(fake.values[2]['CHAN:OUTP'], 1.0)
-        self.assertFalse(dev.armed)
-        self.assertEqual(fake.cmds, ['*IDN?', 'SYST:REM', 'OUTP:SER?', 'INST:NSEL?',
-                                   'INST:NSEL 1', 'INST:NSEL?', 'CHAN:OUTP?',
-                                   'INST:NSEL 2', 'INST:NSEL?', 'CHAN:OUTP?',
-                                   'INST:NSEL 3', 'INST:NSEL?', 'CHAN:OUTP?',
-                                   'INST:NSEL 1'])
 
-    def test_output_states_preserves_profile_and_does_not_retry_faults(self):
-        self.fake.cmds.clear()
-        self.assertEqual(self.dev.output_states(), {1: False, 2: False, 3: False})
-        self.assertNotIn('SYST:REM', self.fake.cmds)
-        self.assertTrue(self.dev.armed)
-        self.fake.failed_query = 'CHAN:OUTP?'
-        with self.assertRaises(RuntimeError): self.dev.output_states()
-        self.assertTrue(self.dev.faulted)
-        before = list(self.fake.cmds)
-        with self.assertRaises(SafetyError): self.dev.output_states()
-        self.assertEqual(self.fake.cmds, before)
 
-    def test_output_states_restores_the_live_channel_selection(self):
-        self.fake.active_ch = 2
-        self.assertEqual(self.dev.output_states(), {1: False, 2: False, 3: False})
-        self.assertEqual(self.fake.active_ch, 2)
-        self.assertEqual(self.fake.cmds[-1], 'INST:NSEL 2')
 
-    def test_output_states_rejects_wrong_identity_before_remote_entry(self):
-        fake = FakeTransport()
-        dev = Keithley2231A(fake, expected_serial='OTHER')
-        with self.assertRaisesRegex(InstrumentError, 'serial number mismatch'):
-            dev.output_states()
-        self.assertEqual(fake.cmds, ['*IDN?'])
-        self.assertTrue(dev.faulted)
 
-    def test_debug_queries_share_remote_setup_and_are_disabled_by_default(self):
-        fake = FakeTransport()
-        dev = Keithley2231A(fake)
-        with self.assertRaises(SafetyError): dev.diagnostic_query('VOLT?')
-        self.assertEqual(fake.cmds, [])
-        events = []
-        dev = Keithley2231A(fake, debug=True, debug_trace=events.append)
-        self.assertEqual(dev.diagnostic_query('VOLT?'), '0.0')
-        self.assertEqual(fake.cmds, ['*IDN?', 'SYST:REM', 'VOLT?'])
-        self.assertEqual([e['command'] for e in events if e['event'] in ('write', 'query')], fake.cmds)
-        self.assertNotIn('TEST', repr(events))
-        with self.assertRaises(ValueError): dev.diagnostic_query('VOLT?;OUTP 1')
-        dev.diagnostic_write('SYSTem:LOCal')
-        self.assertEqual(dev.diagnostic_query('VOLT?'), '0.0')
-        self.assertEqual(fake.cmds[-3:], ['SYST:LOC', 'SYST:REM', 'VOLT?'])
 
     def test_debug_profile_bypass_is_explicit_and_soft_rejection_sends_nothing(self):
         class VoltageLimitedFake(FakeTransport):
@@ -242,49 +189,8 @@ class TestDevice(unittest.TestCase):
         with self.assertRaises(InstrumentError): dev.diagnostic_write('VOLT 1.00')
         self.assertEqual(wrong.cmds, ['SYST:REM', '*IDN?'])
 
-    def test_normal_and_debug_profiles_use_identical_wire_sequences(self):
-        normal, diagnostic = FakeTransport(), FakeTransport()
-        events = []
-        Keithley2231A(normal).apply_profile(profile(), confirmed_wiring='independent')
-        Keithley2231A(diagnostic, debug=True, debug_trace=events.append).apply_profile(profile(), confirmed_wiring='independent')
-        self.assertEqual(normal.cmds, diagnostic.cmds)
-        self.assertEqual([e['command'] for e in events if e['event'] in ('write', 'query')], normal.cmds)
 
-    def test_debug_adapter_cannot_send_outside_driver_dispatch(self):
-        fake = FakeTransport()
-        dev = Keithley2231A(fake, debug=True, debug_adapter=lambda channel: channel)
-        with self.assertRaises(SafetyError): dev.debug_transport.query('VOLT?')
-        self.assertEqual(fake.cmds, [])
-        self.assertEqual(dev.diagnostic_query('VOLT?'), '0.0')
 
-    def test_malformed_numeric_measurement_blocks_shutdown_on_uncertain_link(self):
-        class InvalidMeasurement(FakeTransport):
-            corrupt = False
-
-            def query(self, command):
-                reply = super().query(command)
-                if self.corrupt and command == 'MEAS:VOLT?':
-                    return 'not-a-voltage'
-                return reply
-
-        fake = InvalidMeasurement()
-        dev = Keithley2231A(fake)
-        dev.apply_profile(profile(), confirmed_wiring='independent')
-        dev.output(1, True)
-        fake.corrupt = True
-        off_before = fake.cmds.count('OUTP 0')
-        with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE.*link uncertain'):
-            dev.read_channel(1)
-        self.assertEqual(fake.cmds[-1], 'MEAS:VOLT?')
-        self.assertEqual(fake.cmds.count('OUTP 0'), off_before)
-        self.assertTrue(fake.values[1]['CHAN:OUTP'])  # Physical OFF is NOT proved.
-        self.assertTrue(dev.faulted)
-        self.assertFalse(dev.armed)
-        commands = list(fake.cmds)
-        from keithley2231a import TransportError
-        with self.assertRaises(TransportError):
-            dev.emergency_off()
-        self.assertEqual(fake.cmds, commands)
 
     def test_non_string_scpi_reply_fails_closed_before_trace_or_more_io(self):
         class NonStringStatus(FakeTransport):
@@ -303,64 +209,8 @@ class TestDevice(unittest.TestCase):
         self.assertEqual(fake.cmds.count('OUTP 0'), off_before)
         self.assertTrue(fake.values[1]['CHAN:OUTP'])
 
-    def test_fractional_status_register_is_not_silently_truncated(self):
-        class FractionalStatus(FakeTransport):
-            def query(self, command):
-                reply = super().query(command)
-                if command == 'STAT:OPER:INST:ISUM1:COND?':
-                    return '1.5'
-                return reply
 
-        fake = FractionalStatus()
-        dev = Keithley2231A(fake)
-        dev.apply_profile(profile(), confirmed_wiring='independent')
-        with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE'):
-            dev.read_channel(1)
-        self.assertEqual(fake.cmds[-1], 'STAT:OPER:INST:ISUM1:COND?')
-        self.assertTrue(dev.faulted)
 
-    def test_status_masks_reject_float_rounding_and_out_of_range_without_next_scpi(self):
-        # The old _uint() already rejected 1.5, but not decimal strings that
-        # lose their fractional part during float conversion.
-        for command, malformed in (
-                ('STAT:OPER:INST:ISUM3:COND?', '1.0000000000000001'),
-                ('STAT:OPER:INST:ISUM3:COND?', '256'),
-                ('STAT:QUES:INST:ISUM3:COND?', '2.0000000000000001'),
-                ('STAT:QUES:INST:ISUM3:COND?', '999999'),
-                ('STAT:OPER:INST:ISUM3:COND?', '-1'),
-                ('STAT:OPER:INST:ISUM3:COND?', 'NaN'),
-                ('STAT:OPER:INST:ISUM3:COND?', '9' * 5000)):
-            with self.subTest(command=command, raw=malformed[:25]):
-                class BadRegister(FakeTransport):
-                    def query(self, sent):
-                        reply = super().query(sent)
-                        return malformed if sent == command else reply
-
-                fake = BadRegister()
-                dev = Keithley2231A(fake)
-                dev.apply_profile(profile(), confirmed_wiring='independent')
-                dev.output(3, True)
-                with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE'):
-                    dev.read_channel(3)
-                self.assertEqual(fake.cmds[-1], command)
-                self.assertTrue(dev.faulted)
-                self.assertFalse(dev.armed)
-                self.assertTrue(fake.values[3]['CHAN:OUTP'])
-
-    def test_status_api_byte_must_be_bounded_integer(self):
-        class BadStatus(FakeTransport):
-            def query(self, command):
-                answer = super().query(command)
-                return '256' if command == '*STB?' else answer
-
-        fake = BadStatus()
-        dev = Keithley2231A(fake)
-        dev.apply_profile(profile(), confirmed_wiring='independent')
-        with self.assertRaisesRegex(SafetyError, 'UNKNOWN OUTPUT STATE'):
-            dev.status()
-        self.assertEqual(fake.cmds[-1], '*STB?')
-        self.assertTrue(dev.faulted)
-        self.assertFalse(dev.armed)
 
     def test_interrupted_wire_query_latches_uncertain_link_for_both_modes(self):
         from keithley2231a import TransportError
@@ -920,88 +770,9 @@ class TestDevice(unittest.TestCase):
         with self.assertRaises(InstrumentError): self.dev.identity()
         self.assertFalse(self.dev.armed)
 
-    def test_identity_change_aborts_profile_before_setpoint_writes(self):
-        from keithley2231a import InstrumentError
-        fake = FakeTransport()
-        dev = Keithley2231A(fake)
-        original = fake.query
-        self.assertEqual(dev.identity(), 'Keithley instruments, 2231A-30-3, TEST, 1.04-1.04')
-        fake.cmds.clear()
-        fake.query = lambda cmd: 'Keithley instruments, 2231A-30-3, OTHER, 1.04-1.04' if cmd == '*IDN?' else original(cmd)
-        with self.assertRaisesRegex(InstrumentError, 'identity changed'):
-            dev.apply_profile(profile(), confirmed_wiring='independent')
-        self.assertTrue(dev.faulted)
-        self.assertFalse(dev.armed)
-        self.assertNotIn('VOLT 0', fake.cmds)
-        self.assertNotIn('CURR 0', fake.cmds)
-        self.assertFalse(any(cmd.startswith(('VOLT:LIM ', 'VOLT:LIM:STAT ', 'CURR ', 'VOLT '))
-                             for cmd in fake.cmds))
-        # A different physical identity is not a trustworthy OFF command target.
-        self.assertNotIn('OUTP 0', fake.cmds)
-        before = list(fake.cmds)
-        from keithley2231a import TransportError
-        with self.assertRaises(TransportError):
-            dev.emergency_off()
-        self.assertEqual(fake.cmds, before)
 
-    def test_firmware_revision_is_reported_but_not_used_as_identity(self):
-        fake = FakeTransport()
-        dev = Keithley2231A(fake)
-        first = dev.identity()
-        original = fake.query
-        fake.query = lambda cmd: ('Keithley instruments, 2231A-30-3, TEST, 1.04-0.01'
-                                  if cmd == '*IDN?' else original(cmd))
-        self.assertEqual(dev.identity(), 'Keithley instruments, 2231A-30-3, TEST, 1.04-0.01')
-        self.assertNotEqual(first, dev.instrument_id)
-        self.assertEqual(dev.instrument_key,
-                         ('keithley instruments', '2231A-30-3', 'TEST'))
-        dev.apply_profile(profile(), confirmed_wiring='independent')
-        self.assertTrue(dev.armed)
 
-    def test_aux_version_drift_is_nonblocking_with_stable_physical_identity(self):
-        # Some real qualification runs changed 1.04 -> 0.01 after a CH3 sweep.
-        # Model that correlation without declaring it a firmware contract.
-        fake = FakeTransport()
-        original = fake.query
-        versions = {1: '1.04-1.04', 2: '1.04-1.04', 3: '1.04-0.01'}
-        def correlated_reply(cmd):
-            if cmd == '*IDN?':
-                return ('Keithley instruments, 2231A-30-3, TEST, '
-                        + versions[fake.active_ch])
-            return original(cmd)
-        fake.query = correlated_reply
-        dev = Keithley2231A(fake)
-        key = ('keithley instruments', '2231A-30-3', 'TEST')
-        self.assertTrue(dev.identity().endswith('1.04-1.04'))
-        dev.remote()
-        dev._select(3)
-        self.assertTrue(dev.identity().endswith('1.04-0.01'))
-        self.assertEqual(dev.instrument_key, key)
-        # Synthetic alternate valid version, NOT observed on the actual front panel;
-        # ensure arbitrary nonempty revisions are preserved without normalization.
-        versions[3] = '1.04-1.01'
-        self.assertTrue(dev.identity().endswith('1.04-1.01'))
-        self.assertEqual(dev.instrument_key, key)
-        dev._select(1)
-        self.assertTrue(dev.identity().endswith('1.04-1.04'))
-        self.assertEqual(dev.instrument_key, key)
-        self.assertFalse(dev.faulted)
-        dev.apply_profile(profile(), confirmed_wiring='independent')
-        self.assertTrue(dev.armed)
 
-    def test_optional_serial_binding_rejects_another_supply_before_profile_writes(self):
-        from keithley2231a import InstrumentError
-        fake = FakeTransport()
-        dev = Keithley2231A(fake, expected_serial='OTHER-PSU')
-        with self.assertRaisesRegex(InstrumentError, 'serial number mismatch'):
-            dev.apply_profile(profile(), confirmed_wiring='independent')
-        self.assertFalse(dev.armed)
-        self.assertNotIn('VOLT 0', fake.cmds)
-        self.assertFalse(any(cmd.startswith(('VOLT:LIM ', 'VOLT:LIM:STAT ', 'CURR ', 'VOLT '))
-                             for cmd in fake.cmds))
-
-        with self.assertRaises((TypeError, ValueError)):
-            Keithley2231A(FakeTransport(), expected_serial='')
 
     def test_apply_disables_inherited_timers(self):
         self.dev.emergency_off()

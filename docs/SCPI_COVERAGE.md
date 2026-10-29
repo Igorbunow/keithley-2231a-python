@@ -333,3 +333,29 @@ latch an uncertain link. A serial driver's `readline()` cannot *atomically*
 prove that no second delayed reply line will arrive; this is a transport
 limitation, not an unqualified guarantee of reply framing. Neither offline
 PASS nor existing bounded physical reviews are expanded by this work.
+
+
+## R3.5.56 — four production-driver UART migrations (software only)
+
+Fifteen original `FakeTransport` regression tests have been **replaced**, not
+retained as duplicated execution paths. The new test module
+`tests/offline/test_r4_3_identity_output_numeric_uart.py` exercises the actual
+`Keithley2231A` through the test-only POSIX pseudo-terminal:
+
+- `output_states()` without arming, with a live CH2, after a real
+  `apply_profile()`, with selection restoration and with lost readback;
+- `*IDN?` physical identity/serial binding, identity switch between requests,
+  and observed Main/Aux revision variation without rewriting identity;
+- guarded diagnostics: `diagnostic_query()` remote setup, debug/normal
+  profile command equivalence and no raw adapter bypass;
+- malformed measurements and status masks (fractional, out-of-range,
+  oversized, NaN) and invalid `*STB?` on an applied profile.
+
+The virtual peer accepts a *minimal, explicit* condition-register and
+measurement readback subset in `profile_registers=True` mode. It records
+actual UART lines with CRLF; malformed/absent responses block follow-up SCPI,
+with **no speculative OFF attempt on an uncertain transport**. The tests
+never claim physical output OFF, certified firmware behavior or new service
+rights. Both production device.py and transport.py remain unchanged. The
+legacy FakeTransport is retained for topology, tracking, sweep and other
+currently non-migrated test cases; no compatibility layer is introduced.

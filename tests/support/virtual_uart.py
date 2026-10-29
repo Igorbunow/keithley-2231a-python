@@ -146,9 +146,14 @@ class UARTPeer:
                                  '*ESR?', 'STAT:QUES:EVEN?', 'STAT:OPER:EVEN?'} | status_reads
                 if self.profile_registers:
                     if is_query:
+                        allowed_reads.update(
+                            f'STAT:{kind}:INST:ISUM{ch}:COND?'
+                            for kind in ('OPER', 'QUES') for ch in (1, 2, 3))
                         allowed_reads.update({'VOLT?', 'CURR?', 'VOLT:LIM?',
                                               'VOLT:LIM:STAT?', 'OUTP:TIM:STAT?',
-                                              'OUTP:STAT:ALL?'})
+                                              'OUTP:STAT:ALL?', 'SYST:VERS?', '*STB?',
+                                              'STAT:QUES:COND?', 'STAT:OPER:COND?',
+                                              'MEAS:VOLT?', 'MEAS:CURR?'})
                     else:
                         allowed_writes.update({'SYST:RWLOCK', 'OUTP:SER 0',
                                                'OUTP:PARALLEL 0', 'OUTP:TRAC 0',
@@ -195,6 +200,16 @@ class UARTPeer:
                     response = str(int(any(self.off_by_channel.values())))
                 elif self.profile_registers and cmd.endswith('?') and cmd[:-1] in self.channel_registers[self.selected]:
                     response = self.channel_registers[self.selected][cmd[:-1]]
+                elif self.profile_registers and cmd == 'SYST:VERS?': response = '1999.0'
+                elif self.profile_registers and cmd in ('*STB?', 'STAT:QUES:COND?', 'STAT:OPER:COND?'):
+                    response = '0'
+                elif self.profile_registers and cmd in ('MEAS:VOLT?', 'MEAS:CURR?'):
+                    register = 'VOLT' if cmd == 'MEAS:VOLT?' else 'CURR'
+                    response = self.channel_registers[self.selected][register]
+                elif (self.profile_registers and
+                      re.fullmatch(r'STAT:(OPER|QUES):INST:ISUM[123]:COND\?', cmd)):
+                    ch = int(cmd[-7])
+                    response = ('9' if self.off_by_channel.get(ch, 0) else '0') if cmd.startswith('STAT:OPER:') else '0'
                 elif cmd == 'SYST:ERR?': response = self.fault_code or '0,"No error"'
                 elif cmd in ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?',
                              '*ESE?', '*SRE?', '*PSC?'): response = '0'
