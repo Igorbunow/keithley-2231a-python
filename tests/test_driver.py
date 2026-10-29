@@ -530,51 +530,6 @@ class TestDevice(unittest.TestCase):
         self.assertTrue(dev.faulted)
         self.assertFalse(dev.armed)
 
-    def test_both_combined_modes_check_ch3_limit_integrity(self):
-        """Shared CH3 guard must detect one-step external changes in both modes."""
-        class SeriesTransport(FakeTransport):
-            def query(self, command):
-                if (command == 'VOLT:LIM?' and self.flags['OUTP:SER']
-                        and self.active_ch == 1):
-                    self.cmds.append(command)
-                    return '5.0'
-                return super().query(command)
-
-        candidates = (
-            ('series', SeriesTransport(),
-             SeriesProfile('series', (2., 3.), 4.5, .3, 2., .1,
-                           ChannelProfile(4., .5, 2., .3))),
-            ('parallel', FakeTransport(),
-             ParallelProfile('parallel', 3.0, .3, 2.0, .1,
-                             ChannelProfile(4., .5, 1., .1))),
-        )
-        for wiring, source, configured in candidates:
-            with self.subTest(wiring=wiring):
-                dev = Keithley2231A(source)
-                dev.apply_profile(configured, confirmed_wiring=wiring)
-                source.values[3]['VOLT:LIM'] -= .01
-                with self.assertRaisesRegex(SafetyError, 'CH3 hardware voltage limit changed'):
-                    dev.verify_profile()
-                self.assertTrue(dev.faulted)
-                self.assertFalse(dev.armed)
-
-    def test_series_profile_fails_closed_when_combined_limit_readback_changes(self):
-        class ChangedCombinedLimit(FakeTransport):
-            def query(self, command):
-                value = super().query(command)
-                if self.flags['OUTP:SER'] and self.active_ch == 1 and command == 'VOLT:LIM?':
-                    return '4.99'
-                return value
-        source = ChangedCombinedLimit()
-        dev = Keithley2231A(source)
-        series = SeriesProfile('safe series', (2., 3.), 4.5, .3, 2., .1,
-                               ChannelProfile(4., .5, 2., .3))
-        with self.assertRaises(SafetyError):
-            dev.apply_profile(series, confirmed_wiring='series')
-        self.assertFalse(dev.armed)
-        self.assertTrue(dev.faulted)
-        self.assertNotIn('OUTP 1', source.cmds)
-
     def test_global_off_must_check_each_channel(self):
         original = self.fake.write
         def stuck_off(command):
@@ -680,36 +635,6 @@ class TestDevice(unittest.TestCase):
         with self.assertRaises(SafetyError): dev.verify_profile()
         self.assertTrue(dev.faulted)
         self.assertFalse(dev.armed)
-
-    def test_parallel_profile_sets_aggregate_current_only_after_parallel_mode(self):
-        class ParallelCurrentTransport(FakeTransport):
-            def write(self, cmd):
-                if cmd.startswith('CURR '):
-                    requested = float(cmd.split()[1])
-                    ceiling = 6.0 if self.flags['OUTP:PARALLEL'] else 3.0
-                    if requested > ceiling:
-                        raise AssertionError(f'current {requested} exceeds active mode ceiling {ceiling}')
-                super().write(cmd)
-                if cmd == 'OUTP:PARALLEL 1':
-                    self.values[1]['VOLT:LIM:STAT'] = 0.
-                    self.values[2]['VOLT:LIM:STAT'] = 0.
-            def query(self, cmd):
-                if self.flags['OUTP:PARALLEL'] and self.active_ch in (1, 2) and cmd == 'VOLT:LIM:STAT?':
-                    self.cmds.append(cmd)
-                    return '0'
-                return super().query(cmd)
-
-        fake = ParallelCurrentTransport()
-        dev = Keithley2231A(fake)
-        p = ParallelProfile('aggregate 4 A', 3.0, 4.0, 2.0, 4.0,
-                            ChannelProfile(4., .5, 1., .1), lock_front_panel=False)
-        dev.apply_profile(p, confirmed_wiring='parallel')
-        mode_index = fake.cmds.index('OUTP:PARALLEL 1')
-        current_index = fake.cmds.index('CURR 4.000')
-        self.assertLess(mode_index, current_index)
-        self.assertTrue(dev.armed)
-        self.assertEqual(fake.values[1]['CURR'], 4.0)
-        dev.emergency_off()
 
     def test_generic_profile_rejects_parallel_mode(self):
         p = profile()

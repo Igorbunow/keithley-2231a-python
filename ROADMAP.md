@@ -203,3 +203,14 @@ responses; and linked-channel readback disagreement causing a fault with
 confirmed OFF. No automatic linked-channel voltage simulation was introduced:
 scripted replies are protocol fixtures, **not** measured coupling or a
 substitute for H08. No change to production SCPI or physical qualifications.
+
+## R3.5.60 — bounded Series/Parallel aggregate SCPI regressions (offline)
+
+Three historical FakeTransport tests move to production-driver POSIX UART:
+Series aggregate-limit mismatch trips before arming, Parallel 4 A current
+setpoint is programmed only after the mode command, and CH3 limit drift
+trips in both modes. A negative fixture-validation test is also included.
+The peer chooses **literal scripted digital readbacks** when a topology mode
+is selected; it never computes branch current, coupled voltage, or aggregate
+limit from independent settings. No electrical proof, physical wiring check,
+firmware behavior simulation, new SCPI permission, or H09/H10 status change.

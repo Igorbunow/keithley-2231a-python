@@ -62,13 +62,27 @@ class UARTPeer:
     def __init__(self, *, serial='LAB-UNIT-001', response_overrides=None, drop=None,
                  fault_code=None, off_by_channel=None, response_sequences=None,
                  fault_after=None, profile_registers=False,
-                 channel_response_sequences=None):
+                 channel_response_sequences=None, mode_channel_overrides=None):
+        # Explicit per-topology digital readbacks, authored by each test.
+        # The peer does not calculate aggregate limits, share branch current,
+        # or infer electrical behavior. Mode keys only select canned replies.
+        validated_mode_overrides = dict(mode_channel_overrides or {})
+        if any((not isinstance(key, tuple) or len(key) != 3 or
+                key[0] not in ('series', 'parallel') or
+                key[1] not in (1, 2, 3) or
+                key[2] not in ('VOLT:LIM?', 'VOLT:LIM:STAT?', 'INST:NSEL?') or
+                not isinstance(value, str))
+               for key, value in validated_mode_overrides.items()):
+            raise ValueError('invalid scripted combined-mode digital readback')
+        if validated_mode_overrides and not profile_registers:
+            raise ValueError('combined-mode scripts require profile_registers')
         self.master, slave = os.openpty()
         tty.setraw(self.master)
         tty.setraw(slave)
         self.path = os.ttyname(slave)
         self._slave_guard = slave  # keep peer valid until test transport opens
         self.serial = serial
+        self.mode_channel_overrides = validated_mode_overrides
         self.rx = []
         self.rx_bytes = []
         self._rx_cond = threading.Condition()
@@ -217,6 +231,14 @@ class UARTPeer:
                 elif self.profile_registers and (self.selected, cmd) in self.channel_response_sequences:
                     replies = self.channel_response_sequences[self.selected, cmd]
                     response = replies.pop(0) if len(replies) > 1 else replies[0]
+                elif self.profile_registers and any(
+                        self.mode_registers['OUTP:' + ('SER' if mode == 'series' else 'PARALLEL')]
+                        and (mode, self.selected, cmd) in self.mode_channel_overrides
+                        for mode in ('series', 'parallel')):
+                    mode = next(mode for mode in ('series', 'parallel')
+                                if self.mode_registers['OUTP:' + ('SER' if mode == 'series' else 'PARALLEL')]
+                                and (mode, self.selected, cmd) in self.mode_channel_overrides)
+                    response = self.mode_channel_overrides[mode, self.selected, cmd]
                 elif cmd == 'INST:NSEL?': response = str(self.selected)
                 elif cmd == 'CHAN:OUTP?': response = str(self.off_by_channel.get(self.selected, 0))
                 elif self.profile_registers and cmd == 'OUTP:STAT:ALL?':

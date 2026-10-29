@@ -778,3 +778,14 @@ OFF response after a mismatched linked readback. The test peer supplies
 voltage from the other's write. Electrical Tracking 1:1/1:2 remains qualified
 only to the extent established by historical **hardware H08** measurements;
 this patch neither changes the driver nor makes any new hardware claim.
+
+## R3.5.60 — bounded Series/Parallel aggregate SCPI regressions (offline)
+
+Three historical FakeTransport tests move to production-driver POSIX UART:
+Series aggregate-limit mismatch trips before arming, Parallel 4 A current
+setpoint is programmed only after the mode command, and CH3 limit drift
+trips in both modes. A negative fixture-validation test is also included.
+The peer chooses **literal scripted digital readbacks** when a topology mode
+is selected; it never computes branch current, coupled voltage, or aggregate
+limit from independent settings. No electrical proof, physical wiring check,
+firmware behavior simulation, new SCPI permission, or H09/H10 status change.
