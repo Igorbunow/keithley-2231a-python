@@ -439,3 +439,11 @@ is not a transfer of previous H03/H04P powered qualification.
   increment (5-25), `VOLT:STEP?` query syntax (5-27), but oddly lists
   `Returns None` for voltage step; **real hardware reply format remains unverified**.
   Do not perform powered hardware testing based on these software tests.
+
+#### R4.5-B hardware evidence preparation
+
+`INST?`, `VOLT:STEP?`, `CURR:STEP?` remain **SIM TESTED / HW NOT_RUN**.
+`tools/r4_5_source_qualify.py` now provides separately gated OFF-only
+`INST?` and optional OFF-profile CH1 STEP queries; runner presence and virtual
+UART pass **do not** constitute hardware verification. The VOLT:STEP? reply
+remains firmware-dependent/unknown until original on-wire JSONL review.

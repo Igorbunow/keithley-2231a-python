@@ -363,3 +363,10 @@ Corrected future `psu_identity` event redaction without touching raw evidence.
   returns a numeric value merely because the offline UART does.
 - Next: document and separately approve an OFF-only hardware plan for the
   three new queries; leave dangerous step/UP/DOWN/trigger/APPLy commands gated.
+
+### R4.5-B hardware qualification prepared (SIM ONLY)
+
+Added a default-dry-run, two-gate OFF-only stage: `INST?` without profile,
+then optional independent OFF-profile CH1 `VOLT:STEP?`/`CURR:STEP?` after
+a separate operator decision. No ON command is allowlisted. Hardware reply
+semantics and JSONL independent review remain outstanding.

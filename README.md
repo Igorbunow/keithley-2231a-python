@@ -941,3 +941,9 @@ canned digital responses only. All three queries are **SIM TESTED / HW NOT_RUN**
 `VOLT:STEP?` firmware response is particularly unconfirmed because its vendor
 reference documents query syntax but lists `Returns None`. See
 `docs/R4_5_QUERY_ONLY_PLAN.ru.md` before planning any operator-approved trial.
+
+### R4.5-B: OFF-only qualification preparation
+
+For the guarded, two-phase source observation runner and explicit manual gates,
+see `docs/R4_5_B_OFF_HARDWARE_PLAN.ru.md`. `tools/r4_5_source_qualify.py`
+is dry-run by default; no hardware is authorized by software tests.
