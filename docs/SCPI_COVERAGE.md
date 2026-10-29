@@ -291,3 +291,13 @@ injects the in-memory state only; it is not a full physical profile exercise.
 No production driver changes or new physical hardware evidence. These status
 mask commands retain their previous bounded hardware review claims; no new
 `HW PASS` is implied by this software test refactor.
+
+### R3.5.53 — error-path regression on virtual UART (software only)
+
+`*IDN?`, `INST:NSEL?`, `CHAN:OUTP?` and `SYST:ERR?` negative responses
+now exercise the production `Keithley2231A` dispatcher over a PTY rather
+than selected historical `FakeTransport`-based tests. Exact CRLF, no retry,
+no automatic shutdown on an uncertain link, no channel restore after malformed
+selection/output responses, and no extra `SYST:ERR?` after an invalid output
+reply are asserted. These are controlled peer injections, not physical
+instrument observations. No new SCPI support or safety qualification is implied.

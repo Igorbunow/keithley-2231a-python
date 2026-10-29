@@ -60,6 +60,15 @@ CRLF bytes and command order are checked, with `SerialTransport` selected
 when `pyserial` is available. No production driver or hardware runner change.
 The remaining historical fake-backed tests still need selective migration.
 
+**R3.5.53 malformed-reply/error-queue UART migration:** the existing driver
+regressions for invalid `CHAN:OUTP?`, `INST:NSEL?`, `*IDN?` and nonzero
+`SYST:ERR?` have been moved from `test_driver.FakeTransport` to the **production
+`Keithley2231A` over POSIX virtual UART**. The peer records exact ASCII + CRLF,
+proves fail-stop without accidental restore, and preserves uncertain output
+state on malformed/lost answers. Additional negative tests cover malformed and
+missing SCPI error replies. This change does not modify the production driver,
+validate real firmware, or authorize service commands on equipment.
+
 **R3.5.52 R4.2 event-query UART migration:** all 12 R4.2-B event-consumption
 regression tests now send SCPI through the actual `Keithley2231A` and a
 strict POSIX virtual UART, replacing the remaining event-test `FakeTransport`

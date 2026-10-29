@@ -125,3 +125,11 @@ and full JSONL evidence has **HW REVIEWED PASS (bounded idle-only,
 unchanged zero ESE/SRE masks. No general asynchronous timing,
 status latch preservation, or trigger verification is claimed. See
 [the independent review](docs/hardware_reports/R4_3_OPC_review_2026-10-29.md).
+
+#### R3.5.53 — R4.2 / error-response regression over virtual UART
+
+Four former `FakeTransport`-backed tests of malformed identity, selected
+channel, output readback and unarmed SCPI error are now verified through
+`Keithley2231A` on a strict virtual UART, with additional malformed/timeout
+error-response scenarios. No driver changes, physical qualification or service
+execution. Other legacy fakes remain for separate case-by-case migration.
