@@ -8,8 +8,11 @@ from __future__ import annotations
 import os
 import time
 import unittest
+import threading
+from unittest.mock import patch
 
-from keithley2231a import Keithley2231A, SafetyError
+from keithley2231a import (ChannelProfile, Keithley2231A, ParallelProfile,
+                          SafetyError)
 from test_driver import profile
 from support.virtual_uart import UARTPeer, open_test_transport
 
@@ -112,6 +115,116 @@ class ProfileMonitorUARTTests(unittest.TestCase):
         # No independent source of physical certainty is claimed by PTY tests.
         self.assertFalse(any(self.peer.off_by_channel.values()))
         self.assertEqual(self.peer.unsupported, [])
+        self.check_wire()
+
+
+    def test_interval_validation_and_explicit_first_verification(self):
+        original = self.dev.verify_profile
+        verified = threading.Event()
+
+        def observed_verify():
+            original()
+            verified.set()
+
+        self.dev.verify_profile = observed_verify
+        for interval in (0, -1, float('nan'), True, .01):
+            with self.subTest(interval=interval):
+                with self.assertRaises(ValueError):
+                    self.dev.start_profile_monitor(interval_s=interval)
+                self.assertFalse(self.dev.profile_monitor_running)
+        with self.assertRaises(ValueError):
+            self.dev.stop_profile_monitor(timeout_s=-1)
+        self.assertFalse(verified.is_set())
+        self.dev.start_profile_monitor(interval_s=.3)
+        self.assertTrue(verified.is_set())
+        self.assertTrue(self.dev.profile_monitor_running)
+        self.dev.stop_profile_monitor()
+        self.check_wire()
+
+    def test_monitor_join_precedes_profile_replacement(self):
+        self.dev.start_profile_monitor(interval_s=.3)
+        self.assertTrue(self.dev.profile_monitor_running)
+        self.dev.emergency_off()
+        # The worker may have terminated promptly after emergency_off. If it
+        # has not, profile replacement must refuse until it is joined.
+        if self.dev.profile_monitor_running:
+            with self.assertRaises(SafetyError):
+                self.dev.apply_profile(profile(), confirmed_wiring='independent')
+        self.dev.stop_profile_monitor()
+        self.dev.apply_profile(profile(), confirmed_wiring='independent')
+        self.assertTrue(self.dev.armed)
+        self.check_wire()
+
+    def test_close_stops_worker_and_verifies_off_before_transport_close(self):
+        self.dev.start_profile_monitor(interval_s=.3)
+        self.dev.close()
+        self.assertFalse(self.dev.profile_monitor_running)
+        self.assertFalse(self.dev.armed)
+        self.assertTrue(self.peer.await_command('OUTP 0', occurrences=2))
+        self.assertFalse(any(self.peer.off_by_channel.values()))
+        # dev.close() closed the real serial or fallback PTY; inspection of
+        # pyserial's non-public handle belongs to the concrete transport test.
+        self.check_wire()
+
+    def test_unarmed_or_faulted_monitor_start_emits_no_scpi(self):
+        unused = Keithley2231A(self.transport)
+        before = list(self.peer.rx)
+        with self.assertRaises(SafetyError):
+            unused.start_profile_monitor(interval_s=.3)
+        self.assertEqual(self.peer.rx, before)
+        self.dev.emergency_off()
+        before = list(self.peer.rx)
+        with self.assertRaises(SafetyError):
+            self.dev.start_profile_monitor(interval_s=.3)
+        self.assertEqual(self.peer.rx, before)
+        self.check_wire()
+
+    def test_parallel_worker_detects_ch3_limit_drift(self):
+        scripts = {('parallel', 1, 'VOLT:LIM:STAT?'): '0',
+                   ('parallel', 2, 'VOLT:LIM:STAT?'): '0'}
+        peer = UARTPeer(profile_registers=True, mode_channel_overrides=scripts)
+        self.addCleanup(peer.close)
+        wire = open_test_transport(peer, timeout=.18)
+        self.addCleanup(wire.close)
+        dev = Keithley2231A(wire)
+        self.addCleanup(dev.stop_profile_monitor)
+        configured = ParallelProfile('parallel', 3.0, .3, 2.0, .1,
+                                     ChannelProfile(4.0, .5, 1.0, .1))
+        dev.apply_profile(configured, confirmed_wiring='parallel')
+        dev.start_profile_monitor(interval_s=.1)
+        peer.channel_registers[3]['VOLT:LIM'] = '3.99'
+        self.until(lambda: dev.profile_monitor_error is not None)
+        dev.stop_profile_monitor()
+        self.assertIn('CH3 hardware voltage limit changed', dev.profile_monitor_error)
+        self.assertTrue(dev.faulted)
+        self.assertFalse(dev.armed)
+        self.assertTrue(peer.await_command('OUTP 0', occurrences=2))
+        self.assertEqual(peer.unsupported, [])
+
+    def test_stop_timeout_does_not_block_on_scpi_lock(self):
+        reached = threading.Event()
+        release = threading.Event()
+        original_query = self.transport.query
+
+        def blocked_query(command):
+            if command == 'OUTP:SER?':
+                reached.set()
+                release.wait(1.5)
+            return original_query(command)
+
+        self.dev.start_profile_monitor(interval_s=.1)
+        with patch.object(self.transport, 'query', side_effect=blocked_query):
+            try:
+                self.assertTrue(reached.wait(2.0))
+                started = time.monotonic()
+                with self.assertRaisesRegex(SafetyError, 'did not stop'):
+                    self.dev.stop_profile_monitor(timeout_s=.02)
+                self.assertLess(time.monotonic() - started, .5)
+                self.assertTrue(self.dev.profile_monitor_running)
+            finally:
+                release.set()
+                self.dev.stop_profile_monitor()
+        self.assertTrue(self.dev.armed)
         self.check_wire()
 
 

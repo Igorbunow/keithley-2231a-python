@@ -246,3 +246,22 @@ behavior until individually justified. No changes to `src/` or hardware tests.
   requalification or live output permission is implied by this patch.
 - Gate: full software suite + `compileall`, staged patch SHA match, and no
   production source modifications.
+
+## R3.5.63 — pyserial-specific close assertion fix and large UART batch (offline)
+
+- Address **observed R3.5.62 regression** from the user's 2026-10-29 run:
+  `SerialTransport` has no `.closed` property, although PTYTransport does.
+  Use the shared transport contract: after `close()`, further `query()` must
+  fail and must not emit SCPI bytes. No production `closed` shim is added.
+- Migrate six standalone inherited-Series/Parallel topology and status tests
+  to the real `Keithley2231A` dispatcher through a POSIX UART peer, using
+  fixed readbacks for aggregate-register and CV/CC evidence.
+- Consolidate the remaining monitor lifecycle and fault-handling tests onto
+  the existing monitor UART suite (interval validation, stop/join, close,
+  unarmed/faulted refusal, Parallel CH3 drift, in-flight lock timeout).
+- Delete `tests/test_r3_topology_status.py` and
+  `tests/test_profile_integrity_monitor.py` after verifying replacement.
+- Eliminate the accidentally retained duplicate `FakeTransport` in
+  `tests/test_driver.py`; preserve the single qualification-runner fixture.
+- Run the full software suite and a separate target check on the user's
+  pyserial environment. **Hardware execution is not authorized by this step**.

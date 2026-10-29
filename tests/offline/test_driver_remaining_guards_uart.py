@@ -179,7 +179,13 @@ class RemainingDriverGuardsUART(unittest.TestCase):
         dev, peer, wire = self.device()
         dev.output(1, True)
         dev.close()
-        self.assertTrue(wire.closed)
+        # Transport's public contract is close(), NOT a .closed attribute.
+        # Verify closure by refusing another wire query for both the
+        # production pyserial transport and the POSIX PTY fallback.
+        before = list(peer.rx)
+        with self.assertRaises((OSError, TransportError)):
+            wire.query('SYST:VERS?')
+        self.assertEqual(peer.rx, before)
         self.assertFalse(peer.off_by_channel[1])
         self.assertFalse(dev.armed)
         self.assertIn('OUTP 0', peer.rx)

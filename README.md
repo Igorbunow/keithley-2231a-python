@@ -819,3 +819,23 @@ The **unchanged** pre-existing stateful `FakeTransport` is now owned by
 logic, topology/status unit scenarios, and evidence tests; its state changes
 are *not* physical-device verification. All historical consumers import this
 single fixture directly, with no compatibility forwarding shim.
+
+## R3.5.63 — transport-close regression fix and topology/monitor UART consolidation
+
+The **user's pyserial-equipped R3.5.62 run failed** in
+`test_close_verifies_off_then_closes_connection`: the test asserted
+`wire.closed`, a property of the fallback `PTYTransport`, not the production
+`SerialTransport`. The test now checks the common **public behavior** instead:
+`close()` prevents subsequent transport queries without sending another SCPI
+command. The driver/transport APIs are unchanged. In the previous environment
+without pyserial, this difference was hidden; both branches must be exercised
+in CI or on the pyserial-equipped bench machine, without enabling real outputs.
+
+Six topology/status scenarios and the remaining profile-monitor lifecycle
+checks have been consolidated into production `Keithley2231A` / virtual-UART
+regressions. Removed the duplicate stateful `FakeTransport` definition from
+`tests/test_driver.py`: the only remaining qualification-stage fixture is in
+`tests/support/qualification_transport.py`, which is not a physical hardware
+model. The virtual peer returns fixed digital SCPI readbacks, does not simulate
+combined electrical behavior, and cannot supersede H09/H10 evidence. No
+changes to production code, physical topology or live-test authorization.
