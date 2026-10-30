@@ -53,7 +53,7 @@ def unique(rows, event):
     return one([r for r in rows if r.get('event') == event], event)
 
 
-def load_original(path: Path, expected_hash: str):
+def load_original(path: Path, expected_hash: str, *, allowed_events=None):
     need(len(expected_hash) == 64 and all(c in '0123456789abcdef' for c in expected_hash.lower()),
          'Original SHA-256 must be a full hexadecimal digest')
     size = path.stat().st_size
@@ -76,7 +76,7 @@ def load_original(path: Path, expected_hash: str):
             item = json.loads(raw, object_pairs_hook=reject_duplicate)
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise AuditError(f'Invalid JSONL at line {index}: {exc}') from None
-        need(type(item) is dict and item.get('event') in EVENTS,
+        need(type(item) is dict and item.get('event') in (EVENTS if allowed_events is None else allowed_events),
              f'Unexpected record type/event at line {index}')
         rows.append(item)
     return rows, actual_hash
