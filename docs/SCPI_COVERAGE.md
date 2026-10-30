@@ -463,3 +463,20 @@ profile-free or fully nonmutating session. The vendor `Returns None` wording
 for `VOLT:STEP?` does not describe this one observed numeric response.
 No STEP writes/UP/DOWN, no powered operation, no other channels or firmware
 can be inferred. See `docs/reviews/R4_5_B_INST_STEP_HW_REVIEW_2026-10-29.md`.
+
+### R4.5-C SOURCE step mutation (simulation-only, not hardware qualified)
+
+- `VOLT:STEP <value>`, `CURR:STEP <value>`: **SIM TESTED / HW NOT_RUN**, typed
+  `configure_source_step`, Independent control profile, all three outputs OFF,
+  increment multiples of 0.001, bounded and read back with `VOLT/CURR:STEP?`.
+- `VOLT:UP`, `VOLT:DOWN`, `CURR:UP`, `CURR:DOWN`: **SIM TESTED / HW NOT_RUN**,
+  typed `step_source`, same-session registered step; exact 1mV/1mA digital
+  target tracking, strict preflight, bounds, check-errors and post-verification.
+- All new mutations blocked when any output ON, under power-only, Tracking,
+  Series/Parallel, on an uncertain link, or from raw/debug mode. Installing a
+  source step also blocks later ON commands on the same session.
+- `VOLT:STEP?=0.001 V`, `CURR:STEP?=0.001 A` from R4.5-B **remain bounded
+  HW REVIEWED PASS for CH1 read-only**, not validation of writing or stepping.
+- Do not infer physical voltage/current increment from digital UART fixture.
+  Real precision, rounding, edge behavior and switching transients need R4.5-D/E.
+  See `docs/R4_5_FUNCTIONAL_QUALIFICATION.ru.md`.

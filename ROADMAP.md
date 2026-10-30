@@ -386,3 +386,18 @@ but OFF. No power ON or STEP writes were sent. Evidence digests and limits:
 `docs/reviews/R4_5_B_INST_STEP_HW_REVIEW_2026-10-29.md`.
 Next work is software-only risk-based SCPI coverage; no automatic promotion of
 write/UP/DOWN/trigger functions or powered modes.
+
+## R4.5-C — typed, bounded STEP writes and UP/DOWN (software-only)
+
+- Implemented production `configure_source_step`/`step_source` for independent
+  all-OFF sessions. One explicit internal dispatcher authorization per exact
+  source mutation; diagnostic bypass and service restrictions remain intact.
+- Strict readback of selected channel, configured step, previous/final digital
+  preset, normal SCPI error poll after writes, profile re-verification and
+  millivolt-aware expected-setpoint integrity. Normal ON is blocked after
+  configuring STEP; fresh profile/session required to re-arm standard use.
+- Virtual UART models register responses, **not** measured analog behavior.
+- **SIM TESTED; STEP write, UP/DOWN HW NOT_RUN; NOT EXPERIMENT READY.**
+- R4.5-D OFF-only hardware; R4.5-E measured CV/CC under load; R4.5-F
+  useful V–I experiment with independent U/I/P readings, all separately gated.
+- Mandatory scope and acceptance matrix: `docs/R4_5_FUNCTIONAL_QUALIFICATION.ru.md`.

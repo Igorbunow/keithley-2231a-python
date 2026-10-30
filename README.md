@@ -957,3 +957,24 @@ presets, `VOLT:STEP?=0.001 V` / `CURR:STEP?=0.001 A` on CH1. This proves
 Both originals are re-auditable offline with
 `tools/audit_r4_5_source_evidence.py`; SHA-256 and limits are in
 `docs/reviews/R4_5_B_INST_STEP_HW_REVIEW_2026-10-29.md`.
+
+### R4.5-C — controlled source STEP API, OFF-only until hardware qualification
+
+`Keithley2231A.configure_source_step(channel, 'voltage'|'current', increment)`
+configures one bounded 1mV/1mA-multiple digital step and verifies it by SCPI
+readback. `Keithley2231A.step_source(channel, 'voltage'|'current', 'up'|'down')`
+changes a digital preset by a previously validated step. These are guarded
+production-driver operations, **not arbitrary diagnostic writes**. They require
+an armed Independent control profile, *all outputs OFF*, no unexpected profile
+change, target within channel caps, and exact digital readback. Every write
+polls one SCPI error (consuming the queue). A session that configures STEP
+cannot subsequently turn the outputs ON. Apply a clean new profile for ordinary
+power operations; do not treat this as a substitute for physical precautions.
+
+**SIM TESTED / STEP mutations HW NOT_RUN / NOT EXPERIMENT READY.** A virtual
+UART validates command ordering, digital register bookkeeping and fail-stop,
+not whether the physical PSU changes voltage/current by 1 mV/1 mA. Before
+using STEP for I–V curves, CV/CC control or experiments, complete the bounded
+operator-approved R4.5-D (OFF) and R4.5-E (live CV/CC with external metrology)
+procedures and independently review their JSONL. Functional qualification
+matrix: `docs/R4_5_FUNCTIONAL_QUALIFICATION.ru.md`.

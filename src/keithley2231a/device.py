@@ -5,6 +5,7 @@ The API does not guarantee a fail-safe output after a cable/PC/network failure.
 """
 from __future__ import annotations
 from dataclasses import dataclass
+from decimal import Decimal
 from datetime import datetime, timezone
 import logging
 import math
@@ -113,6 +114,9 @@ class Keithley2231A:
         self._instrument_key = None
         self._sequencing = False
         self._expected_setpoints = {}
+        # Authorize only one internally validated STEP write at a time.
+        self._source_mutation_command: str | None = None
+        self._configured_source_steps: dict[tuple[int, str], float] = {}
         self._expected_outputs = {ch: False for ch in (1, 2, 3)}
         self._parallel_limit_enabled: bool | None = None
         channel = _CommandChannel(self)
@@ -226,11 +230,15 @@ class Keithley2231A:
             self._command(command, query=query)
             if self._service_mode and not self._service_busy and command not in ('*IDN?', 'SYST:LOC'):
                 raise SafetyError('Service-owned session forbids ordinary SCPI operations')
-            if self._service_only_command(command) and command != self._service_command:
+            if (self._service_only_command(command) and command != self._service_command
+                    and command != self._source_mutation_command):
                 raise SafetyError('Service-only SCPI forbidden outside an explicitly '
                                   'authorized driver service operation')
             if self._link_uncertain:
                 raise TransportError('UNKNOWN OUTPUT STATE: link uncertain; no commands or automatic reconnect')
+            if command in ('OUTP 1', 'CHAN:OUTP 1') and self._configured_source_steps:
+                raise SafetyError('An OFF-only STEP session cannot enable any outputs; '
+                                  'apply a fresh independent profile to leave STEP qualification')
             session_command = self._session_command(command)
             if session_command not in ('*IDN?', 'SYST:ERR?', 'SYST:REM', 'SYST:RWLOCK', 'SYST:LOC'):
                 self._ensure_remote()
@@ -765,6 +773,7 @@ class Keithley2231A:
             self._armed = False
             self._faulted = False
             self._profile = None
+            self._configured_source_steps.clear()
             self._expected_setpoints = {
                 ch: (spec.initial_voltage, spec.initial_current)
                 for ch, spec in enumerate(profile.channels, 1)}
@@ -1001,7 +1010,10 @@ class Keithley2231A:
         wanted_v, wanted_i = expected if expected is not None else self._expected_setpoints[ch]
         # These are digital setpoint readbacks, not analog measurements. Less
         # than half a programming step catches even a one-step external edit.
-        if abs(v - wanted_v) > .0049 or abs(i - wanted_i) > .00049:
+        # Once 1 mV voltage steps are authorized, preserve that extra digit
+        # in ALL profile verification paths, not just immediate STEP readback.
+        v_tolerance = .00049 if (ch, 'voltage') in self._configured_source_steps else .0049
+        if abs(v - wanted_v) > v_tolerance or abs(i - wanted_i) > .00049:
             raise SafetyError(f'CH{ch}: authorized setpoints changed: V={v} I={i}')
 
     def _check_wiring_mode(self):
@@ -1560,6 +1572,129 @@ class Keithley2231A:
             if value < 0 or value > maximum:
                 self._malformed_value(f'Out-of-range {command} reply: {value!r}')
             return value
+
+    @staticmethod
+    def _source_step_tokens(ch: int, kind: str, increment: float | None = None):
+        """Validate all user-controlled STEP inputs before any instrument I/O."""
+        Keithley2231A._check_channel(ch)
+        if type(kind) is not str or kind not in ('voltage', 'current'):
+            raise ValueError('kind must be exactly voltage or current')
+        command = 'VOLT' if kind == 'voltage' else 'CURR'
+        if increment is None:
+            return command, None
+        if (type(increment) not in (float, int) or not math.isfinite(increment)
+                or increment < .001 or increment > (0.50 if kind == 'voltage' else .100)):
+            raise LimitsError('STEP increment outside conservative 0.001..0.50 V / 0.001..0.100 A')
+        units = round(increment * 1000)
+        if abs(increment * 1000 - units) > 1e-7:
+            raise LimitsError('STEP increments must be integer multiples of 0.001')
+        return command, units
+
+    def _require_step_off(self):
+        """Require control-access Independent profile and all physical readbacks OFF."""
+        self._require_ready()
+        if (not isinstance(self._profile, Profile) or
+                self._profile.wiring != 'independent' or
+                self._profile.access != 'control'):
+            raise SafetyError('STEP controls require independent control-access profile')
+        if any(self._output_states().values()):
+            raise SafetyError('STEP controls remain OFF-only until powered hardware qualification')
+
+    def _write_authorized_source_mutation(self, command: str):
+        """One exact internal STEP command through the regular guarded SCPI wire."""
+        if self._source_mutation_command is not None:
+            raise SafetyError('Nested STEP control is forbidden')
+        if not (re.fullmatch(r'(VOLT|CURR):STEP [0-9]+\.[0-9]{3}', command)
+                or command in ('VOLT:UP', 'VOLT:DOWN', 'CURR:UP', 'CURR:DOWN')):
+            raise SafetyError('Unrecognized source mutation')
+        self._source_mutation_command = command
+        try:
+            self._write(command)
+        finally:
+            self._source_mutation_command = None
+
+    def configure_source_step(self, ch: int, kind: str, increment: float) -> float:
+        """Set/read back one bounded STEP register, only with all outputs OFF.
+
+        No assumption is made about physical 1 mV resolution. One readback
+        matching the requested register establishes a *digital* write only.
+        The sole legal mutation is dispatched through the normal guard; a
+        diagnostic bypass still cannot send arbitrary STEP/UP/DOWN commands.
+        """
+        if increment is None:
+            raise ValueError('STEP increment must be a finite numeric value')
+        command, units = self._source_step_tokens(ch, kind, increment)
+        with self._lock:
+            self._require_ready()
+            self._require_step_off()
+            spec = self._profile.channels[ch - 1]
+            cap = spec.max_voltage if kind == 'voltage' else spec.max_current
+            if units > round(cap * 1000):
+                raise LimitsError('STEP increment exceeds channel profile cap')
+            self.verify_profile()
+            try:
+                self._select(ch)
+                if self._uint('INST:NSEL?', maximum=3) != ch:
+                    raise SafetyError('Wrong selected channel before STEP configuration')
+                self._write_authorized_source_mutation(f'{command}:STEP {units / 1000:.3f}')
+                self.check_errors()  # consumes one error; refusal must not be silently accepted
+                actual = self._num(f'{command}:STEP?')
+                if abs(actual - units / 1000) > .00049:
+                    raise SafetyError(f'{command}:STEP readback mismatch: {actual}; requested={units / 1000:.3f}')
+                self._configured_source_steps[(ch, kind)] = units / 1000
+                self.verify_profile()
+                return actual
+            except Exception as exc:
+                self._trip(f'Configure CH{ch} {kind} STEP failed: {exc}')
+
+    def step_source(self, ch: int, kind: str, direction: str) -> float:
+        """Move one OFF-channel digital preset by one preconfigured increment.
+
+        Strictly OFF-only in R4.5-C. Each command is preceded by full profile,
+        all-output OFF, channel selection and step-register integrity checks.
+        Decimal-millistep arithmetic avoids float drift; exact 1 mV/1 mA
+        readback must be observed or the session is tripped. Real firmware
+        semantics and analog effects remain HW NOT_RUN for these mutations.
+        """
+        command, _ = self._source_step_tokens(ch, kind)
+        if type(direction) is not str or direction not in ('up', 'down'):
+            raise ValueError('direction must be up or down')
+        with self._lock:
+            self._require_ready()
+            self._require_step_off()
+            if (ch, kind) not in self._configured_source_steps:
+                raise SafetyError('STEP increment must first be configured and verified in this session')
+            configured = self._configured_source_steps[(ch, kind)]
+            spec = self._profile.channels[ch - 1]
+            cap = spec.max_voltage if kind == 'voltage' else spec.max_current
+            old = self._expected_setpoints[ch][0 if kind == 'voltage' else 1]
+            wanted = (Decimal(str(old)) + (1 if direction == 'up' else -1) *
+                      Decimal(str(configured)))
+            if wanted < 0 or wanted > Decimal(str(cap)):
+                raise LimitsError(f'CH{ch}: STEP would exceed profile bounds 0..{cap}')
+            self.verify_profile()
+            try:
+                self._select(ch)
+                if self._uint('INST:NSEL?', maximum=3) != ch:
+                    raise SafetyError('Wrong selected channel before STEP action')
+                actual_increment = self._num(f'{command}:STEP?')
+                if abs(actual_increment - configured) > .00049:
+                    raise SafetyError('STEP register drifted since configuration')
+                prior = self._num(f'{command}?')
+                if abs(prior - old) > .00049:
+                    raise SafetyError(f'{command} preset drifted before STEP action: {prior} != {old}')
+                self._write_authorized_source_mutation(f'{command}:{direction.upper()}')
+                self.check_errors()
+                actual = self._num(f'{command}?')
+                if abs(actual - float(wanted)) > .00049:
+                    raise SafetyError(f'{command} STEP did not match expected {wanted}: got {actual}')
+                new = list(self._expected_setpoints[ch])
+                new[0 if kind == 'voltage' else 1] = float(wanted)
+                self._expected_setpoints[ch] = tuple(new)
+                self.verify_profile()
+                return actual
+            except Exception as exc:
+                self._trip(f'CH{ch} {kind} STEP {direction} failed: {exc}')
 
     def module_info(self) -> str:
         """Read the instrument's SYST:MODU? text without changing settings.

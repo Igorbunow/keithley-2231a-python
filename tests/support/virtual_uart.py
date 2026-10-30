@@ -7,6 +7,7 @@ No physical device is opened.
 """
 from __future__ import annotations
 import os
+from decimal import Decimal
 import re
 import select
 import tty
@@ -62,7 +63,8 @@ class UARTPeer:
     def __init__(self, *, serial='LAB-UNIT-001', response_overrides=None, drop=None,
                  fault_code=None, off_by_channel=None, response_sequences=None,
                  fault_after=None, profile_registers=False,
-                 channel_response_sequences=None, mode_channel_overrides=None):
+                 channel_response_sequences=None, mode_channel_overrides=None,
+                 ignore_step_write=False, ignore_step_action=False):
         # Explicit per-topology digital readbacks, authored by each test.
         # The peer does not calculate aggregate limits, share branch current,
         # or infer electrical behavior. Mode keys only select canned replies.
@@ -109,11 +111,14 @@ class UARTPeer:
         self.fault_code = fault_code
         self.off_by_channel = off_by_channel or {}
         self.profile_registers = profile_registers
+        self.ignore_step_write = ignore_step_write
+        self.ignore_step_action = ignore_step_action
         self.ignore_shutdown = False
         self.ignore_global_off = False
         self.channel_registers = {ch: {'VOLT': '0.00', 'CURR': '0.000',
                                       'VOLT:LIM': '30.00' if ch < 3 else '5.00',
-                                      'VOLT:LIM:STAT': '0', 'OUTP:TIM:STAT': '0'}
+                                      'VOLT:LIM:STAT': '0', 'OUTP:TIM:STAT': '0',
+                                      'VOLT:STEP': '0.010', 'CURR:STEP': '0.001'}
                                   for ch in (1, 2, 3)}
         # Three documented read-to-clear event latches; the peer is a wire
         # fixture, not a second implementation of the Keithley driver.
@@ -149,12 +154,26 @@ class UARTPeer:
                     self.selected = int(cmd[-1])
                 # Optional narrow fixture for testing real apply_profile/output
                 # SCPI over PTY.  Never enables output unless the driver writes it.
+                step_write = None
+                step_action = None
                 if self.profile_registers:
+                    step_write = re.fullmatch(r'(VOLT|CURR):STEP ([0-9]+\.[0-9]{3})', cmd)
+                    step_action = re.fullmatch(r'(VOLT|CURR):(UP|DOWN)', cmd)
                     reg_write = re.fullmatch(
                         r'(VOLT|CURR|VOLT:LIM|VOLT:LIM:STAT|OUTP:TIM:STAT|OUTP:TIM:DEL) '
                         r'([0-9]+(?:\.[0-9]+)?)', cmd)
                     if reg_write:
                         self.channel_registers[self.selected][reg_write[1]] = reg_write[2]
+                    elif step_write and not self.ignore_step_write:
+                        self.channel_registers[self.selected][step_write[1] + ':STEP'] = step_write[2]
+                    elif step_action and not self.ignore_step_action:
+                        register = step_action[1]
+                        prior = Decimal(self.channel_registers[self.selected][register])
+                        increment = Decimal(self.channel_registers[self.selected][register + ':STEP'])
+                        result = prior + increment * (1 if step_action[2] == 'UP' else -1)
+                        # This is only a digital register fixture. No analog output,
+                        # timing, CV/CC or firmware rounding is simulated.
+                        self.channel_registers[self.selected][register] = f'{result:.3f}'
                     elif cmd in ('OUTP 0', 'OUTP 1'):
                         if not (cmd == 'OUTP 0' and (self.ignore_shutdown or self.ignore_global_off)):
                             for ch in (1, 2, 3):
@@ -195,7 +214,7 @@ class UARTPeer:
                                                'OUTP:TRAC 1',
                                                'OUTP 0', 'OUTP 1',
                                                'CHAN:OUTP 0', 'CHAN:OUTP 1'})
-                        if reg_write:
+                        if reg_write or step_write or step_action:
                             allowed_writes.add(cmd)
                 if cmd not in (allowed_reads if is_query else allowed_writes):
                     self.unsupported.append(cmd)
@@ -244,8 +263,8 @@ class UARTPeer:
                     response = self.mode_channel_overrides[mode, self.selected, cmd]
                 elif cmd == 'INST:NSEL?': response = str(self.selected)
                 elif cmd == 'INST?': response = f'CH{self.selected}'
-                elif self.profile_registers and cmd == 'VOLT:STEP?': response = '0.01'
-                elif self.profile_registers and cmd == 'CURR:STEP?': response = '0.001'
+                elif self.profile_registers and cmd in ('VOLT:STEP?', 'CURR:STEP?'):
+                    response = self.channel_registers[self.selected][cmd[:-1]]
                 elif cmd == 'CHAN:OUTP?': response = str(self.off_by_channel.get(self.selected, 0))
                 elif self.profile_registers and cmd == 'OUTP:STAT:ALL?':
                     response = str(int(any(self.off_by_channel.values())))
