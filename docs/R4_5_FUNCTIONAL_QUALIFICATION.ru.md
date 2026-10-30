@@ -119,3 +119,11 @@ OFF-only случая `configure_source_step()` + `UP,UP,DOWN,DOWN` на CH1/CH2
 `docs/reviews/R4_5_D_CH1_CURR_1MA_HW_REVIEW_2026-10-30.md`.
 Это **только один цифровой OFF-only случай**. Физическое поведение CC
 и общая пригодность к экспериментам ещё NOT_VERIFIED.
+
+### R4.5-D: третья цифровая аппаратная точка
+
+CH1 `CURR:STEP 0.005`, `UP,UP,DOWN,DOWN`: цифровой readback
+`0.100→0.105→0.110→0.105→0.100 А`, OFF всех каналов и 611 нулевых SCPI-errors.
+HW REVIEWED PASS **только** для данного OFF-only случая, 3/18;
+аналоговая проверка, CC и реальная ВАХ остаются NOT_RUN. См. отчёт
+`docs/reviews/R4_5_D_CH1_CURR_5MA_HW_REVIEW_2026-10-30.md`.

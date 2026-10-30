@@ -1011,3 +1011,8 @@ PASS for this CH1 digital OFF-only case**, not a measured 1mA analog change.
 The approved 18-case OFF-only matrix has **2/18** reviewed (the other is
 CH1 voltage 10mV). Next: CH1 current 5mA; loaded CV/CC still NOT_RUN.
 See `docs/reviews/R4_5_D_CH1_CURR_1MA_HW_REVIEW_2026-10-30.md`.
+
+R4.5-D CH1/5mA OFF-only цифровая квалификация: независимый аппаратный review
+`docs/reviews/R4_5_D_CH1_CURR_5MA_HW_REVIEW_2026-10-30.md`.
+Аудитор строго сверяет оба наблюдавшихся `*IDN?` (AUX `1.04-1.04` / `1.04-0.01`)
+с остальной трассой. Это не физическая проверка тока и не разрешение на ВАХ.

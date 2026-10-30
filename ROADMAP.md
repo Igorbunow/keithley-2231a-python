@@ -447,3 +447,10 @@ Keithley 1.04-1.04. Original 4449-event file SHA
 **2/18 digital OFF-only matrix cases complete**; remaining 16 NOT_RUN.
 R4.5-E powered CV/CC and R4.5-F V–I curves remain NOT_RUN.
 See `docs/reviews/R4_5_D_CH1_CURR_1MA_HW_REVIEW_2026-10-30.md`.
+
+R4.5-D: третий аппаратный OFF-only случай CH1 CURR STEP `0.005` —
+**HW REVIEWED PASS (digital only)**; 3/18 штатных комбинаций. Трасса
+`*IDN?` строго сверяется с идентификацией и outcome при двух наблюдавшихся
+значениях AUX (`1.04-1.04` / `1.04-0.01`). См.
+`docs/reviews/R4_5_D_CH1_CURR_5MA_HW_REVIEW_2026-10-30.md`.
+Следующий CH1 CURR `0.010`, затем остальные каналы; R4.5-E/F не закрыты.

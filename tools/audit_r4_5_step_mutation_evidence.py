@@ -26,6 +26,10 @@ WRITES = {'SYST:REM','SYST:LOC','INST:NSEL 1','INST:NSEL 2','INST:NSEL 3',
           'OUTP:TIM:STAT 0','VOLT 0','CURR 0',
           'VOLT:LIM 3.50','VOLT:LIM 1.50','VOLT:LIM:STAT 1',
           'CURR 0.100','CURR 0.050','VOLT 3.30','VOLT 1.00'}
+# Two observed AUX identifiers on this same instrument: treat as an exact
+# diagnostic anomaly, not a generic relaxation of model/firmware validation.
+OBSERVED_FIRMWARE = frozenset({'1.04-1.04', '1.04-0.01'})
+
 EVENTS = {'start','pre_open_approvals','psu_identity','query','read','write',
           'driver_trace','operator_confirmation','results','outcome'}
 
@@ -88,11 +92,12 @@ def audit(records):
             outcome.get('digital_off_confirmed') is True and
             outcome.get('physical_off_confirmed') is True and
             outcome.get('link_known') is True, 'unsafe/incomplete outcome')
+    observed_fw = identity.get('firmware')
     require(identity.get('model')=='2231A-30-3' and
-            identity.get('firmware')=='1.04-1.04' and not identity.get('response'),
+            observed_fw in OBSERVED_FIRMWARE and not identity.get('response'),
             'unexpected or unredacted identity')
-    require(outcome.get('firmware_observations') == ['1.04-1.04'],
-            'unexpected firmware')
+    require(outcome.get('firmware_observations') == [observed_fw],
+            'firmware differs between identity and outcome')
     software=start.get('software',{})
     require(type(software) is dict and software.get('sha') and
             all(len(str(software.get(k,'')))==64 for k in
@@ -232,6 +237,14 @@ def audit(records):
         elif cmd=='*IDN?':
             require('2231A-30-3' in ans and '[REDACTED]' in ans,
                     'unredacted/wrong instrument identity')
+    # Require the two physical *IDN? answers to agree with the recorded
+    # redacted identity. The 1.04-0.01 string is observed but does not
+    # establish that the AUX firmware actually changed.
+    idn_replies = [str(t.get('response')) for t in traces
+                   if t['event']=='reply' and t.get('command')=='*IDN?']
+    expected_idn = f'Keithley instruments, 2231A-30-3, [REDACTED], {observed_fw}'
+    require(idn_replies == [expected_idn, expected_idn],
+            'identity does not agree with both physical IDN replies')
     require(len(off_channels)==78 and off_channels==[1,2,3]*26,
             'missing/wrong order OFF sweep')
     require(len(step_replies)==5 and all(abs(v-increment)<=.00049 for v in step_replies),
@@ -280,7 +293,8 @@ def audit(records):
             'setpoints':direction_readbacks,'records':len(records),
             'queries':len(queries),'writes':len(writes),'error_polls':len(errors),
             'output_off_checks':len(off_channels),'source_commit':software['sha'],
-            'source_dirty':software.get('dirty'),'config_sha256':digest}
+            'source_dirty':software.get('dirty'),'config_sha256':digest,
+            'firmware_observation':observed_fw}
 
 
 def _unique_object_pairs(pairs):

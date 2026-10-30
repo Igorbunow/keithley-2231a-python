@@ -522,3 +522,9 @@ mutation only** — no current measured, no CC, no powered behavior.
 See `docs/reviews/R4_5_D_CH1_CURR_1MA_HW_REVIEW_2026-10-30.md`.
 `VOLT:STEP` 1/5mV are NOT in the approved write matrix: do not
 confuse the readable 1mV register value with accepted write precision.
+
+R4.5-D аппаратный review: CH1 `CURR:STEP 0.005` и `CURR:UP/DOWN`
+(2×UP, 2×DOWN) **HW REVIEWED PASS (OFF-only digital, one case)**.
+SCPI error=0, выходы OFF, итоговая уставка 0.100 А.
+Другие шаги, комбинации и аналоговый CC не подтверждены этим случаем;
+статус `EXPERIMENT READY` не присваивается.
