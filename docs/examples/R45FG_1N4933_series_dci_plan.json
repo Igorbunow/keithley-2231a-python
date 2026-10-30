@@ -1,0 +1,13 @@
+{
+  "id": "R45FG_1N4933_SERIES_DCI",
+  "hardware_authorized": false,
+  "topology": "CH1_R99P86_DMM_FRONT_AMPS_LO_SERIES_1N4933",
+  "preset_v": 0.9,
+  "current_limit_a": 0.01,
+  "voltage_limit_v": 1.05,
+  "current_range_a": 0.01,
+  "kel_disconnected": true,
+  "physical_power_off_before_rewire": true,
+  "other_channels_off": true,
+  "operator_gate_required": true
+}

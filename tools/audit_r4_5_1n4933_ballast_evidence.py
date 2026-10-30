@@ -43,8 +43,10 @@ def single(rows, kind):
     return one([r for r in rows if r.get('event') == kind], kind)
 
 
-def check_wire(rows, *, successful):
+def check_wire(rows, *, successful, allowed_writes=None):
     """Validate the physical driver trace independently of runner-written point records."""
+    if allowed_writes is None:
+        allowed_writes = PSU_ALLOWED_WRITES
     trace = [r['trace'] for r in rows if r['event'] == 'driver_trace']
     need(len(trace) > 600, 'Missing/bounded physical PSU trace')
     commands = {'query': [], 'reply': [], 'write': []}
@@ -70,7 +72,7 @@ def check_wire(rows, *, successful):
             elif cmd in ('OUTP:SER?', 'OUTP:PARALLEL?', 'OUTP:TRAC?'):
                 need(v == '0', 'Unexpected combined topology')
         elif typ == 'write':
-            need(pending is None and cmd in PSU_ALLOWED_WRITES, 'Unreviewed PSU write')
+            need(pending is None and cmd in allowed_writes, 'Unreviewed PSU write')
             if cmd.startswith('INST:NSEL '):
                 selected = int(cmd[-1])
             elif cmd == 'CHAN:OUTP 1':

@@ -23,6 +23,8 @@ class DMM7510:
         self.transport, self.evidence = transport, evidence
         self.live, self.configured = True, False
         self.range_v = None
+        self.range_a = None
+        self.read_units = "V"
         self._scpi_ready = False
 
     def _check_error(self, context):
@@ -40,7 +42,7 @@ class DMM7510:
             answer = self.transport.query(command) if query else self.transport.write(command)
             if query:
                 self.evidence.add('dmm7510_read', command=command, response=answer,
-                                  units='V' if command == ':READ?' else None)
+                                  units=self.read_units if command == ':READ?' else None)
             if self._scpi_ready and command != ':SYST:ERR?':
                 self._check_error(command)
             return answer
@@ -84,15 +86,65 @@ class DMM7510:
             self.evidence.add('dmm7510_configuration', firmware=parts[3],
                               function='DC voltage', range_v=range_v, nplc=1,
                               terminals='front', outcome='PASS')
-            self.range_v = range_v
+            self.range_v, self.range_a, self.read_units = range_v, None, 'V'
             self.configured = True
+        except BaseException:
+            self.live, self.configured = False, False
+            raise
+
+    def configure_current(self, range_a=0.01):
+        """Fixed FRONT 10-mA DCI range; AMPS + INPUT LO in series, PSU OFF.
+
+        This does not check the physical jack or fuse; the operator must do so.
+        Unlike DCV, the AMPS connection must NEVER be placed across a load.
+        """
+        if type(range_a) is not float or range_a != 0.01:
+            raise ValueError('Only fixed DMM7510 FRONT 10-mA DCI range reviewed')
+        try:
+            identity = self.identify()
+            self._scpi_ready = True
+            self._check_error('SCPI command-set verification')
+            if self._transfer(':ROUT:TERM?', query=True).strip().upper() not in ('FRON', 'FRONT'):
+                raise ValueError('Select DMM7510 FRONT terminals for current')
+            for command in ('*RST', ':SENS:FUNC "CURR"',
+                            ':SENS:CURR:RANG:AUTO OFF', ':SENS:CURR:RANG 0.01',
+                            ':SENS:CURR:NPLC 1', ':SENS:CURR:AZER ON',
+                            ':SENS:CURR:AVER OFF', ':SENS:CURR:REL:STAT OFF'):
+                self._transfer(command, query=False)
+            function = self._transfer(':SENS:FUNC?', query=True).strip().strip('"').upper()
+            r = float(self._transfer(':SENS:CURR:RANG?', query=True))
+            nplc = float(self._transfer(':SENS:CURR:NPLC?', query=True))
+            relative = self._transfer(':SENS:CURR:REL:STAT?', query=True).strip()
+            autorange = self._transfer(':SENS:CURR:RANG:AUTO?', query=True).strip()
+            if (function not in ('CURR', 'CURR:DC') or abs(r - range_a) > 1e-9
+                    or abs(nplc - 1) > 1e-9 or relative != '0' or autorange != '0'):
+                raise ValueError('DMM7510 fixed DCI configuration readback mismatch')
+            self.evidence.add('dmm7510_configuration', firmware=identity.split(',')[-1].strip(),
+                              function='DC current', range_a=range_a, nplc=1,
+                              relative=False, autorange=False,
+                              terminals='front', outcome='PASS',
+                              physical_amps_jack='OPERATOR_CLAIM_ONLY')
+            self.range_v, self.range_a, self.configured, self.read_units = None, range_a, True, 'A'
+        except BaseException:
+            self.live, self.configured = False, False
+            raise
+
+    def measure_current(self):
+        """Fresh single DC current reading, no autorange, retries or fallback."""
+        if not self.live or not self.configured or self.range_a != .01 or self.read_units != 'A':
+            raise RuntimeError('DMM7510 fixed 10-mA DCI session is not ready')
+        try:
+            value = float(self._transfer(':READ?', query=True))
+            if not math.isfinite(value) or abs(value) > .012:
+                raise ValueError('DMM7510 current nonfinite/overrange; no retry')
+            return {'current_a': value}
         except BaseException:
             self.live, self.configured = False, False
             raise
 
     def measure(self):
         """Trigger a fresh reading, rejecting nonfinite/overrange/multivalue replies."""
-        if not self.live or not self.configured:
+        if not self.live or not self.configured or self.read_units != 'V' or self.range_v is None:
             raise RuntimeError('DMM7510 voltage session is not ready')
         try:
             value = float(self._transfer(':READ?', query=True))
