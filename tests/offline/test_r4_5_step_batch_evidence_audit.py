@@ -113,6 +113,36 @@ class BatchEvidenceAudit(unittest.TestCase):
         records.pop(idx)
         with self.assertRaises(AuditError): audit(records)
 
+    def test_wire_error_response_payload_disagreement_is_rejected(self):
+        records = copy.deepcopy(self.records)
+        item = next(r['trace'] for r in records if r['event'] == 'driver_trace'
+                    and r['trace'].get('event') == 'reply'
+                    and r['trace'].get('command') == 'SYST:ERR?')
+        item['response'] = '120,"Parameter overflowed"'
+        with self.assertRaises(AuditError): audit(records)
+
+    def test_wire_off_response_payload_disagreement_is_rejected(self):
+        records = copy.deepcopy(self.records)
+        item = next(r['trace'] for r in records if r['event'] == 'driver_trace'
+                    and r['trace'].get('event') == 'reply'
+                    and r['trace'].get('command') == 'CHAN:OUTP?')
+        item['response'] = '1'
+        with self.assertRaises(AuditError): audit(records)
+
+    def test_nonmonotonic_timestamps_are_rejected(self):
+        records = copy.deepcopy(self.records)
+        for i, rec in enumerate(records):
+            rec['monotonic_s'] = float(i)
+        records[40]['monotonic_s'] = -1
+        with self.assertRaises(AuditError): audit(records)
+
+    def test_mixed_source_test_id_is_rejected(self):
+        records = copy.deepcopy(self.records)
+        for rec in records:
+            rec['test_id'] = 'R45STEPBATCH'
+        records[40]['test_id'] = 'OTHERTEST'
+        with self.assertRaises(AuditError): audit(records)
+
     def test_wrong_batch_digest_is_rejected(self):
         records=copy.deepcopy(self.records)
         next(r for r in records if r['event']=='batch_results')['results_sha256']='0'*64

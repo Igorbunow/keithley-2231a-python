@@ -461,3 +461,7 @@ R4.5-D: третий аппаратный OFF-only случай CH1 CURR STEP `0
 - One-session, independently gated **nine-case current matrix** is implemented as `tools/r4_5_step_batch_qualify.py`; optional voltage/all batches, default DRY RUN, and independent original-JSONL auditor. Software coverage is not hardware qualification.
 - **After current batch review, prioritize powered CV/CC STEP with KEL103 load + DMM7510**, not another round of 1-case-at-a-time OFF-only requests. See `docs/R4_5_D_BATCH_EXIT_AND_POWERED_GATE.ru.md`.
 - Aux `1.04 ↔ 0.01`: record/observe as known metadata anomaly; await manufacturer reply. Never suppress output or SCPI error diagnostics.
+
+### R4.5-D complete current batch independent hardware review (2026-10-30)
+
+**HW REVIEWED PASS — 9/9 current digital OFF-only cases** (CH1/CH2/CH3 × 1/5/10 mA). Original 36342-event hardware log and SHA `16e7aadd755b360fd1a5ce4d71dbb041da0b668f08e3ff4e97fa0dc195046052`, 8268 replies, 4969 zero-error polls, 639 OFF readbacks; all four UP/DOWN sequences per case restored the original setpoint. Software test 801 OK on operator machine, baseline commit `ee121f4`. Independently reviewed and enhanced trace-payload audit: `docs/reviews/R4_5_D_CURRENT_BATCH_HW_REVIEW_2026-10-30.md`. **No KEL/DMM analog proof.** Remaining OFF-only voltage cases do not block transition to R4.5-E. Next: `docs/R4_5_E_POWERED_STEP_ENTRY.ru.md`; powered STEP still forbidden until separately qualified.

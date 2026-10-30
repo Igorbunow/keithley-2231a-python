@@ -37,6 +37,18 @@ def _numeric(value):
 
 def audit(records):
     require(records, 'Empty evidence')
+    ids = [x.get('test_id') for x in records]
+    require(len(set(ids)) == 1 and ids[0] in (None, 'R45STEPBATCH'),
+            'Unexpected mixed test IDs')
+    # Real evidence has monotonic timestamps; synthetic UART fixtures may
+    # deliberately omit them. Never allow partial timestamps or reversal.
+    has_mono = ['monotonic_s' in x for x in records]
+    if any(has_mono):
+        require(all(has_mono) and all(type(x['monotonic_s']) in (int, float)
+                    and math.isfinite(x['monotonic_s']) for x in records)
+                and all(a['monotonic_s'] <= b['monotonic_s']
+                        for a, b in zip(records, records[1:])),
+                'Missing or non-monotonic evidence event timestamps')
     start = [x for x in records if x.get('event')=='start']
     require(len(start)==1 and start[0].get('phase')=='STEP_BATCH_OFF', 'Wrong/missing batch start')
     matrix = start[0].get('matrix')
@@ -124,6 +136,37 @@ def audit(records):
             'Physical queries differ from stage query evidence')
     require([x['command'] for x in replies]==[x['command'] for x in reads],
             'Physical reply sequence differs from stage reads')
+    def same_reply(physical, stage):
+        if physical.get('response') == stage.get('response'):
+            return True
+        if physical.get('command') != '*IDN?' or stage.get('command') != '*IDN?':
+            return False
+        # The virtual UART fixture exposes a synthetic serial to the stage,
+        # while driver_trace redacts it. Never weaken model or firmware checks.
+        a = [v.strip() for v in physical.get('response', '').split(',')]
+        b = [v.strip() for v in stage.get('response', '').split(',')]
+        return (len(a) == len(b) == 4 and
+                a[0] == b[0] and a[1] == b[1] and a[3] == b[3] and
+                '[REDACTED]' in (a[2], b[2]))
+    require(all(same_reply(x, y) for x, y in zip(replies, reads)),
+            'Physical wire reply payload differs from stage readback')
+    # A SCPI reply must belong to the immediately preceding physical query.
+    # Matching only command multiset or ordered read labels would miss a
+    # duplicated, delayed or silently rewritten response on the wire.
+    outstanding = None
+    for trace in traces:
+        if trace.get('event') == 'query':
+            require(outstanding is None, 'Next physical query sent before previous reply')
+            outstanding = trace.get('command')
+        elif trace.get('event') == 'reply':
+            require(outstanding == trace.get('command'),
+                    'Physical reply is unsolicited or paired with wrong query')
+            outstanding = None
+        elif trace.get('event') == 'write':
+            require(outstanding is None, 'Physical write interleaved with pending query')
+        else:
+            raise AuditError('Unrecognized driver trace event')
+    require(outstanding is None, 'Physical query without matching reply')
     require(wire and wire[-1]=='SYST:LOC' and wire.count('SYST:LOC')==1,
             'SYST:LOC is not the final physical SCPI command')
     forbidden = ('OUTP 1','CHAN:OUTP 1','*RST','*CLS','*TRG','*SAV','*RCL')

@@ -532,3 +532,7 @@ SCPI error=0, выходы OFF, итоговая уставка 0.100 А.
 #### R4.5-D batch testing
 
 A single OFF-only driver session now supports a physically gated matrix of up to 18 digital `VOLT/CURR:STEP`, `UP/DOWN` permutations with verified readbacks. Software: `tools/r4_5_step_batch_qualify.py`, `tests/hardware/r4_5_step_batch_stage.py`; original-evidence auditor: `tools/audit_r4_5_step_batch_evidence.py`. **Batch hardware NOT_RUN; powered STEP NOT_RUN.** No new production SCPI command exposure or authorization to energize outputs.
+
+### R4.5-D current batch: hardware scope update
+
+`CURR:STEP` + `CURR:UP/DOWN` **HW REVIEWED PASS for all nine OFF-only digital combinations** (CH1/CH2/CH3 × 0.001/0.005/0.010 A), exactly restored readbacks, error queue zero and outputs OFF. `VOLT:STEP 0.010` on CH1 previously independently confirmed; `VOLT:STEP 0.001` rejected by real SCPI 120. Do not label powered/analog STEP as qualified. Evidence and hash: `docs/reviews/R4_5_D_CURRENT_BATCH_HW_REVIEW_2026-10-30.md`.
