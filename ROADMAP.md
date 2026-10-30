@@ -454,3 +454,10 @@ R4.5-D: третий аппаратный OFF-only случай CH1 CURR STEP `0
 значениях AUX (`1.04-1.04` / `1.04-0.01`). См.
 `docs/reviews/R4_5_D_CH1_CURR_5MA_HW_REVIEW_2026-10-30.md`.
 Следующий CH1 CURR `0.010`, затем остальные каналы; R4.5-E/F не закрыты.
+
+### R4.5-D batch acceleration, 2026-10-30
+
+- Verified CH1 `CURR:STEP=10mA` digital OFF-only evidence: SHA-256 `e047b8591258fd0f4f7bb8bcea4aa8517f10eddb8a28a57ee7dac047ef447f5a` (4 known successful OFF-only cases total).
+- One-session, independently gated **nine-case current matrix** is implemented as `tools/r4_5_step_batch_qualify.py`; optional voltage/all batches, default DRY RUN, and independent original-JSONL auditor. Software coverage is not hardware qualification.
+- **After current batch review, prioritize powered CV/CC STEP with KEL103 load + DMM7510**, not another round of 1-case-at-a-time OFF-only requests. See `docs/R4_5_D_BATCH_EXIT_AND_POWERED_GATE.ru.md`.
+- Aux `1.04 ↔ 0.01`: record/observe as known metadata anomaly; await manufacturer reply. Never suppress output or SCPI error diagnostics.

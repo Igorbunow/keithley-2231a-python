@@ -1016,3 +1016,7 @@ R4.5-D CH1/5mA OFF-only цифровая квалификация: незави�
 `docs/reviews/R4_5_D_CH1_CURR_5MA_HW_REVIEW_2026-10-30.md`.
 Аудитор строго сверяет оба наблюдавшихся `*IDN?` (AUX `1.04-1.04` / `1.04-0.01`)
 с остальной трассой. Это не физическая проверка тока и не разрешение на ВАХ.
+
+### Batched OFF-only STEP qualification
+
+`tools/r4_5_step_batch_qualify.py` offers one reviewed digital matrix per explicitly approved session (`--matrix current`, nine CH1–CH3 current STEP cases). Default is **dry run**; `--execute` requires physical empty outputs, interactive operator gates and live hardware. `tools/audit_r4_5_step_batch_evidence.py` independently audits the original JSONL. This is *not* powered step verification and does not justify output ON after STEP; see `docs/R4_5_D_BATCH_EXIT_AND_POWERED_GATE.ru.md`.

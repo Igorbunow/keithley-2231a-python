@@ -528,3 +528,7 @@ R4.5-D аппаратный review: CH1 `CURR:STEP 0.005` и `CURR:UP/DOWN`
 SCPI error=0, выходы OFF, итоговая уставка 0.100 А.
 Другие шаги, комбинации и аналоговый CC не подтверждены этим случаем;
 статус `EXPERIMENT READY` не присваивается.
+
+#### R4.5-D batch testing
+
+A single OFF-only driver session now supports a physically gated matrix of up to 18 digital `VOLT/CURR:STEP`, `UP/DOWN` permutations with verified readbacks. Software: `tools/r4_5_step_batch_qualify.py`, `tests/hardware/r4_5_step_batch_stage.py`; original-evidence auditor: `tools/audit_r4_5_step_batch_evidence.py`. **Batch hardware NOT_RUN; powered STEP NOT_RUN.** No new production SCPI command exposure or authorization to energize outputs.
