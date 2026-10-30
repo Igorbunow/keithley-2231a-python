@@ -978,3 +978,16 @@ using STEP for I–V curves, CV/CC control or experiments, complete the bounded
 operator-approved R4.5-D (OFF) and R4.5-E (live CV/CC with external metrology)
 procedures and independently review their JSONL. Functional qualification
 matrix: `docs/R4_5_FUNCTIONAL_QUALIFICATION.ru.md`.
+
+### R4.5-D — OFF-only STEP mutation bench qualification (prepared, NOT_RUN)
+
+`tools/r4_5_step_mutation_qualify.py` is **DRY RUN** by default. One exact
+channel/kind/increment per operator-approved hardware run, separate BENCH,
+INITIAL, PROFILE, MUTATION, FINAL gates, no output-enable commands, no load.
+The production STEP API performs one step-register write followed by exactly
+UP/UP/DOWN/DOWN, digital readbacks and OFF checks, returning to the initial
+preset. A distinct profile sets CH1 3.30V/.100A and CH2/CH3 1.00V/.050A,
+leaving safe room for both UP actions. `VOLT?` must confirm even 1mV changes;
+firmware rounding or unsupported commands **ABORT**, never widen tolerances.
+See `docs/R4_5_D_STEP_MUTATION_OFF_PLAN.ru.md` for the 24-case matrix and
+operator checks. **SIM TESTED; HW NOT_RUN; not EXPERIMENT READY.**

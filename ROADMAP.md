@@ -401,3 +401,15 @@ write/UP/DOWN/trigger functions or powered modes.
 - R4.5-D OFF-only hardware; R4.5-E measured CV/CC under load; R4.5-F
   useful V–I experiment with independent U/I/P readings, all separately gated.
 - Mandatory scope and acceptance matrix: `docs/R4_5_FUNCTIONAL_QUALIFICATION.ru.md`.
+
+## R4.5-D — OFF-only STEP write + UP/DOWN qualification prepared
+
+- One-case gated hardware runner, independent fixed profile, strict channel,
+  kind, step and direction-scoped SCPI allowlist; no output enable or load.
+- Real digital readbacks required after STEP write and every UP/DOWN;
+  bounded shutdown and mandatory physical OFF, fail-closed on uncertain UART.
+- 24 approved CH1/2/3 × VOLT/CURR × increment cases planned, not yet executed;
+  boundary and combined experiments need additional evidence.
+- Virtual UART and independent patch regression only; **HW NOT_RUN**.
+  R4.5-E CV/CC analog qualification and R4.5-F I–V sweep remain separate.
+  See `docs/R4_5_D_STEP_MUTATION_OFF_PLAN.ru.md`.

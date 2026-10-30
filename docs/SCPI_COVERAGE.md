@@ -480,3 +480,14 @@ can be inferred. See `docs/reviews/R4_5_B_INST_STEP_HW_REVIEW_2026-10-29.md`.
 - Do not infer physical voltage/current increment from digital UART fixture.
   Real precision, rounding, edge behavior and switching transients need R4.5-D/E.
   See `docs/R4_5_FUNCTIONAL_QUALIFICATION.ru.md`.
+
+### R4.5-D: bounded STEP mutation qualification prepared (NO hardware evidence)
+
+`VOLT:STEP`, `CURR:STEP`, `VOLT:UP/DOWN`, `CURR:UP/DOWN` have a new
+operator-gated *OFF-only* physical qualification runner. The production
+methods are the same as R4.5-C; the runner adds a second wire-scoped allowlist,
+fixed Independent settings and independent physical OFF confirmations.
+**SIM TESTED / HW NOT_RUN / NOT EXPERIMENT READY.** A single eventual hardware
+PASS will establish only that one channel/kind/increment case, never all
+24 matrix cases or analog/energized resolution. See
+`docs/R4_5_D_STEP_MUTATION_OFF_PLAN.ru.md`.
