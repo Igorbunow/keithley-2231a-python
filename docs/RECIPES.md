@@ -26,7 +26,7 @@ File: [`examples/power_only.json`](../examples/power_only.json). Import with `Pr
 ## Measurement logging
 
 ```python
-from keithley2231a import Acquisition
+from examples.acquisition import Acquisition
 
 log = Acquisition(psu, interval_s=2.0, csv_path='runs/power.csv')
 log.run(duration_s=120)
@@ -40,7 +40,7 @@ Records UTC/monotonic timestamps, actual voltage/current, inferred power, status
 ## Example: static resistor or diode I–V curve
 
 ```python
-from keithley2231a import voltage_sweep
+from examples.iv_sweep import voltage_sweep
 
 # With an appropriately rated R in series with diode (for example 220 ohms),
 # independently checked current limits and suitable instrument profile:
@@ -57,7 +57,7 @@ No reverse-bias, negative current or two-quadrant sink capability exists. The ex
 
 Each driver will evolve independently. A future lab orchestrator can call its
 public high-level interface and discover supported capabilities; there is no
-`BenchCoordinator` or multi-vendor scheduler inside this library. The local
+`BenchCoordinator` or multi-vendor scheduler inside this library. The checkout's example-only
 `voltage_sweep()` observer callback remains available for external DMM readings.
 
 ## Future Ethernet adapter requirements

@@ -4,12 +4,13 @@ The UART peer provides narrow, independently scripted SCPI replies; it does
 not model a physical supply, meter accuracy or load/feedback behavior.
 """
 from __future__ import annotations
+from examples.acquisition import Acquisition
 
 import os
 import unittest
 from dataclasses import replace
 
-from keithley2231a import (Acquisition, ChannelProfile, Keithley2231A, LimitsError, Profile, SafetyError)
+from keithley2231a import (ChannelProfile, Keithley2231A, LimitsError, Profile, SafetyError)
 from support.virtual_uart import UARTPeer, open_test_transport
 from test_driver import profile
 

@@ -828,7 +828,7 @@ class TestQualification(unittest.TestCase):
                            'CONFIRM H07 DISCONNECT CH1 ALL_OFF LOAD=OFF']
                 with patch('h07_stage.time.monotonic', clock.monotonic), \
                         patch('h07_stage.time.sleep', clock.sleep), \
-                        patch('keithley2231a.monitor.threading.Event', return_value=clock), \
+                        patch('examples.acquisition.threading.Event', return_value=clock), \
                         patch('builtins.input', side_effect=answers), \
                         contextlib.redirect_stdout(io.StringIO()):
                     outcome = h07_stage.h07(source, evidence, load)

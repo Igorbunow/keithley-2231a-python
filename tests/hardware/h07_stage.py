@@ -8,6 +8,14 @@
 @details All PSU traffic uses the common driver dispatch; only CH1 may be enabled.
 """
 from __future__ import annotations
+from pathlib import Path
+import sys
+
+# Hardware qualification reuses example helpers, not driver orchestration.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from examples.acquisition import Acquisition
+
+
 
 from bench_config import current_bench
 
@@ -21,7 +29,7 @@ import time
 
 from common import (ShutdownEvidence, StageAdapter, channel_snapshot, operator_gate,
                     release_psu_and_load, require_outputs)
-from keithley2231a import Acquisition, ChannelProfile, Keithley2231A, Profile, SafetyError
+from keithley2231a import ChannelProfile, Keithley2231A, Profile, SafetyError
 
 DURATION_S = 180.0
 INTERVAL_S = 2.0

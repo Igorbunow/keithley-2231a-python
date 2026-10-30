@@ -9,9 +9,9 @@ The library provides a **guarded, testable Python API for a single Keithley 2231
 ### Layer diagram
 
 ```text
-              User code / CLI / single-source sweep
+          Separate application / CLI / examples (sweep, meter, CSV)
                              |
-          Keithley2231A / voltage_sweep / Acquisition
+                     Keithley2231A
                              |
                  immutable Profile + PowerStep
                              |
@@ -39,8 +39,8 @@ The library provides a **guarded, testable Python API for a single Keithley 2231
 | `transport.py` | One-line SCPI UART and raw TCP transactions; explicit timeouts | No device-level safety, no VISA or telnet protocol |
 | `profile.py` | Immutable `Profile`, `ChannelProfile`, `PowerStep`, JSON validation, `unrestricted()` | Nameplate values always bound V/I; no file-based arbitrary SCPI injection |
 | `device.py` | `Keithley2231A`, SCPI mapping, outputs, timers, monitoring interlocks, profile verification | All mutating guarded commands require an armed profile |
-| `monitor.py` | `Acquisition`, per-channel stats, CSV, temporal energy integration | Samples are sequential, not synchronized |
-| `sweep.py` | Voltage stepping, settled readings, meter callbacks, CSV and final OFF | No battery discharge, negative current, precision SMU or hardware triggering |
+| `examples/acquisition.py` | Host-side sampling, CSV, statistics and energy integration | Example-only, not in published package |
+| `examples/iv_sweep.py`, `examples/iv_coordination.py` | Host voltage stepping, meter callbacks, CSV and final OFF | Not shipped in the driver package |
 | `tests/hardware/bench_config.py` | One validated TOML configuration for all equipment | No SCPI commands or direct instrument access |
 | `tests/hardware/equipment/` | Test-only KEL103, DMM7510 and TDS3064B adapters | Not part of the published Keithley package |
 | `examples/` | Read-only probe and opt-in lab recipes | Outputs only with explicit operator action |
@@ -85,7 +85,7 @@ Do **not** silently call `*TRG` in a generic coordinator: it can alter configure
 
 ## DC curves and combined-channel experiments
 
-`voltage_sweep` requires other PSU channels OFF, uses one source channel to apply a DC step and then reads `MEAS:VOLT?` and `MEAS:CURR?`. External DMM readings can be attached through an observer callback (CSV columns are keyed by meter reading names). This enables diode I–V, resistor verification and transistor curves with additional bias sources, but all wiring and current limiting remain the experiment author's responsibility. The supply cannot sink current; its one-milliamp readback resolution is inadequate for microamp diode leakage curves.
+The example-only `voltage_sweep` requires other PSU channels OFF, uses one source channel to apply a DC step and then reads `MEAS:VOLT?` and `MEAS:CURR?`. External DMM readings can be attached through an observer callback (CSV columns are keyed by meter reading names). This enables diode I–V, resistor verification and transistor curves with additional bias sources, but all wiring and current limiting remain the experiment author's responsibility. The supply cannot sink current; its one-milliamp readback resolution is inadequate for microamp diode leakage curves.
 
 For multi-supply experiments, use independent instrument libraries and a future standalone coordinator. This library intentionally does not ship a multi-instrument coordinator.
 

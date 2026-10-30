@@ -9,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Callable
-from .device import Keithley2231A, Reading
+from keithley2231a.device import Keithley2231A, Reading
 
 @dataclass
 class RollingStats:

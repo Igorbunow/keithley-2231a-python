@@ -12,8 +12,8 @@ import math
 from pathlib import Path
 import time
 
-from .device import Reading, SafetyError
-from .sweep import voltage_sweep, SweepPoint
+from keithley2231a.device import Reading, SafetyError
+from .iv_sweep import voltage_sweep, SweepPoint
 
 
 # Fields inserted by the observer must stay numeric: voltage_sweep's external

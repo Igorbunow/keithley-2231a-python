@@ -340,7 +340,7 @@ The [reference manual](https://download.tek.com/manual/077100401_Referencemanual
 sections 5-20/21 and the status model describe group event/summary registers, not a
 single response containing all three channels' complete live CV/CC states. Use
 per-channel `...ISUM1/2/3:COND?` queries; group event reads are not a substitute.
-`Acquisition.sample()` already polls all three independent channels sequentially,
+The example-only `Acquisition.sample()` already polls all three independent channels sequentially,
 with separate timestamps; it is not an atomic snapshot. No new group command is
 assumed. See the [physical diagnosis](docs/hardware_reports/2026-10-26T005733.649705Z_H03_qualification.md)
 and [verification matrix](docs/VERIFICATION.md). H03's manual-conformance result
@@ -481,8 +481,15 @@ If the power sequence is empty, `power_on()/power_off()` use CH1→CH2→CH3 / r
 
 ### DC I–V characteristics and external meters
 
+`voltage_sweep`, `coordinated_voltage_sweep`, and `Acquisition` are
+**application examples under `examples/`**, not exported by the installed
+`keithley2231a` library. Import them from a repository checkout (not a wheel).
+The library exposes typed device capabilities and guarded SCPI primitives;
+the future upper layer owns scheduling, cross-instrument routing and CSV.
+
+
 ```python
-from keithley2231a import voltage_sweep
+from examples.iv_sweep import voltage_sweep
 
 # After an appropriate guarded profile has been armed; with a safe resistive DUT:
 # points = voltage_sweep(psu, 1, [0.0, 0.1, 0.2],

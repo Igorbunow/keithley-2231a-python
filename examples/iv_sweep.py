@@ -11,7 +11,7 @@ from pathlib import Path
 import time
 from typing import Callable, Mapping, Sequence
 
-from .device import Keithley2231A, Reading, SafetyError
+from keithley2231a.device import Keithley2231A, Reading, SafetyError
 
 @dataclass(frozen=True)
 class SweepPoint:

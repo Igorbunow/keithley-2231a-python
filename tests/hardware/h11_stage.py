@@ -8,6 +8,14 @@
 @details Keithley SCPI is restricted through the shared StageAdapter dispatcher.
 """
 from __future__ import annotations
+from pathlib import Path
+import sys
+
+# Hardware qualification reuses example helpers, not driver orchestration.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from examples.iv_sweep import voltage_sweep
+
+
 
 from bench_config import current_bench
 
@@ -17,8 +25,7 @@ import re
 
 from common import (ShutdownEvidence, StageAdapter, operator_gate,
                     release_psu_and_load, require_outputs)
-from keithley2231a import (ChannelProfile, Keithley2231A, Profile, SafetyError,
-                           voltage_sweep)
+from keithley2231a import (ChannelProfile, Keithley2231A, Profile, SafetyError)
 
 VOLTAGES = (0.50, 1.00, 1.50, 2.00)
 CURRENT_LIMIT_A = 0.040

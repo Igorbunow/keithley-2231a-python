@@ -5,13 +5,13 @@ Direct transport-boundary injection is limited to responses impossible on a
 serial byte stream (non-string return) and BaseException interruption.
 """
 from __future__ import annotations
+from examples.acquisition import Acquisition
 
 import os
 import unittest
 from unittest.mock import patch
 
-from keithley2231a import (Acquisition, InstrumentError, Keithley2231A,
-                          LimitsError, SafetyError, TransportError)
+from keithley2231a import (InstrumentError, Keithley2231A, LimitsError, SafetyError, TransportError)
 from support.virtual_uart import UARTPeer, open_test_transport
 from test_driver import profile
 
@@ -202,7 +202,7 @@ class RemainingDriverGuardsUART(unittest.TestCase):
         dev, peer, _ = self.device()
         stop = ClockStop()
         acquisition = Acquisition(dev, interval_s=2.)
-        with patch('keithley2231a.monitor.time.monotonic', lambda: stop.now):
+        with patch('examples.acquisition.time.monotonic', lambda: stop.now):
             acquisition.run(duration_s=1., stop_event=stop)
         self.assertEqual(acquisition.stats[1].voltage.count, 1)
         self.assertEqual(stop.now, 1.)

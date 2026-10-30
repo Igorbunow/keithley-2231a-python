@@ -1,4 +1,7 @@
 """O01 is simulator-only. No USB enumeration, LAN or hardware access."""
+from examples.iv_coordination import verify_coordinated_csv
+from examples.iv_coordination import coordinated_voltage_sweep
+from examples.iv_coordination import TimedVoltageObserver
 import csv
 import math
 from pathlib import Path
@@ -9,8 +12,7 @@ from unittest.mock import patch
 
 from support.qualification_transport import FakeTransport
 from test_driver import profile
-from keithley2231a import (Keithley2231A, SafetyError, TimedVoltageObserver,
-                            coordinated_voltage_sweep, verify_coordinated_csv)
+from keithley2231a import (Keithley2231A, SafetyError)
 
 
 _DEFAULT = object()
@@ -46,7 +48,7 @@ class O01CoordinatorTests(unittest.TestCase):
         self.meter = FakeDMM(self.raw)
 
     def run_sweep(self, csv_path, voltages=(.5, 1., 1.5), **kwargs):
-        with patch('keithley2231a.sweep.time.sleep'):
+        with patch('examples.iv_sweep.time.sleep'):
             return coordinated_voltage_sweep(self.dev, self.meter, 1, voltages,
                 current_limit_a=.04, csv_path=csv_path, settle_s=0., **kwargs)
 
@@ -138,7 +140,7 @@ class O01CoordinatorTests(unittest.TestCase):
                 fake=FakeTransport();dev=Keithley2231A(fake)
                 dev.apply_profile(profile(),confirmed_wiring='independent')
                 meter=FakeDMM(fake); meter.reply=value
-                with tempfile.TemporaryDirectory() as td, patch('keithley2231a.sweep.time.sleep'):
+                with tempfile.TemporaryDirectory() as td, patch('examples.iv_sweep.time.sleep'):
                     with self.assertRaises(SafetyError):
                         coordinated_voltage_sweep(dev,meter,1,[.5],current_limit_a=.04,
                                                   csv_path=Path(td)/'o01.csv',settle_s=0)
@@ -158,8 +160,8 @@ class O01CoordinatorTests(unittest.TestCase):
                 sample=original(ch)
                 return replace(sample,monotonic_s=100.)
             dev.read_channel=synthetic_read
-            with tempfile.TemporaryDirectory() as td, patch('keithley2231a.sweep.time.sleep'), \
-                 patch('keithley2231a.coordination.time.monotonic',side_effect=stamps[1:]):
+            with tempfile.TemporaryDirectory() as td, patch('examples.iv_sweep.time.sleep'), \
+                 patch('examples.iv_coordination.time.monotonic',side_effect=stamps[1:]):
                 with self.assertRaises(SafetyError):
                     coordinated_voltage_sweep(dev,meter,1,[.5],current_limit_a=.04,
                                               csv_path=Path(td)/'o01.csv',settle_s=0,

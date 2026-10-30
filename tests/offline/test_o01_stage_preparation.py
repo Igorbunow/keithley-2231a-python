@@ -95,7 +95,7 @@ class O01StagePreparationTests(unittest.TestCase):
                 if any(io.outputs.values()) or raw.flags['OUTP:STAT:ALL']:
                     raise AssertionError('O01 connection gate with output ON')
             with patch('o01_stage.operator_gate', side_effect=approve), \
-                 patch('keithley2231a.sweep.time.sleep'), \
+                 patch('examples.iv_sweep.time.sleep'), \
                  contextlib.redirect_stdout(io.StringIO()):
                 result = o01(raw, ev, meter)
             records = [json.loads(x) for x in ev.path.read_text().splitlines()]
@@ -203,7 +203,7 @@ class O01StagePreparationTests(unittest.TestCase):
                 self.assertEqual(raw.flags['OUTP:STAT:ALL'],0)
                 self.assertIn(':SENS:VOLT:AZER ON',wire.commands)
             with patch('o01_stage.operator_gate', side_effect=check_gate), \
-                 patch('keithley2231a.sweep.time.sleep'), \
+                 patch('examples.iv_sweep.time.sleep'), \
                  contextlib.redirect_stdout(io.StringIO()):
                 status=o01(raw,ev,meter)
             records=[json.loads(x) for x in ev.path.read_text().splitlines()]
@@ -295,7 +295,7 @@ class O01GatedCliTests(unittest.TestCase):
              patch('qualification.sys.stdin.isatty', return_value=True), \
              patch('qualification.software_metadata', return_value={'source_sha256':'simulated', 'dirty':True}), \
              patch('builtins.input', side_effect=input_fake), \
-             patch('keithley2231a.sweep.time.sleep'), \
+             patch('examples.iv_sweep.time.sleep'), \
              contextlib.redirect_stdout(output):
             result = main(self.args)
         records = []

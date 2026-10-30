@@ -1,6 +1,6 @@
+from examples.acquisition import ChannelStats
 import unittest
-from keithley2231a import (Profile, ProfileError, ChannelProfile, LimitsError,
-                          SeriesProfile, ChannelStats, Reading)
+from keithley2231a import (Profile, ProfileError, ChannelProfile, LimitsError, SeriesProfile, Reading)
 
 def profile(wiring='independent', expected='auto'):
     return Profile('demo', (

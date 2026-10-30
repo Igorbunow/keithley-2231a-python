@@ -4,6 +4,7 @@ The fixture returns digital SCPI values; it is not a physical source/load model.
 All tests use Keithley2231A, not a second SCPI dispatcher.
 """
 from __future__ import annotations
+from examples.iv_sweep import voltage_sweep
 
 import csv
 import os
@@ -12,9 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import call, patch
 
-from keithley2231a import (ChannelProfile, Keithley2231A, LimitsError,
-                          PowerStep, Profile, ProfileError, SafetyError,
-                          voltage_sweep)
+from keithley2231a import (ChannelProfile, Keithley2231A, LimitsError, PowerStep, Profile, ProfileError, SafetyError)
 from support.virtual_uart import UARTPeer, open_test_transport
 from test_driver import profile
 
@@ -182,7 +181,7 @@ class ProfilesAndSweepUART(unittest.TestCase):
         dev, peer = self.device(profile())
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'curve.csv'
-            with patch('keithley2231a.sweep.time.sleep'):
+            with patch('examples.iv_sweep.time.sleep'):
                 points = voltage_sweep(dev, 1, [.1, .2, .3], current_limit_a=.02,
                                        observer=lambda r: {'dmm_v': r.voltage_v - .01},
                                        csv_path=path)
@@ -223,7 +222,7 @@ class ProfilesAndSweepUART(unittest.TestCase):
 
     def test_sweep_observer_exception_still_turns_output_off(self):
         dev, peer = self.device(profile())
-        with patch('keithley2231a.sweep.time.sleep'):
+        with patch('examples.iv_sweep.time.sleep'):
             with self.assertRaisesRegex(RuntimeError, 'dmm failed'):
                 voltage_sweep(dev, 1, [.2], current_limit_a=.02,
                               observer=lambda r: (_ for _ in ()).throw(RuntimeError('dmm failed')))
@@ -234,7 +233,7 @@ class ProfilesAndSweepUART(unittest.TestCase):
 
     def test_sweep_invalid_observer_result_still_turns_output_off(self):
         dev, peer = self.device(profile())
-        with patch('keithley2231a.sweep.time.sleep'):
+        with patch('examples.iv_sweep.time.sleep'):
             with self.assertRaises(ValueError):
                 voltage_sweep(dev, 1, [.2], current_limit_a=.02,
                               observer=lambda _: {'bad': float('nan')})

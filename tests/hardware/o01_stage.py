@@ -3,14 +3,20 @@
 No simultaneous sampling, automatic connection retries or new raw SCPI path.
 """
 from __future__ import annotations
+from pathlib import Path
+import sys
+
+# Hardware qualification reuses example helpers, not driver orchestration.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from examples.iv_coordination import coordinated_voltage_sweep
+
+
 
 import math
 import re
-from pathlib import Path
 
 from common import ShutdownEvidence, StageAdapter, operator_gate, require_outputs
-from keithley2231a import (ChannelProfile, Keithley2231A, Profile,
-                           SafetyError, coordinated_voltage_sweep)
+from keithley2231a import (ChannelProfile, Keithley2231A, Profile, SafetyError)
 
 VOLTAGES = (0.50, 1.00, 1.50)
 CURRENT_LIMIT_A = 0.040

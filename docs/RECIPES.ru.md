@@ -21,7 +21,7 @@
 ## Мониторинг
 
 ```python
-from keithley2231a import Acquisition
+from examples.acquisition import Acquisition
 
 log = Acquisition(psu, interval_s=2.0, csv_path='runs/power.csv')
 log.run(duration_s=120)
@@ -35,7 +35,7 @@ log.reset_statistics(1, reset_energy=False)
 ## ВАХ резистора или диода
 
 ```python
-from keithley2231a import voltage_sweep
+from examples.iv_sweep import voltage_sweep
 
 # Только после подготовки ограниченного профиля и маломощного стенда!
 # points = voltage_sweep(psu, 1, [0.0, 0.5, 1.0, 1.5],
@@ -44,7 +44,7 @@ from keithley2231a import voltage_sweep
 # u_diode_est = [x.measured_v - x.measured_a * 220 for x in points]
 ```
 
-Для диода предусмотреть последовательно резистор, рассчитанный по максимальному напряжению и рассеиваемой мощности. `u_diode_est` грубо учитывает падение на R=220 Ом, но не погрешность сопротивления и падение на проводах. Лучше использовать DMM на выводах диода и `observer=lambda sample: {'diode_voltage_v': dmm.read_voltage()}`; API внешнего мультиметра обеспечивает конкретный адаптер. По окончании развертки библиотека пытается глобально отключить **все каналы**.
+Для диода предусмотреть последовательно резистор, рассчитанный по максимальному напряжению и рассеиваемой мощности. `u_diode_est` грубо учитывает падение на R=220 Ом, но не погрешность сопротивления и падение на проводах. Лучше использовать DMM на выводах диода и `observer=lambda sample: {'diode_voltage_v': dmm.read_voltage()}`; API внешнего мультиметра обеспечивает конкретный адаптер. По окончании развёртки прикладной пример пытается глобально отключить **все каналы**.
 
 ## Эксперименты с несколькими приборами (в будущем отдельный проект)
 

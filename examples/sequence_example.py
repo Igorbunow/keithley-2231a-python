@@ -1,7 +1,8 @@
 """Independent-channel delayed sequence. Requires explicit --run and a dummy DUT."""
 from pathlib import Path
 import argparse
-from keithley2231a import SerialTransport, Keithley2231A, Profile, Acquisition
+from keithley2231a import SerialTransport, Keithley2231A, Profile
+from acquisition import Acquisition
 
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--port',default='/dev/ttyUSB1')
