@@ -1,0 +1,22 @@
+{
+  "id": "R45FE_1N4933_BALLAST_DIRECT_DCV_OFFLINE_PLAN",
+  "hardware_authorized": false,
+  "execute_supported": false,
+  "next_action": "REQUEST_SEPARATE_HARDWARE_APPROVAL",
+  "topology": "CH1_SERIES_99P86OHM_1N4933",
+  "ballast_ohm": 99.86,
+  "initial_preset_v": 0.9,
+  "current_limit_a": 0.02,
+  "other_channels_off": true,
+  "kel_disconnected": true,
+  "operator_rewire_only_when_psu_off": true,
+  "dmm_role": "FRONT_DCV_DIRECTLY_ACROSS_BALLAST",
+  "caveats": [
+    "OFF before moving any DMM leads or changing measurement mode",
+    "Use DMM FRONT voltage/LO terminals, never current terminals",
+    "DMM HI on resistor's CH1+ side, DMM LO on diode-anode side",
+    "Keep CH2 and CH3 OFF and KEL103 disconnected",
+    "Require separate operator approval and an independently tested gated runner before any PSU output ON",
+    "Predicted voltage drops from the earlier run are not measured or calibrated references"
+  ]
+}
