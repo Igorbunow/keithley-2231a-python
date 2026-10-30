@@ -536,3 +536,9 @@ A single OFF-only driver session now supports a physically gated matrix of up to
 ### R4.5-D current batch: hardware scope update
 
 `CURR:STEP` + `CURR:UP/DOWN` **HW REVIEWED PASS for all nine OFF-only digital combinations** (CH1/CH2/CH3 × 0.001/0.005/0.010 A), exactly restored readbacks, error queue zero and outputs OFF. `VOLT:STEP 0.010` on CH1 previously independently confirmed; `VOLT:STEP 0.001` rejected by real SCPI 120. Do not label powered/analog STEP as qualified. Evidence and hash: `docs/reviews/R4_5_D_CURRENT_BATCH_HW_REVIEW_2026-10-30.md`.
+
+**R4.5-E-A pending hardware qualification:** `VOLT:UP/DOWN` and
+`CURR:UP/DOWN` have an additional CH1-only, one-mutation, SIM TESTED
+qualification context. This is not a general ON permission or evidence of
+analog STEP behaviour. OFF-only digital current batch is reviewed 9/9; real
+loaded CV/CC step measurement with DMM7510/KEL103 remains NOT_RUN.

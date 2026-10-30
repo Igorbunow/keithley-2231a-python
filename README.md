@@ -1024,3 +1024,11 @@ R4.5-D CH1/5mA OFF-only цифровая квалификация: незави�
 ### R4.5-D current STEP batch — hardware result
 
 The real current OFF-only batch CH1–CH3 × 1/5/10 mA has been independently reviewed as **9/9 digital HW REVIEWED PASS**, with 4,969 zero SCPI error polls and 639 OFF readbacks. See `docs/reviews/R4_5_D_CURRENT_BATCH_HW_REVIEW_2026-10-30.md`. Real powered current step accuracy **NOT_RUN**. The next milestone is the explicitly gated KEL103+DMM7510 powered CV/CC/STEP experiment; see `docs/R4_5_E_POWERED_STEP_ENTRY.ru.md`.
+
+**R4.5-E-A (software-only, 2026-10-30):** the guarded qualification-only
+`powered_step_qualification` context enables one bounded CH1 CV/voltage or
+CC/current STEP under an explicitly approved external-load stage. It is **not**
+a released/general powered STEP API, and no physical loaded STEP has yet been
+qualified. Ordinary STEP methods remain OFF-only outside this context.
+See `docs/R4_5_E_POWERED_STEP_ENTRY.ru.md`; do not run the context directly
+on physical equipment before an independently reviewed powered runner exists.

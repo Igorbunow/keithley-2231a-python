@@ -465,3 +465,15 @@ R4.5-D: третий аппаратный OFF-only случай CH1 CURR STEP `0
 ### R4.5-D complete current batch independent hardware review (2026-10-30)
 
 **HW REVIEWED PASS — 9/9 current digital OFF-only cases** (CH1/CH2/CH3 × 1/5/10 mA). Original 36342-event hardware log and SHA `16e7aadd755b360fd1a5ce4d71dbb041da0b668f08e3ff4e97fa0dc195046052`, 8268 replies, 4969 zero-error polls, 639 OFF readbacks; all four UP/DOWN sequences per case restored the original setpoint. Software test 801 OK on operator machine, baseline commit `ee121f4`. Independently reviewed and enhanced trace-payload audit: `docs/reviews/R4_5_D_CURRENT_BATCH_HW_REVIEW_2026-10-30.md`. **No KEL/DMM analog proof.** Remaining OFF-only voltage cases do not block transition to R4.5-E. Next: `docs/R4_5_E_POWERED_STEP_ENTRY.ru.md`; powered STEP still forbidden until separately qualified.
+
+### R4.5-E-A — guarded powered STEP software entry (2026-10-30)
+
+- Production `powered_step_qualification` context: **SIM TESTED only**.
+  Only CH1 Independent, 3.50 V/0.150 A/0.60 W maximum profile envelope,
+  one authorized output-enable, one approved voltage/CV or current/CC direction,
+  mode/power readback before and after, automatic known-link OFF on exit.
+- Outside this context, STEP remains OFF-only. Auxiliary KEL103/DMM7510
+  readings are **not** covered by virtual UART tests; no physical powered
+  STEP was run. A separately reviewed R4.5-E powered stage is required.
+- `R4.5-D` current digital OFF-only 9/9 is HW REVIEWED PASS; R4.5-E and
+  R4.5-F analog experiments remain NOT_RUN / NOT EXPERIMENT READY.

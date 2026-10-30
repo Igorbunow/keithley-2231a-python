@@ -5,6 +5,7 @@ The API does not guarantee a fail-safe output after a cable/PC/network failure.
 """
 from __future__ import annotations
 from dataclasses import dataclass
+from contextlib import contextmanager
 from decimal import Decimal
 from datetime import datetime, timezone
 import logging
@@ -117,6 +118,7 @@ class Keithley2231A:
         # Authorize only one internally validated STEP write at a time.
         self._source_mutation_command: str | None = None
         self._configured_source_steps: dict[tuple[int, str], float] = {}
+        self._powered_step_window: dict | None = None
         self._expected_outputs = {ch: False for ch in (1, 2, 3)}
         self._parallel_limit_enabled: bool | None = None
         channel = _CommandChannel(self)
@@ -236,9 +238,27 @@ class Keithley2231A:
                                   'authorized driver service operation')
             if self._link_uncertain:
                 raise TransportError('UNKNOWN OUTPUT STATE: link uncertain; no commands or automatic reconnect')
+            window = self._powered_step_window
+            if (window is not None and command == 'SYST:LOC'
+                    and self._expected_outputs.get(1, False)):
+                raise SafetyError('Cannot return LOCAL inside powered STEP window while CH1 ON')
+            if window is not None and not query:
+                allowed = (command in ('SYST:REM', 'SYST:LOC', 'OUTP 0', 'CHAN:OUTP 0')
+                           or re.fullmatch(r'INST:NSEL [123]', command)
+                           or (command == self._source_mutation_command
+                               and command == (('VOLT' if window['kind'] == 'voltage' else 'CURR')
+                                               + ':' + window['direction'].upper())
+                               and window['moves'] == 1 and window['enables'] == 1))
+                one_enable = (command == 'CHAN:OUTP 1' and self._selected_channel == 1
+                              and window['enables'] == 0 and window['moves'] == 0)
+                if not (allowed or one_enable):
+                    raise SafetyError('Powered STEP window forbids this SCPI write')
             if command in ('OUTP 1', 'CHAN:OUTP 1') and self._configured_source_steps:
-                raise SafetyError('An OFF-only STEP session cannot enable any outputs; '
-                                  'apply a fresh independent profile to leave STEP qualification')
+                if not (window is not None and command == 'CHAN:OUTP 1'
+                        and self._selected_channel == 1 and window['enables'] == 0
+                        and window['moves'] == 0):
+                    raise SafetyError('An OFF-only STEP session cannot enable any outputs; '
+                                      'apply a fresh independent profile to leave STEP qualification')
             session_command = self._session_command(command)
             if session_command not in ('*IDN?', 'SYST:ERR?', 'SYST:REM', 'SYST:RWLOCK', 'SYST:LOC'):
                 self._ensure_remote()
@@ -1204,6 +1224,8 @@ class Keithley2231A:
                 if self._bool(self._query('CHAN:OUTP?')) != bool(enabled):
                     raise SafetyError(f'CH{ch} output state mismatch')
                 self._expected_outputs[ch] = enabled
+                if enabled and self._powered_step_window is not None:
+                    self._powered_step_window['enables'] += 1
             except Exception as exc:
                 self._trip(f'CH{ch} output operation failed: {exc}')
 
@@ -1654,11 +1676,61 @@ class Keithley2231A:
             except Exception as exc:
                 self._trip(f'Configure CH{ch} {kind} STEP failed: {exc}')
 
+    @contextmanager
+    def powered_step_qualification(self, ch: int, kind: str, increment: float,
+                                   direction: str, *, expected_mode: str,
+                                   max_power_w: float = .60,
+                                   external_load_confirmed: bool = False):
+        """Internal qualification window, not a general-purpose powered API.
+
+        Narrowly permits one CH1 enable and one CV-voltage or CC-current
+        mutation. An operator-approved external-load stage must also validate
+        KEL103 and DMM7510. All PSU outputs are switched OFF on context exit
+        when transport permits; this is not an independent safety interlock.
+        The caller must never suppress uncertain-link/physical-OFF warnings.
+        """
+        self._source_step_tokens(ch, kind, increment)
+        if type(direction) is not str or direction not in ('up', 'down'):
+            raise ValueError('direction must be up or down')
+        if (ch != 1 or expected_mode not in ('CV', 'CC') or
+                (kind, expected_mode) not in (('voltage', 'CV'), ('current', 'CC'))):
+            raise SafetyError('Powered qualification restricted to CH1 voltage/CV or current/CC')
+        if (type(max_power_w) not in (int, float) or not math.isfinite(max_power_w)
+                or not 0 < max_power_w <= .60 or external_load_confirmed is not True):
+            raise SafetyError('Powered qualification requires approved load and <=0.60 W')
+        with self._lock:
+            self._require_ready()
+            if self._powered_step_window is not None:
+                raise SafetyError('Nested powered STEP window')
+            spec = self._profile.channels[0]
+            if (spec.max_voltage > 3.50 or spec.max_current > .150 or
+                    spec.max_voltage * spec.max_current > max_power_w + 1e-9):
+                raise LimitsError('Powered STEP profile exceeds reviewed 3.5V/0.15A/0.60W envelope')
+            if self._configured_source_steps and set(self._configured_source_steps) != {(1, kind)}:
+                raise SafetyError('Other STEP registers configured in this session')
+            self._require_step_off()
+            self.verify_profile()
+            self.configure_source_step(ch, kind, increment)
+            self._powered_step_window = dict(channel=ch, kind=kind, direction=direction,
+                                             expected_mode=expected_mode,
+                                             max_power_w=float(max_power_w),
+                                             enables=0, moves=0)
+        try:
+            yield self
+        finally:
+            with self._lock:
+                self._powered_step_window = None
+                # Never attempt any additional transfer after a link uncertainty.
+                if not self._link_uncertain:
+                    self.emergency_off()
+
     def step_source(self, ch: int, kind: str, direction: str) -> float:
         """Move one OFF-channel digital preset by one preconfigured increment.
 
-        Strictly OFF-only in R4.5-C. Each command is preceded by full profile,
-        all-output OFF, channel selection and step-register integrity checks.
+        Normally OFF-only. The R4.5-E qualification context is the sole,
+        narrowly bounded exception for one CH1 direction after explicit
+        external-load approval; ordinary callers cannot enable STEP outputs.
+        Each command checks profile, selected channel and step-register integrity.
         Decimal-millistep arithmetic avoids float drift; readback
         precision remains 1 m-unit and writes require 10 mV/1 mA grids or the session is tripped. Real firmware
         semantics and analog effects remain HW NOT_RUN for these mutations.
@@ -1668,7 +1740,23 @@ class Keithley2231A:
             raise ValueError('direction must be up or down')
         with self._lock:
             self._require_ready()
-            self._require_step_off()
+            window = self._powered_step_window
+            if window is None:
+                self._require_step_off()
+            else:
+                if (ch != 1 or kind != window['kind'] or direction != window['direction']
+                        or window['enables'] != 1 or window['moves'] != 0):
+                    raise SafetyError('Powered STEP permits exactly one approved CH1 direction')
+                # A failed preflight consumes the one-shot permit; no retry.
+                window['moves'] = 1
+                states = self._output_states()
+                if states != {1: True, 2: False, 3: False}:
+                    raise SafetyError('Powered STEP requires CH1 ON only')
+                before = self.read_channel(1)
+                if (not before.enabled or before.regulation != window['expected_mode']
+                        or not math.isfinite(before.power_w) or
+                        not 0 <= before.power_w <= window['max_power_w']):
+                    self._trip('Powered STEP preflight mode/power mismatch')
             if (ch, kind) not in self._configured_source_steps:
                 raise SafetyError('STEP increment must first be configured and verified in this session')
             configured = self._configured_source_steps[(ch, kind)]
@@ -1699,6 +1787,12 @@ class Keithley2231A:
                 new[0 if kind == 'voltage' else 1] = float(wanted)
                 self._expected_setpoints[ch] = tuple(new)
                 self.verify_profile()
+                if window is not None:
+                    after = self.read_channel(1)
+                    if (not after.enabled or after.regulation != window['expected_mode']
+                            or not math.isfinite(after.power_w) or
+                            not 0 <= after.power_w <= window['max_power_w']):
+                        raise SafetyError('Powered STEP postflight mode/power mismatch')
                 return actual
             except Exception as exc:
                 self._trip(f'CH{ch} {kind} STEP {direction} failed: {exc}')
