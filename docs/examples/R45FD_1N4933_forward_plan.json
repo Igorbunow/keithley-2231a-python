@@ -1,0 +1,31 @@
+{
+  "schema": "R45FD_1N4933_FORWARD_PILOT_V1",
+  "part": "1N4933",
+  "topology": "CH1_PLUS_100OHM_ANODE_1N4933_CATHODE_CH1_MINUS_DMM_ACROSS_DIODE",
+  "wiring": {
+    "anode_after_ballast": true,
+    "banded_cathode_on_ch1_minus": true,
+    "dmm_front_dcv_across_diode": true,
+    "kel103_physically_disconnected": true,
+    "ch2_ch3_physically_disconnected": true,
+    "other_branches_absent": true,
+    "all_outputs_initially_off": true,
+    "external_power_absent": true
+  },
+  "ballast": {
+    "nominal_ohm": 100,
+    "tolerance_percent": 5,
+    "power_rating_w": 0.25,
+    "physically_checked_with_power_off": false,
+    "measured_ohm": null
+  },
+  "program": {
+    "mode": "FORWARD_CV_ONLY",
+    "source_voltages_v": [0.8, 0.9, 1.0, 0.9, 0.8],
+    "step_directions": ["up", "up", "down", "down"],
+    "psu_current_limit_a": 0.02,
+    "psu_maximum_voltage_v": 1.0,
+    "maximum_powered_s": 90,
+    "dmm_connection": "FRONT_DCV_DIODE_ANODE_POSITIVE_CATHODE_NEGATIVE"
+  }
+}
