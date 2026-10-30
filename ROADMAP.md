@@ -413,3 +413,17 @@ write/UP/DOWN/trigger functions or powered modes.
 - Virtual UART and independent patch regression only; **HW NOT_RUN**.
   R4.5-E CV/CC analog qualification and R4.5-F I–V sweep remain separate.
   See `docs/R4_5_D_STEP_MUTATION_OFF_PLAN.ru.md`.
+
+### R4.5-D first OFF-only physical STEP mutation — 2026-10-30
+
+- **HW REVIEWED PASS (one bounded case only):** CH1 `VOLT:STEP 0.010`, then
+  two `VOLT:UP` and two `VOLT:DOWN`; digital `VOLT?`: 3.30, 3.31,
+  3.32, 3.31, 3.30 V. Keithley 2231A-30-3 firmware 1.04-1.04.
+- Independently audited original 4449-record JSONL: 1002 query/reply pairs,
+  216 writes, 611 zero-error polls, 78 OFF readbacks, one STEP write and
+  exactly four ordered directional commands. Operator final OFF confirmed.
+- Evidence hash and limitations: `docs/reviews/R4_5_D_CH1_VOLT_10MV_HW_REVIEW_2026-10-30.md`.
+  Automated replay audit: `tools/audit_r4_5_step_mutation_evidence.py`.
+- **Remaining 23 STEP cases, analog measurement under load, dynamic CV/CC,
+  V-I experiments and boundary combinations NOT VERIFIED**. Next case:
+  CH1 VOLT 0.001 OFF-only, independent manual execution and evidence review.

@@ -491,3 +491,14 @@ fixed Independent settings and independent physical OFF confirmations.
 PASS will establish only that one channel/kind/increment case, never all
 24 matrix cases or analog/energized resolution. See
 `docs/R4_5_D_STEP_MUTATION_OFF_PLAN.ru.md`.
+
+### R4.5-D first genuine STEP mutation — narrow hardware review
+
+- `VOLT:STEP 0.010` + `VOLT:UP` ×2 + `VOLT:DOWN` ×2:
+  **HW REVIEWED PASS only CH1, all outputs OFF, no load**, 1.04-1.04 firmware.
+  Digital readback 3.30→3.31→3.32→3.31→3.30 V; original JSONL reviewed
+  with 611 zero-error polls and 78 OFF readbacks. Independent evidence audit:
+  `docs/reviews/R4_5_D_CH1_VOLT_10MV_HW_REVIEW_2026-10-30.md`.
+- No hardware qualification yet for CH1 1 mV, alternate steps/channels,
+  `CURR:STEP` writes, voltage/current mutation under power, CV/CC, V–I
+  experiments, analog resolution or fault-induced recovery on the bench.
