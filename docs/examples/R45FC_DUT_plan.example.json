@@ -1,0 +1,33 @@
+{
+  "schema": "R45FC_DUT_SCREENING_PLAN_V1",
+  "topology": "PSU_CH1_BALLAST_DUT_SINGLE_SERIES_DMM_DCV_ACROSS_DUT",
+  "dut": {
+    "kind": "PASSIVE_NON_ENERGY_STORING_TWO_TERMINAL",
+    "identifier": "TBD_REPLACE_WITH_EXACT_DUT_AND_PART_NUMBER",
+    "rated_forward_voltage_v": 0,
+    "rated_forward_current_a": 0,
+    "rated_power_w": 0,
+    "externally_powered": false,
+    "polarity_marked": false
+  },
+  "measurements": {
+    "dut_voltage": "DMM7510_FRONT_DCV_ACROSS_DUT",
+    "current": "KEITHLEY_CH1_MEAS_CURR_TOTAL_OUTPUT",
+    "kel103": "PHYSICALLY_DISCONNECTED",
+    "current_independent": false,
+    "additional_parallel_loads": false
+  },
+  "ballast": {
+    "minimum_verified_ohm": 0,
+    "rated_power_w": 0,
+    "wiring": "SERIES_BETWEEN_PSU_CH1_PLUS_AND_DUT_PLUS"
+  },
+  "limits": {
+    "start_voltage_v": 0.3,
+    "step_voltage_v": 0.1,
+    "maximum_voltage_v": 0.5,
+    "psu_current_limit_a": 0.005,
+    "maximum_dut_power_w": 0.0025,
+    "maximum_powered_s": 20
+  }
+}
