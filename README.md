@@ -1045,3 +1045,15 @@ for one steady-state +10mV point with KEL103 and independent DMM7510
 `docs/reviews/R4_5_E_B_CH1_CV_10MV_POWERED_HW_REVIEW_2026-10-30.md`.
 Powered CC +5mA remains HW NOT_RUN; do not interpret this as transient
 accuracy or full IV-curve qualification.
+
+### R4.5-E-C — independently reviewed five-point powered CV series (2026-10-30)
+
+The CH1 CV five-point `UP/UP/DOWN/DOWN` series with KEL103 CR 40 Ω and
+DMM7510 FRONT DCV is **HW REVIEWED PASS** for steady-state measurements only.
+The original JSONL, immutable SHA-256, measured reversibility and restrictions
+are documented in
+[`docs/reviews/R4_5_E_C_CH1_CV_FIVE_POINT_HW_REVIEW_2026-10-30.md`](docs/reviews/R4_5_E_C_CH1_CV_FIVE_POINT_HW_REVIEW_2026-10-30.md).
+The earlier R4.5-E-B one-point CC test was also separately reviewed PASS;
+any older `CC NOT_RUN` statement above describes its historical review date.
+The **five-point CC series remains NOT_RUN**. No transient-response,
+calibration or unrestricted I–V automation claims follow from this CV review.

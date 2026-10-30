@@ -494,3 +494,15 @@ point is HW REVIEWED PASS (2026-10-30, KEL103 CR40Ω, DMM7510
 `docs/reviews/R4_5_E_B_CH1_CV_10MV_POWERED_HW_REVIEW_2026-10-30.md`.
 **CH1 CC 5mA** is the next separately operator-gated run, NOT_RUN as of this
 review; analog dynamics and broader functionality remain open.
+
+### R4.5-E-C — CH1 five-point powered CV hardware review (2026-10-30)
+
+**HW REVIEWED PASS (bounded):** Keithley CH1 CV 3.30 V, KEL103 CR 40 Ω,
+DMM7510 FRONT; one authorized ON, physical `VOLT:UP/UP/DOWN/DOWN`, with
+five measured DMM voltages 3.296577 → 3.307226 → 3.317040 → 3.307257
+→ 3.296999 V. The full independent SCPI, power and OFF review is in
+`docs/reviews/R4_5_E_C_CH1_CV_FIVE_POINT_HW_REVIEW_2026-10-30.md`.
+The prior one-point CV and one-point CC trials were reviewed separately.
+**Five-point CC is NOT_RUN** pending its own operator-approved test and
+original-evidence audit. The CV result does not prove timing transients,
+absolute calibration, arbitrary V–I sweep or additional H09/H10 load points.
