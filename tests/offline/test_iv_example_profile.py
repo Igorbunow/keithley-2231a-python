@@ -107,6 +107,17 @@ class PureProfileTests(unittest.TestCase):
             with self.subTest(case=str(v)[:85]):
                 with self.assertRaises(IVProfileError): self.read(v)
 
+    def test_ch23_hw_candidate_profile_dry_run_and_instrument_limits(self):
+        candidate = ROOT/'examples'/'diode_iv_ch23_qualification_profile.json'
+        plan = load_iv_profile(candidate)
+        self.assertEqual([p.channel for p in plan.channels], [2, 3])
+        self.assertEqual(plan.channels[0].voltages, (.8,.9,.8))
+        self.assertEqual(plan.channels[1].voltages, (.8,.9))
+        self.assertTrue(all(p.force for p in plan.channels))
+        with patch('diode_iv.SerialTransport') as transport:
+            self.assertEqual(main(['--profile', str(candidate)]), 0)
+            transport.assert_not_called()
+
     def test_json_duplicate_key_refused(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td)/'x.json'
@@ -177,6 +188,16 @@ class ProfiledExampleVirtualUART(unittest.TestCase):
                 text = path.read_text(encoding='utf-8')
                 self.assertEqual(text.count('PSU_READBACK_DIAGNOSTIC'),2)
                 self.assertIn(f'CH{ch}', gates[(ch-1)*3])
+            summary = json.loads((Path(td)/'result'/'completed.json').read_text())
+            self.assertEqual(summary['status'],
+                             'EXAMPLE_COMPLETED_NOT_INDEPENDENT_HW_QUALIFICATION')
+            self.assertEqual([c['channel'] for c in summary['channels']], [1,2,3])
+            self.assertTrue(all(c['digital_off_confirmed'] and
+                                c['physical_off_operator_confirmed']
+                                for c in summary['channels']))
+            for row, path in zip(summary['channels'], paths):
+                import hashlib
+                self.assertEqual(row['csv_sha256'], hashlib.sha256(path.read_bytes()).hexdigest())
         selected = 1
         enabled = []
         for cmd in peer.rx:
@@ -218,9 +239,44 @@ class ProfiledExampleVirtualUART(unittest.TestCase):
             with patch('examples.iv_sweep.time.sleep'):
                 with self.assertRaises(IVProfileError):
                     run_profile(dev,plan,output_dir=Path(td)/'result',approve=refusal)
+            self.assertFalse((Path(td)/'result'/'completed.json').exists())
         self.assertEqual(len(gates),3)
         self.assertEqual(peer.rx.count('CHAN:OUTP 1'),1)
         self.assertFalse(any(peer.off_by_channel.values()))
+
+    def test_preexisting_other_channel_on_refuses_before_first_enable(self):
+        plan = self.load(channel(2, force=True))
+        dev, peer = self.device()
+        peer.off_by_channel[1] = 1
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(IVProfileError, 'confirmed OFF readback'):
+                run_profile(dev, plan, output_dir=Path(td)/'result',
+                            approve=lambda _: self.fail('No operator gate before digital OFF'))
+            self.assertFalse((Path(td)/'result'/'completed.json').exists())
+        self.assertNotIn('CHAN:OUTP 1', peer.rx)
+
+    def test_unconfirmed_final_digital_off_is_not_success(self):
+        plan = self.load(channel(2,force=True), channel(3,force=True))
+        dev, peer = self.device()
+        gates = []
+        original_states = dev.output_states
+        count = [0]
+        def bad_post_sweep():
+            count[0] += 1
+            # Calls: before wiring, after apply, after sweep; refuse 3rd.
+            if count[0] == 3:
+                return {1:False, 2:True, 3:False}
+            return original_states()
+        with tempfile.TemporaryDirectory() as td:
+            with patch.object(dev, 'output_states', side_effect=bad_post_sweep), \
+                 patch('examples.iv_sweep.time.sleep'):
+                with self.assertRaisesRegex(IVProfileError, 'confirmed OFF readback'):
+                    run_profile(dev, plan, output_dir=Path(td)/'result',
+                                approve=gates.append)
+            self.assertFalse((Path(td)/'result'/'completed.json').exists())
+        self.assertEqual(peer.rx.count('CHAN:OUTP 1'), 1)
+        self.assertFalse(any(peer.off_by_channel.values()))
+        self.assertEqual(len(gates), 2)
 
     def test_no_output_dir_overwrite_before_scpi(self):
         plan = self.load(channel(1,force=True))

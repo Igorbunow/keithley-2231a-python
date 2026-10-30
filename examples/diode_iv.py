@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -42,6 +43,16 @@ def _meter_wrapper(plan: ChannelPlan, callback):
     return observer
 
 
+def _require_all_off(device: Keithley2231A, *, channel: int, phase: str) -> None:
+    """Check real per-channel OFF readbacks; never infer them from an OFF write."""
+    states = device.output_states()
+    if states != {1: False, 2: False, 3: False}:
+        raise IVProfileError(
+            f'CH{channel} {phase}: every channel must have a confirmed OFF readback; '
+            f'got {states!r}; operator must verify physical OFF'
+        )
+
+
 def run_profile(device: Keithley2231A, plan: IVPlan, *, output_dir: Path,
                 approve: Callable[[str], None],
                 external_observers: Mapping[int, Callable] | None = None) -> list[Path]:
@@ -64,10 +75,14 @@ def run_profile(device: Keithley2231A, plan: IVPlan, *, output_dir: Path,
     _device_profile(plan)
     output_dir.mkdir(parents=True, exist_ok=False)
     produced = []
+    verified = []
     for cp in plan.channels:
         ch = cp.channel
+        # This readback cannot verify physical wiring, which is an operator gate.
+        _require_all_off(device, channel=ch, phase='before wiring check')
         approve(f'CONFIRM IV CH{ch} PSU_ALL_OFF BALLAST_DIODE_POLARITY_WIRING_CHECKED')
         device.apply_profile(_device_profile(plan), confirmed_wiring='independent')
+        _require_all_off(device, channel=ch, phase='after profile application')
         approve(f'CONFIRM IV CH{ch} ENABLE_ONLY_SELECTED_CHANNEL')
         observer = (_meter_wrapper(cp, external_observers[ch])
                     if cp.selected_source == 'EXTERNAL_REQUIRED' else None)
@@ -76,7 +91,8 @@ def run_profile(device: Keithley2231A, plan: IVPlan, *, output_dir: Path,
                                settle_s=plan.settle_s, observer=observer, stop_on_cc=True)
         if len(points) != len(cp.voltages) or any(p.regulation != 'CV' for p in points):
             raise IVProfileError('Sweep stopped early or left CV; no successful curve export')
-        # No inferred power-OFF state: operator independently checks physical OFF.
+        # emergency_off() has already run. Verify all three channels independently.
+        _require_all_off(device, channel=ch, phase='after sweep')
         approve(f'CONFIRM IV CH{ch} CH1_CH2_CH3_PHYSICALLY_OFF')
         file = output_dir / f'channel_{ch}.csv'
         with file.open('x', newline='', encoding='utf-8') as fh:
@@ -92,6 +108,33 @@ def run_profile(device: Keithley2231A, plan: IVPlan, *, output_dir: Path,
                                  i, point.measured_a, point.measured_v - i*cp.ballast_ohm,
                                  point.regulation, cp.selected_source, False, cp.force))
         produced.append(file)
+        verified.append({
+            'channel': ch,
+            'point_count': len(points),
+            'csv': file.name,
+            'csv_sha256': hashlib.sha256(file.read_bytes()).hexdigest(),
+            'current_source': cp.selected_source,
+            'force': cp.force,
+            'digital_off_confirmed': True,
+            'physical_off_operator_confirmed': True,
+            'current_accuracy_qualified': False,
+        })
+    # Presence of this sentinel means ALL requested channels finished. Earlier CSV
+    # files without it are only partial results and are NOT successful sessions.
+    with (output_dir / 'completed.json').open('x', encoding='utf-8') as fh:
+        json.dump({
+            'schema': 1,
+            'status': 'EXAMPLE_COMPLETED_NOT_INDEPENDENT_HW_QUALIFICATION',
+            'profile_name': plan.name,
+            'profile_description_sha256': hashlib.sha256(json.dumps(
+                describe(plan), ensure_ascii=False, sort_keys=True,
+                separators=(',', ':')).encode('utf-8')).hexdigest(),
+            'channels': verified,
+            'accuracy_qualified': False,
+            'independent_scpi_audit_available': False,
+            'source': 'HOST_TIMED_PSU_EXAMPLE',
+        }, fh, ensure_ascii=False, indent=2)
+        fh.write('\n')
     return produced
 
 

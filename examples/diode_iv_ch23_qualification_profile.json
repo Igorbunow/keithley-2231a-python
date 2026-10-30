@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "name": "1n4933-ch2-ch3-bounded-hw-candidate",
+  "settle_s": 0.5,
+  "channels": [
+    {
+      "channel": 2,
+      "points_v": [0.80, 0.90, 0.80],
+      "current_limit_a": 0.02,
+      "ballast_ohm": 99.86,
+      "ballast_rating_w": 0.25,
+      "max_current_error_ma": 0.10,
+      "current_source": "auto",
+      "force": true
+    },
+    {
+      "channel": 3,
+      "range_v": {"start_v": 0.80, "stop_v": 0.90, "step_v": 0.10},
+      "current_limit_a": 0.02,
+      "ballast_ohm": 99.86,
+      "ballast_rating_w": 0.25,
+      "max_current_error_ma": 0.10,
+      "current_source": "auto",
+      "force": true
+    }
+  ]
+}
