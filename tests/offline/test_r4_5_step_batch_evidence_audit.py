@@ -26,7 +26,7 @@ class BatchEvidenceAudit(unittest.TestCase):
     def setUpClass(cls):
         peer=UARTPeer(profile_registers=True)
         try:
-            wire=open_test_transport(peer,timeout=.12)
+            wire=open_test_transport(peer,timeout=.75)
             cls.evidence=Evidence()
             cls.evidence.add('start',phase='STEP_BATCH_OFF',matrix='current',
                 planned_cases=9,config_sha256='a'*64,

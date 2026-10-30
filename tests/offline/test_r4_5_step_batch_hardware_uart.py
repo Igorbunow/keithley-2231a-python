@@ -13,6 +13,10 @@ from keithley2231a import SafetyError
 from support.virtual_uart import UARTPeer, open_test_transport
 
 ROOT = Path(__file__).resolve().parents[2]
+# Allow the PTY peer thread to run when the full suite is under CPU load.
+# This is a response deadline for the OFF-only virtual fixture, not a
+# relaxation of readback, physical-gate, or fail-stop assertions.
+BATCH_PTY_TIMEOUT_S = 0.75
 sys.path.insert(0, str(ROOT / 'tests/hardware'))
 from r4_5_step_batch_stage import (BatchStepScope, cases, matrix_token,
                                    run_step_batch)
@@ -30,7 +34,7 @@ class BatchStepUART(unittest.TestCase):
                 final_gate=None, **kwargs):
         peer = UARTPeer(profile_registers=True, **kwargs)
         self.addCleanup(peer.close)
-        wire = open_test_transport(peer, timeout=.12)
+        wire = open_test_transport(peer, timeout=BATCH_PTY_TIMEOUT_S)
         evidence = Evidence()
         with contextlib.redirect_stdout(io.StringIO()):
             status = run_step_batch(wire, evidence, matrix=matrix,
@@ -115,12 +119,16 @@ class BatchStepUART(unittest.TestCase):
         state, peer, ev = self.execute('current', final_gate=refuse)
         self.assertEqual(state, 'ABORTED')
         self.assertFalse(ev.events[-1]['physical_off_confirmed'])
-        self.assertTrue(ev.events[-1]['digital_off_confirmed'])
+        # The final operator denial is injected only after verified digital OFF.
+        # Keep the assertion strict; include the stage error on sporadic failures.
+        self.assertEqual(ev.events[-1]['completed_cases'], len(cases('current')),
+                         ev.events[-1])
+        self.assertTrue(ev.events[-1]['digital_off_confirmed'], ev.events[-1])
 
     def test_scope_never_accepts_power_or_trigger(self):
         peer = UARTPeer(profile_registers=True)
         self.addCleanup(peer.close)
-        wire = open_test_transport(peer, timeout=.12)
+        wire = open_test_transport(peer, timeout=BATCH_PTY_TIMEOUT_S)
         self.addCleanup(wire.close)
         scope = BatchStepScope(wire, Evidence(), matrix='current')
         scope.profile_authorized = True
@@ -134,7 +142,7 @@ class BatchStepUART(unittest.TestCase):
     def test_case_transition_requires_completion_and_order(self):
         peer = UARTPeer(profile_registers=True)
         self.addCleanup(peer.close)
-        wire = open_test_transport(peer, timeout=.12)
+        wire = open_test_transport(peer, timeout=BATCH_PTY_TIMEOUT_S)
         self.addCleanup(wire.close)
         scope = BatchStepScope(wire, Evidence(), matrix='current')
         with self.assertRaises(SafetyError): scope.begin_case(1, 'current', .005)
