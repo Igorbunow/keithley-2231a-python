@@ -246,9 +246,10 @@ class Keithley2231A:
                 allowed = (command in ('SYST:REM', 'SYST:LOC', 'OUTP 0', 'CHAN:OUTP 0')
                            or re.fullmatch(r'INST:NSEL [123]', command)
                            or (command == self._source_mutation_command
+                               and window['enables'] == 1
+                               and 1 <= window['moves'] <= len(window['directions'])
                                and command == (('VOLT' if window['kind'] == 'voltage' else 'CURR')
-                                               + ':' + window['direction'].upper())
-                               and window['moves'] == 1 and window['enables'] == 1))
+                                               + ':' + window['directions'][window['moves'] - 1].upper())))
                 one_enable = (command == 'CHAN:OUTP 1' and self._selected_channel == 1
                               and window['enables'] == 0 and window['moves'] == 0)
                 if not (allowed or one_enable):
@@ -1680,11 +1681,13 @@ class Keithley2231A:
     def powered_step_qualification(self, ch: int, kind: str, increment: float,
                                    direction: str, *, expected_mode: str,
                                    max_power_w: float = .60,
-                                   external_load_confirmed: bool = False):
+                                   external_load_confirmed: bool = False,
+                                   sequence: tuple[str, ...] | None = None):
         """Internal qualification window, not a general-purpose powered API.
 
         Narrowly permits one CH1 enable and one CV-voltage or CC-current
-        mutation. An operator-approved external-load stage must also validate
+        mutation by default. Qualification-only sequence UP UP DOWN DOWN is
+        separately bounded and never enabled for ordinary driver callers. An operator-approved external-load stage must also validate
         KEL103 and DMM7510. All PSU outputs are switched OFF on context exit
         when transport permits; this is not an independent safety interlock.
         The caller must never suppress uncertain-link/physical-OFF warnings.
@@ -1692,6 +1695,14 @@ class Keithley2231A:
         self._source_step_tokens(ch, kind, increment)
         if type(direction) is not str or direction not in ('up', 'down'):
             raise ValueError('direction must be up or down')
+        if sequence is None:
+            approved_directions = (direction,)
+        elif (type(sequence) is tuple and sequence == ('up', 'up', 'down', 'down')
+              and direction == 'up'):
+            # Qualification-only bounded hysteresis trial. Not arbitrary scripting.
+            approved_directions = sequence
+        else:
+            raise SafetyError('Powered STEP sequence restricted to UP UP DOWN DOWN')
         if (ch != 1 or expected_mode not in ('CV', 'CC') or
                 (kind, expected_mode) not in (('voltage', 'CV'), ('current', 'CC'))):
             raise SafetyError('Powered qualification restricted to CH1 voltage/CV or current/CC')
@@ -1712,6 +1723,7 @@ class Keithley2231A:
             self.verify_profile()
             self.configure_source_step(ch, kind, increment)
             self._powered_step_window = dict(channel=ch, kind=kind, direction=direction,
+                                             directions=approved_directions,
                                              expected_mode=expected_mode,
                                              max_power_w=float(max_power_w),
                                              enables=0, moves=0)
@@ -1728,7 +1740,8 @@ class Keithley2231A:
         """Move one OFF-channel digital preset by one preconfigured increment.
 
         Normally OFF-only. The R4.5-E qualification context is the sole,
-        narrowly bounded exception for one CH1 direction after explicit
+        narrowly bounded exception for an explicitly pre-approved CH1 direction
+        (or a fixed four-move sequence) after explicit
         external-load approval; ordinary callers cannot enable STEP outputs.
         Each command checks profile, selected channel and step-register integrity.
         Decimal-millistep arithmetic avoids float drift; readback
@@ -1744,11 +1757,15 @@ class Keithley2231A:
             if window is None:
                 self._require_step_off()
             else:
-                if (ch != 1 or kind != window['kind'] or direction != window['direction']
-                        or window['enables'] != 1 or window['moves'] != 0):
-                    raise SafetyError('Powered STEP permits exactly one approved CH1 direction')
-                # A failed preflight consumes the one-shot permit; no retry.
-                window['moves'] = 1
+                move_index = window['moves']
+                if (ch != 1 or kind != window['kind']
+                        or window['enables'] != 1
+                        or move_index >= len(window['directions'])
+                        or direction != window['directions'][move_index]):
+                    raise SafetyError('Powered STEP direction/count outside approved sequence')
+                # Consume this specific permit BEFORE any UART/preflight I/O.
+                # No automatic retry after a rejected/uncertain mutation.
+                window['moves'] = move_index + 1
                 states = self._output_states()
                 if states != {1: True, 2: False, 3: False}:
                     raise SafetyError('Powered STEP requires CH1 ON only')

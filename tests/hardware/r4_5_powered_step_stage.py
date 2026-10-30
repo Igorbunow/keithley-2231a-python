@@ -39,7 +39,8 @@ class R45EPoweredScope(R44ScalarScope):
     """R4.4-C approved operations + one tightly scoped source mutation."""
     READS = R44ScalarScope.READS | {'VOLT:STEP?', 'CURR:STEP?'}
     WRITES = R44ScalarScope.WRITES | {
-        'VOLT:STEP 0.010', 'VOLT:UP', 'CURR:STEP 0.005', 'CURR:UP'}
+        'VOLT:STEP 0.010', 'VOLT:UP', 'VOLT:DOWN',
+        'CURR:STEP 0.005', 'CURR:UP', 'CURR:DOWN'}
     MAX_COMMANDS = 1800
     MAX_SECONDS = 300
 
@@ -50,14 +51,17 @@ class R45EPoweredScope(R44ScalarScope):
         self.step_window_authorized = False
         self.step_writes = 0
         self.moves = 0
+        self.move_directions = ('up',)  # legacy one-shot must remain one-shot
 
     def _validate(self, command, query):
-        if not query and command in ('VOLT:STEP 0.010', 'VOLT:UP',
-                                    'CURR:STEP 0.005', 'CURR:UP'):
+        if not query and command in ('VOLT:STEP 0.010', 'VOLT:UP', 'VOLT:DOWN',
+                                    'CURR:STEP 0.005', 'CURR:UP', 'CURR:DOWN'):
             p = POINTS[self.mode]
             step_cmd = ('VOLT:STEP 0.010' if self.mode == 'cv'
                         else 'CURR:STEP 0.005')
-            move_cmd = 'VOLT:UP' if self.mode == 'cv' else 'CURR:UP'
+            prefix = 'VOLT' if self.mode == 'cv' else 'CURR'
+            move_cmd = (f'{prefix}:{self.move_directions[self.moves].upper()}'
+                        if self.moves < len(self.move_directions) else None)
             if (not self.step_window_authorized or self.cleanup or self.selected != 1
                     or command not in (step_cmd, move_cmd)):
                 raise SafetyError('Powered STEP outside mode-specific approval')
@@ -66,8 +70,9 @@ class R45EPoweredScope(R44ScalarScope):
                     raise SafetyError('Powered STEP setting may be written only once')
                 self.step_writes += 1
             else:
-                if not self.step_writes or self.moves or not self.power_on_commands:
-                    raise SafetyError('Powered STEP UP requires configured step and CH1 ON')
+                if (not self.step_writes or self.moves >= len(self.move_directions)
+                        or not self.power_on_commands):
+                    raise SafetyError('Powered STEP move outside approved sequence')
                 self.moves += 1
             return
         if query and command in ('VOLT:STEP?', 'CURR:STEP?'):
@@ -96,7 +101,7 @@ def finite(value, title, maximum):
     return result
 
 
-def snapshot(dev, load, meter, evidence, *, mode, label):
+def snapshot(dev, load, meter, evidence, *, mode, label, offset_steps=None):
     """Chronologically record 3 distinct instruments; no synthetic simultaneity."""
     p = POINTS[mode]
     if load.input_state() != 'ON' or load.query(':FUNC?').strip().upper() != 'CR':
@@ -126,12 +131,16 @@ def snapshot(dev, load, meter, evidence, *, mode, label):
     if (abs(pu-du) > .08 or abs(ku-du) > .08 or abs(pu-ku) > .10
             or abs(pi-ki) > .030 or abs(kp-ku*ki) > .045):
         raise SafetyError('PSU/KEL/DMM independent live readings disagree')
+    if offset_steps is None:
+        offset_steps = 1 if label == 'after' else 0
+    if type(offset_steps) is not int or not 0 <= offset_steps <= 2:
+        raise SafetyError('Invalid powered STEP snapshot offset')
     if p['mode'] == 'CV':
-        expected_voltage = p['voltage'] + (p['step'] if label == 'after' else 0.)
+        expected_voltage = p['voltage'] + offset_steps * p['step']
         if abs(du - expected_voltage) > .040:
             raise SafetyError('CV external voltage disagrees with commanded absolute setpoint')
     else:
-        expected_current = p['limit'] + (p['step'] if label == 'after' else 0.)
+        expected_current = p['limit'] + offset_steps * p['step']
         if abs(ki - expected_current) > .012:
             raise SafetyError('CC external current disagrees with commanded absolute current limit')
         if abs(du - p['cr'] * expected_current) > .200:
@@ -140,7 +149,8 @@ def snapshot(dev, load, meter, evidence, *, mode, label):
     times['power_s'] = time.monotonic()
     if abs(mp-pu*pi) > .08 or abs(mp-kp) > .08:
         raise SafetyError('PSU MEAS:POW disagrees with live external instruments')
-    result = dict(label=label, mode=p['mode'], psu_v=pu, psu_a=pi, psu_derived_w=pu*pi,
+    result = dict(label=label, mode=p['mode'], offset_steps=offset_steps,
+                  psu_v=pu, psu_a=pi, psu_derived_w=pu*pi,
                   psu_meas_w=mp, kel_v=ku, kel_a=ki, kel_w=kp, dmm_v=du,
                   timestamps_monotonic_s=times,
                   note='Sequential PSU/KEL/DMM observations; not synchronized')
