@@ -1032,3 +1032,9 @@ a released/general powered STEP API, and no physical loaded STEP has yet been
 qualified. Ordinary STEP methods remain OFF-only outside this context.
 See `docs/R4_5_E_POWERED_STEP_ENTRY.ru.md`; do not run the context directly
 on physical equipment before an independently reviewed powered runner exists.
+
+R4.5-E-B adds an **operator-gated, dry-run-by-default** low-power STEP
+qualification runner (`tools/r4_5_powered_step_qualify.py`). It uses existing
+KEL103/DMM7510 test adapters and the production one-shot safety window.
+It is not a general powered STEP permission or a completed hardware test.
+See `docs/R4_5_E_POWERED_STEP_ENTRY.ru.md` before connecting instruments.

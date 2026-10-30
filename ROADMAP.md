@@ -477,3 +477,13 @@ R4.5-D: третий аппаратный OFF-only случай CH1 CURR STEP `0
   STEP was run. A separately reviewed R4.5-E powered stage is required.
 - `R4.5-D` current digital OFF-only 9/9 is HW REVIEWED PASS; R4.5-E and
   R4.5-F analog experiments remain NOT_RUN / NOT EXPERIMENT READY.
+
+### R4.5-E-B: one-point powered STEP hardware gate (prepared)
+
+- Separate CH1-only CV (10 mV) / CC (5 mA) operator-gated sessions using
+  production guarded STEP, existing KEL103 and DMM7510 adapters.
+- Mandatory pre/post **independent analog** readings, commanded absolute
+  setpoint, physical delta, PSU MEAS:POW and power/current/voltage caps.
+- UART/negative tests before any physical run; after software qualification,
+  CV is the first distinct hardware review, CC is a later separately gated run.
+- Hardware status: NOT_RUN until original evidence independently reviewed.
