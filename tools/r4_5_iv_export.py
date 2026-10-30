@@ -221,13 +221,22 @@ def csv_text(rows, fields):
 
 
 def export_directory(destination: Path, points, segments, summary):
-    require(not destination.exists() and not destination.is_symlink(),
-            'Output directory already exists; no overwrite allowed')
     outputs = {
         'points.csv': csv_text(points,COLUMNS),
         'segments.csv': csv_text(segments,SEGMENT_COLUMNS),
         'summary.json': json.dumps(summary,ensure_ascii=False,indent=2,allow_nan=False)+'\n',
     }
+    export_files(destination, outputs)
+
+
+def export_files(destination: Path, outputs: dict[str, str]) -> None:
+    """Shared offline-only, exclusive directory output for audited I-V exports."""
+    require(not destination.exists() and not destination.is_symlink(),
+            'Output directory already exists; no overwrite allowed')
+    require(bool(outputs) and all(
+        isinstance(name, str) and name in ('points.csv', 'segments.csv', 'summary.json', 'iv_forward.svg')
+        and isinstance(contents, str) for name, contents in outputs.items()),
+        'Unsafe or unexpected output file')
     destination.mkdir(mode=0o700,parents=False,exist_ok=False)
     try:
         for name, contents in outputs.items():
