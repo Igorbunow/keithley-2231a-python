@@ -487,3 +487,10 @@ R4.5-D: третий аппаратный OFF-only случай CH1 CURR STEP `0
 - UART/negative tests before any physical run; after software qualification,
   CV is the first distinct hardware review, CC is a later separately gated run.
 - Hardware status: NOT_RUN until original evidence independently reviewed.
+
+R4.5-E-B powered qualification: the first real **CH1 CV 10mV** low-power
+point is HW REVIEWED PASS (2026-10-30, KEL103 CR40Ω, DMM7510
++10.626mV). Independent auditor and raw evidence SHA are in
+`docs/reviews/R4_5_E_B_CH1_CV_10MV_POWERED_HW_REVIEW_2026-10-30.md`.
+**CH1 CC 5mA** is the next separately operator-gated run, NOT_RUN as of this
+review; analog dynamics and broader functionality remain open.

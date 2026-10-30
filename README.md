@@ -1038,3 +1038,10 @@ qualification runner (`tools/r4_5_powered_step_qualify.py`). It uses existing
 KEL103/DMM7510 test adapters and the production one-shot safety window.
 It is not a general powered STEP permission or a completed hardware test.
 See `docs/R4_5_E_POWERED_STEP_ENTRY.ru.md` before connecting instruments.
+
+R4.5-E-B: first real low-power CH1 CV powered STEP has **HW REVIEWED PASS**
+for one steady-state +10mV point with KEL103 and independent DMM7510
+(DMM delta +10.626mV); see
+`docs/reviews/R4_5_E_B_CH1_CV_10MV_POWERED_HW_REVIEW_2026-10-30.md`.
+Powered CC +5mA remains HW NOT_RUN; do not interpret this as transient
+accuracy or full IV-curve qualification.
