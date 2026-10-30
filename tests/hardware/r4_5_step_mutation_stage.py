@@ -21,7 +21,7 @@ PROFILE_TOKEN = ('CONFIRM R45STEPMUT APPLY_OFF_PROFILE CH1_V3.30_I0.100 '
                  'CH2_CH3_V1.00_I0.050 ALL_OUTPUTS_OFF NO_WIRES')
 FINAL_TOKEN = 'CONFIRM R45STEPMUT CH1=OFF CH2=OFF CH3=OFF'
 DIRECTIONS = ('up', 'up', 'down', 'down')
-VOLTAGE_STEPS = (.001, .005, .010, .050, .100)
+VOLTAGE_STEPS = (.010, .050, .100)
 CURRENT_STEPS = (.001, .005, .010)
 
 
@@ -115,6 +115,7 @@ def run_step_mutation(transport, evidence, *, channel, kind, increment,
     started_profile = False
     off_confirmed = False
     outcome, reason = 'ABORTED', 'case incomplete'
+    physical_off_confirmed = False
     values = {'channel': channel, 'kind': kind, 'increment': increment,
               'direction_plan': list(DIRECTIONS), 'analog_measurement': 'NOT_RUN'}
     try:
@@ -172,6 +173,7 @@ def run_step_mutation(transport, evidence, *, channel, kind, increment,
             separators=(',', ':')).encode('ascii')).hexdigest()
         evidence.add('results', values=values, results_sha256=digest)
         final_gate(FINAL_TOKEN)
+        physical_off_confirmed = True
         evidence.add('operator_confirmation', gate='FINAL')
         if evidence.lost:
             raise SafetyError('Incomplete evidence')
@@ -197,6 +199,7 @@ def run_step_mutation(transport, evidence, *, channel, kind, increment,
         if outcome != 'PASS' and final_gate is not None:
             try:
                 final_gate(FINAL_TOKEN)
+                physical_off_confirmed = True
                 evidence.add('operator_confirmation', gate='FINAL_AFTER_ABORT')
             except BaseException as exc:
                 reason += f'; physical OFF not confirmed: {type(exc).__name__}'
@@ -212,7 +215,7 @@ def run_step_mutation(transport, evidence, *, channel, kind, increment,
                          phase='STEP_MUTATION_OFF', channel=channel, kind=kind,
                          increment=increment, link_known=io.live if io else False,
                          digital_off_confirmed=off_confirmed,
-                         physical_off_confirmed=outcome == 'PASS',
+                         physical_off_confirmed=physical_off_confirmed,
                          note='OFF-only register behavior; not powered/analog')
         except BaseException:
             outcome = 'ABORTED'

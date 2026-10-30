@@ -31,9 +31,9 @@ class StepControlsUART(unittest.TestCase):
 
     def test_voltage_set_step_and_up_down_single_channel(self):
         dev, peer = self.setup_device()
-        self.assertAlmostEqual(dev.configure_source_step(1, 'voltage', .001), .001)
-        self.assertEqual(peer.rx.count('VOLT:STEP 0.001'), 1)
-        self.assertAlmostEqual(dev.step_source(1, 'voltage', 'up'), 1.001)
+        self.assertAlmostEqual(dev.configure_source_step(1, 'voltage', .010), .010)
+        self.assertEqual(peer.rx.count('VOLT:STEP 0.010'), 1)
+        self.assertAlmostEqual(dev.step_source(1, 'voltage', 'up'), 1.010)
         self.assertAlmostEqual(dev.step_source(1, 'voltage', 'down'), 1.0)
         self.assertEqual(dev._expected_setpoints[1], (1., .1))
         self.assertEqual(peer.rx.count('VOLT:UP'), 1)
@@ -60,7 +60,7 @@ class StepControlsUART(unittest.TestCase):
         self.wire(peer)
 
     def test_steps_with_multiple_precisions_and_irregular_directions(self):
-        for increment in (.001, .010, .050, .100):
+        for increment in (.010, .050, .100):
             with self.subTest(increment=increment):
                 dev, peer = self.setup_device()
                 self.assertAlmostEqual(dev.configure_source_step(2, 'voltage', increment), increment)
@@ -77,13 +77,23 @@ class StepControlsUART(unittest.TestCase):
             with self.assertRaises(ValueError): dev.configure_source_step(invalid, 'voltage', .01)
         for kind in ('voltage;OUTP 1', None, 'Voltage', True, 'CURR'):
             with self.assertRaises(ValueError): dev.configure_source_step(1, kind, .01)
-        for invalid in (None, False, float('nan'), float('inf'), -.01, 0, .0005, .0015, .501):
+        for invalid in (None, False, float('nan'), float('inf'), -.01, 0, .0005, .001, .005, .011, .015, .0015, .501):
             with self.assertRaises((ValueError, TypeError)): dev.configure_source_step(1, 'voltage', invalid)
         for invalid in (True, 0, .0004, .101, .0085):
             with self.assertRaises((ValueError, TypeError)): dev.configure_source_step(1, 'current', invalid)
         for bad in ('UP', 'down;OUTP 1', True, 1, None):
             with self.assertRaises(ValueError): dev.step_source(1, 'voltage', bad)
         self.assertEqual(initial, peer.rx)
+        self.wire(peer)
+
+    def test_voltage_step_sub_10mv_rejected_before_any_scpi(self):
+        dev, peer = self.setup_device()
+        before = list(peer.rx)
+        for step in (.001, .005, .009, .011, .015, .099):
+            with self.subTest(step=step), self.assertRaises(LimitsError):
+                dev.configure_source_step(1, 'voltage', step)
+        self.assertEqual(peer.rx, before)
+        self.assertFalse(dev.faulted)
         self.wire(peer)
 
     def test_initial_profile_and_one_unconfigured_step_rejected(self):
@@ -124,10 +134,10 @@ class StepControlsUART(unittest.TestCase):
 
     def test_ignoring_step_registration_readback_aborts_and_no_up(self):
         dev, peer = self.setup_device(ignore_step_write=True)
-        with self.assertRaises(SafetyError): dev.configure_source_step(1, 'voltage', .005)
+        with self.assertRaises(SafetyError): dev.configure_source_step(1, 'voltage', .050)
         self.assertTrue(dev.faulted)
         self.assertNotIn('VOLT:UP', peer.rx)
-        self.assertEqual(peer.rx.count('VOLT:STEP 0.005'), 1)
+        self.assertEqual(peer.rx.count('VOLT:STEP 0.050'), 1)
         self.wire(peer)
 
     def test_ignoring_up_command_aborts_with_safe_shutdown(self):
@@ -167,9 +177,9 @@ class StepControlsUART(unittest.TestCase):
         self.assertNotIn('VOLT:UP', peer.rx)
         self.wire(peer)
 
-    def test_hidden_1mv_setpoint_drift_detected_by_verify_profile(self):
+    def test_hidden_1mv_external_setpoint_drift_detected_by_verify_profile(self):
         dev, peer = self.setup_device()
-        dev.configure_source_step(1, 'voltage', .001)
+        dev.configure_source_step(1, 'voltage', .010)
         peer.channel_registers[1]['VOLT'] = '1.001'
         with self.assertRaises(SafetyError): dev.verify_profile()
         self.assertTrue(dev.faulted)
@@ -214,8 +224,8 @@ class StepControlsUART(unittest.TestCase):
 
     def test_voltage_config_register_change_other_channel_isolated(self):
         dev, peer = self.setup_device()
-        dev.configure_source_step(1, 'voltage', .005)
-        self.assertEqual(peer.channel_registers[1]['VOLT:STEP'], '0.005')
+        dev.configure_source_step(1, 'voltage', .050)
+        self.assertEqual(peer.channel_registers[1]['VOLT:STEP'], '0.050')
         self.assertEqual(peer.channel_registers[2]['VOLT:STEP'], '0.010')
         self.assertEqual(peer.channel_registers[3]['VOLT:STEP'], '0.010')
         self.wire(peer)
@@ -260,7 +270,7 @@ class StepControlsUART(unittest.TestCase):
 
     def test_profile_reapply_invalidates_authorized_steps(self):
         dev, peer = self.setup_device()
-        dev.configure_source_step(1, 'voltage', .005)
+        dev.configure_source_step(1, 'voltage', .050)
         dev.emergency_off()
         dev.apply_profile(profile(), confirmed_wiring='independent')
         self.assertEqual(dev._configured_source_steps, {})

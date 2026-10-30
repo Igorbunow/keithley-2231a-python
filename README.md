@@ -991,3 +991,11 @@ leaving safe room for both UP actions. `VOLT?` must confirm even 1mV changes;
 firmware rounding or unsupported commands **ABORT**, never widen tolerances.
 See `docs/R4_5_D_STEP_MUTATION_OFF_PLAN.ru.md` for the 24-case matrix and
 operator checks. **SIM TESTED; HW NOT_RUN; not EXPERIMENT READY.**
+
+### R4.5-D voltage STEP refusal (2026-10-30)
+
+CH1 `VOLT:STEP 0.010` digital OFF-only HW REVIEWED PASS;
+`VOLT:STEP 0.001` returned SCPI 120 (Parameter overflowed), aborted safely.
+Voltage STEP writes now require 10 mV grid (datasheet setting resolution),
+current STEP writes 1 mA grid; no powered STEP or CV/CC readiness is claimed.
+See `docs/reviews/R4_5_D_CH1_VOLT_1MV_REJECTION_2026-10-30.md`.

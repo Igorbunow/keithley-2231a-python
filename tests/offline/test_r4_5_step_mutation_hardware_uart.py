@@ -42,18 +42,18 @@ class StepMutationUART(unittest.TestCase):
                 final_gate=final_gate if final_gate is not None else lambda token: None)
         return status, peer, ev
 
-    def test_voltage_one_millivolt_off_ch1(self):
-        state, peer, ev = self.execute(1, 'voltage', .001)
+    def test_voltage_ten_millivolt_off_ch1(self):
+        state, peer, ev = self.execute(1, 'voltage', .010)
         self.assertEqual(state, 'PASS', ev.events[-1])
         self.assertTrue(peer.await_command('SYST:LOC'))
         self.assertEqual(peer.rx[-1], 'SYST:LOC')
-        self.assertEqual(peer.rx.count('VOLT:STEP 0.001'), 1)
+        self.assertEqual(peer.rx.count('VOLT:STEP 0.010'), 1)
         self.assertEqual(peer.rx.count('VOLT:UP'), 2)
         self.assertEqual(peer.rx.count('VOLT:DOWN'), 2)
         self.assertFalse({'OUTP 1', 'CHAN:OUTP 1', '*TRG', '*RST', '*CLS'} & set(peer.rx))
         vals = next(e['values'] for e in ev.events if e['event'] == 'results')
         self.assertEqual([round(s['setpoint'], 3) for s in vals['steps']],
-                         [3.301, 3.302, 3.301, 3.300])
+                         [3.310, 3.320, 3.310, 3.300])
         self.assertEqual(peer.unsupported, [])
         self.assertEqual(peer.rx_bytes, [(c+'\r\n').encode('ascii') for c in peer.rx])
 
@@ -108,9 +108,9 @@ class StepMutationUART(unittest.TestCase):
                 self.assertNotIn('SYST:LOC', peer.rx)
 
     def test_step_register_write_ignored_aborts_and_cleanup(self):
-        state, peer, ev = self.execute(increment=.005, ignore_step_write=True)
+        state, peer, ev = self.execute(increment=.050, ignore_step_write=True)
         self.assertEqual(state, 'ABORTED')
-        self.assertEqual(peer.rx.count('VOLT:STEP 0.005'), 1)
+        self.assertEqual(peer.rx.count('VOLT:STEP 0.050'), 1)
         self.assertNotIn('VOLT:UP', peer.rx)
         self.assertNotIn('SYST:LOC', peer.rx)
         self.assertIn('OUTP 0', peer.rx)
@@ -142,6 +142,15 @@ class StepMutationUART(unittest.TestCase):
         self.assertEqual(state, 'ABORTED')
         self.assertNotIn('VOLT:UP', peer.rx)
         self.assertNotIn('SYST:LOC', peer.rx)
+
+    def test_final_abort_gate_is_recorded_even_when_run_aborts(self):
+        status, peer, ev = self.execute(fault_after='VOLT:STEP 0.010')
+        self.assertEqual(status, 'ABORTED')
+        # Driver may trip before the stage can itself verify digital OFF.
+        # The independent physical gate must still be reported faithfully.
+        self.assertTrue(ev.events[-1]['physical_off_confirmed'])
+        self.assertTrue(peer.await_command('OUTP 0'))
+        self.assertNotIn('VOLT:UP', peer.rx)
 
     def test_physical_final_gate_refusal_no_pass(self):
         def reject(_): raise PermissionError('operator could not confirm OFF')
@@ -176,7 +185,7 @@ class StepMutationUART(unittest.TestCase):
     def test_invalid_case_rejected_before_hardware(self):
         for channel, kind, increment in ((4,'voltage',.010), (True,'voltage',.010),
                                         (1,'power',.010),(1,'voltage',.500),
-                                        (1,'current',.050),(1,'voltage',None)):
+                                        (1,'current',.050),(1,'voltage',None),(1,'voltage',.001),(1,'voltage',.005)):
             with self.assertRaises(ValueError): validate_case(channel, kind, increment)
         self.assertIn('CH2', case_token(2, 'current', .005))
         self.assertEqual(profile().channels[1].initial_current, .050)

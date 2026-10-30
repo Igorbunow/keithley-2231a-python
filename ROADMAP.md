@@ -427,3 +427,11 @@ write/UP/DOWN/trigger functions or powered modes.
 - **Remaining 23 STEP cases, analog measurement under load, dynamic CV/CC,
   V-I experiments and boundary combinations NOT VERIFIED**. Next case:
   CH1 VOLT 0.001 OFF-only, independent manual execution and evidence review.
+
+### R4.5-D voltage STEP refusal (2026-10-30)
+
+CH1 `VOLT:STEP 0.010` digital OFF-only HW REVIEWED PASS;
+`VOLT:STEP 0.001` returned SCPI 120 (Parameter overflowed), aborted safely.
+Voltage STEP writes now require 10 mV grid (datasheet setting resolution),
+current STEP writes 1 mA grid; no powered STEP or CV/CC readiness is claimed.
+See `docs/reviews/R4_5_D_CH1_VOLT_1MV_REJECTION_2026-10-30.md`.

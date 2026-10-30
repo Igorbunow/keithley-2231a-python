@@ -1582,12 +1582,18 @@ class Keithley2231A:
         command = 'VOLT' if kind == 'voltage' else 'CURR'
         if increment is None:
             return command, None
+        # 2231A-30-3 setting resolution (datasheet): 10 mV / 1 mA.
+        # HW 2026-10-30: VOLT:STEP 0.001 -> SCPI 120 (parameter overflowed).
+        # A STEP? response of 0.001 is NOT evidence it can be written.
+        minimum = .010 if kind == 'voltage' else .001
+        maximum = .500 if kind == 'voltage' else .100
         if (type(increment) not in (float, int) or not math.isfinite(increment)
-                or increment < .001 or increment > (0.50 if kind == 'voltage' else .100)):
-            raise LimitsError('STEP increment outside conservative 0.001..0.50 V / 0.001..0.100 A')
+                or increment < minimum or increment > maximum):
+            raise LimitsError(f'STEP increment outside {minimum:.3f}..{maximum:.3f} for {kind}')
         units = round(increment * 1000)
-        if abs(increment * 1000 - units) > 1e-7:
-            raise LimitsError('STEP increments must be integer multiples of 0.001')
+        quantum = 10 if kind == 'voltage' else 1
+        if abs(increment * 1000 - units) > 1e-7 or units % quantum:
+            raise LimitsError(f'STEP increment must be a multiple of {quantum} m-unit(s)')
         return command, units
 
     def _require_step_off(self):
@@ -1616,7 +1622,8 @@ class Keithley2231A:
     def configure_source_step(self, ch: int, kind: str, increment: float) -> float:
         """Set/read back one bounded STEP register, only with all outputs OFF.
 
-        No assumption is made about physical 1 mV resolution. One readback
+        Voltage STEP writes are restricted to the specified 10 mV setting
+        lattice; current STEP writes to 1 mA. One readback
         matching the requested register establishes a *digital* write only.
         The sole legal mutation is dispatched through the normal guard; a
         diagnostic bypass still cannot send arbitrary STEP/UP/DOWN commands.
@@ -1652,8 +1659,8 @@ class Keithley2231A:
 
         Strictly OFF-only in R4.5-C. Each command is preceded by full profile,
         all-output OFF, channel selection and step-register integrity checks.
-        Decimal-millistep arithmetic avoids float drift; exact 1 mV/1 mA
-        readback must be observed or the session is tripped. Real firmware
+        Decimal-millistep arithmetic avoids float drift; readback
+        precision remains 1 m-unit and writes require 10 mV/1 mA grids or the session is tripped. Real firmware
         semantics and analog effects remain HW NOT_RUN for these mutations.
         """
         command, _ = self._source_step_tokens(ch, kind)
