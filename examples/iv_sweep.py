@@ -30,6 +30,7 @@ def voltage_sweep(device: Keithley2231A, channel: int, voltages: Sequence[float]
                   current_limit_a: float, settle_s: float = 0.3,
                   observer: Callable[[Reading], Mapping[str, float]] | None = None,
                   stop_on_cc: bool = False,
+                  max_powered_s: float | None = None,
                   csv_path: str | Path | None = None) -> list[SweepPoint]:
     """Step voltage, measure after settling, optionally sample external instruments.
 
@@ -48,6 +49,9 @@ def voltage_sweep(device: Keithley2231A, channel: int, voltages: Sequence[float]
     device._check_channel(channel)
     if not voltages:
         raise ValueError('voltages cannot be empty')
+    if max_powered_s is not None and (type(max_powered_s) not in (int, float) or
+            not math.isfinite(max_powered_s) or not 10 <= max_powered_s <= 300):
+        raise ValueError('max_powered_s must be 10..300 seconds')
     if not math.isfinite(settle_s) or settle_s < 0:
         raise ValueError('settle_s must be finite and nonnegative')
     cap = device.profile.channels[channel-1]
@@ -72,11 +76,18 @@ def voltage_sweep(device: Keithley2231A, channel: int, voltages: Sequence[float]
         device.output(channel, False)
         device.set_channel(channel, voltage=float(voltages[0]), current=float(current_limit_a))
         device.output(channel, True)
+        started = time.monotonic()
         for index, voltage in enumerate(voltages):
+            if max_powered_s is not None and time.monotonic()-started >= max_powered_s:
+                raise SafetyError('Host-powered checkpoint exceeded; no hardware watchdog')
             device.set_channel(channel, voltage=float(voltage))
             time.sleep(settle_s)
             sample = device.read_channel(channel)
+            if max_powered_s is not None and time.monotonic()-started >= max_powered_s:
+                raise SafetyError('Host-powered checkpoint exceeded; no hardware watchdog')
             external = dict(observer(sample)) if observer else {}
+            if max_powered_s is not None and time.monotonic()-started >= max_powered_s:
+                raise SafetyError('Host-powered checkpoint exceeded; no hardware watchdog')
             if any(not isinstance(k,str) or not k for k in external):
                 raise ValueError('observer keys must be nonempty strings')
             if any((not isinstance(x, (int,float)) or isinstance(x,bool) or not math.isfinite(x)) for x in external.values()):

@@ -135,8 +135,8 @@ def load_iv_profile(filepath: str | Path) -> IVPlan:
         if not (0 < required <= 1000):
             raise IVProfileError('Current error target must be positive')
         requested = spec['current_source']
-        if requested not in ('auto', 'psu', 'external'):
-            raise IVProfileError('current_source must be auto, psu or external')
+        if requested not in ('auto', 'psu', 'external', 'ballast_dcv'):
+            raise IVProfileError('current_source must be auto, psu, external or ballast_dcv')
         force = spec['force']
         if type(force) is not bool:
             raise IVProfileError('force must be a JSON boolean')
@@ -144,7 +144,16 @@ def load_iv_profile(filepath: str | Path) -> IVPlan:
         # A conservative maximum within the example's ballast/current envelope.
         psu_bound = 10.0 + .002 * min(1000 * limit, 1000 * vmax / r)
         suitable = psu_bound <= required
-        if requested == 'external':
+        if requested == 'ballast_dcv':
+            # Voltage-readback alone contributes this lower uncertainty bound.
+            # Other errors (DMM, resistor, lead drops, timing) remain unqualified.
+            voltage_readback_floor_ma = (0.020 + 0.0006 * vmax) / r * 1000
+            if required < voltage_readback_floor_ma:
+                raise IVProfileError('Requested current error below nominal PSU voltage readback floor')
+            if force:
+                raise IVProfileError('force not permitted with direct diode DCV')
+            selected = 'EXTERNAL_DIODE_DCV_BALLAST'
+        elif requested == 'external':
             if force:
                 raise IVProfileError('force cannot override an explicit external source')
             selected = 'EXTERNAL_REQUIRED'

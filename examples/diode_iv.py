@@ -10,6 +10,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 from typing import Callable, Mapping
@@ -43,6 +44,27 @@ def _meter_wrapper(plan: ChannelPlan, callback):
     return observer
 
 
+def _diode_dcv_wrapper(plan: ChannelPlan, callback):
+    """A DMM voltage across diode, NOT series current or PSU current readback."""
+    def observer(reading):
+        if not reading.enabled or reading.regulation != 'CV':
+            raise IVProfileError('Source left CV or is OFF; no valid diode observation')
+        if not (0 <= reading.voltage_v <= max(plan.voltages) + .06 and
+                0 <= reading.current_a <= plan.current_limit_a + .002):
+            raise IVProfileError('Source channel outside bounded voltage/current envelope')
+        dmm = callback(reading)
+        if type(dmm) is not dict or set(dmm) != {'voltage_v'}:
+            raise IVProfileError('Diode DCV observer must return exactly {voltage_v: float}')
+        v = dmm['voltage_v']
+        if type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= reading.voltage_v:
+            raise IVProfileError('Invalid direct diode DCV, polarity or voltage relationship')
+        i = (reading.voltage_v - v) / plan.ballast_ohm
+        if not 0 <= i <= plan.current_limit_a + .002:
+            raise IVProfileError('Ballast-derived current exceeds fixed envelope')
+        return {'diode_dcv_v': float(v), 'ballast_calculated_current_a': i}
+    return observer
+
+
 def _require_all_off(device: Keithley2231A, *, channel: int, phase: str) -> None:
     """Check real per-channel OFF readbacks; never infer them from an OFF write."""
     states = device.output_states()
@@ -55,7 +77,9 @@ def _require_all_off(device: Keithley2231A, *, channel: int, phase: str) -> None
 
 def run_profile(device: Keithley2231A, plan: IVPlan, *, output_dir: Path,
                 approve: Callable[[str], None],
-                external_observers: Mapping[int, Callable] | None = None) -> list[Path]:
+                external_observers: Mapping[int, Callable] | None = None,
+                diode_voltage_observers: Mapping[int, Callable] | None = None,
+                max_powered_s: float | None = None) -> list[Path]:
     """Execute independent channels sequentially through the existing sweep.
 
     An external observer may be supplied by a separate integration project;
@@ -64,11 +88,15 @@ def run_profile(device: Keithley2231A, plan: IVPlan, *, output_dir: Path,
     """
     from pathlib import Path
     external_observers = external_observers or {}
+    diode_voltage_observers = diode_voltage_observers or {}
     if not isinstance(output_dir, Path) or output_dir.exists():
         raise IVProfileError('Fresh, nonexisting output directory required')
     if any(c.selected_source == 'EXTERNAL_REQUIRED' and
            not callable(external_observers.get(c.channel)) for c in plan.channels):
         raise IVProfileError('External ammeter required: supply approved observer or use force')
+    if any(c.selected_source == 'EXTERNAL_DIODE_DCV_BALLAST' and
+           not callable(diode_voltage_observers.get(c.channel)) for c in plan.channels):
+        raise IVProfileError('Diode DMM DCV observer required for whole selected run')
     if not callable(approve):
         raise IVProfileError('Interactive operator confirmations required')
     # Ensure no output can be energized before whole-profile validation.
@@ -85,10 +113,13 @@ def run_profile(device: Keithley2231A, plan: IVPlan, *, output_dir: Path,
         _require_all_off(device, channel=ch, phase='after profile application')
         approve(f'CONFIRM IV CH{ch} ENABLE_ONLY_SELECTED_CHANNEL')
         observer = (_meter_wrapper(cp, external_observers[ch])
-                    if cp.selected_source == 'EXTERNAL_REQUIRED' else None)
+                    if cp.selected_source == 'EXTERNAL_REQUIRED' else
+                    _diode_dcv_wrapper(cp, diode_voltage_observers[ch])
+                    if cp.selected_source == 'EXTERNAL_DIODE_DCV_BALLAST' else None)
         # voltage_sweep() commands a global emergency_off() on every outcome.
         points = voltage_sweep(device, ch, cp.voltages, current_limit_a=cp.current_limit_a,
-                               settle_s=plan.settle_s, observer=observer, stop_on_cc=True)
+                               settle_s=plan.settle_s, observer=observer, stop_on_cc=True,
+                               max_powered_s=max_powered_s)
         if len(points) != len(cp.voltages) or any(p.regulation != 'CV' for p in points):
             raise IVProfileError('Sweep stopped early or left CV; no successful curve export')
         # emergency_off() has already run. Verify all three channels independently.
@@ -100,13 +131,20 @@ def run_profile(device: Keithley2231A, plan: IVPlan, *, output_dir: Path,
             writer.writerow(('index', 'timestamp_utc', 'requested_psu_v', 'measured_psu_v',
                              'selected_current_a', 'psu_readback_a',
                              'estimated_diode_v', 'regulation', 'source',
-                             'accuracy_qualified', 'forced_low_accuracy'))
+                             'accuracy_qualified', 'forced_low_accuracy',
+                             'measured_diode_dcv_v', 'method', 'precision_note'))
             for point in points:
-                i = (point.external['external_current_a']
-                     if observer else point.measured_a)
+                voltage_method = cp.selected_source == 'EXTERNAL_DIODE_DCV_BALLAST'
+                i = (point.external['ballast_calculated_current_a'] if voltage_method else
+                     point.external['external_current_a'] if observer else point.measured_a)
+                v_diode = (point.external['diode_dcv_v'] if voltage_method else
+                           point.measured_v - i*cp.ballast_ohm)
                 writer.writerow((point.index, point.timestamp_utc, point.requested_v, point.measured_v,
-                                 i, point.measured_a, point.measured_v - i*cp.ballast_ohm,
-                                 point.regulation, cp.selected_source, False, cp.force))
+                                 i, point.measured_a, v_diode,
+                                 point.regulation, cp.selected_source, False, cp.force,
+                                 point.external['diode_dcv_v'] if voltage_method else '',
+                                 'PSU_DCV_MINUS_DMM_DIODE_DCV_OVER_R_SEQUENTIAL' if voltage_method else
+                                 'CURRENT_BASED_ESTIMATE', 'UNQUALIFIED'))
         produced.append(file)
         verified.append({
             'channel': ch,
@@ -118,6 +156,7 @@ def run_profile(device: Keithley2231A, plan: IVPlan, *, output_dir: Path,
             'digital_off_confirmed': True,
             'physical_off_operator_confirmed': True,
             'current_accuracy_qualified': False,
+            'external_voltage_used': cp.selected_source == 'EXTERNAL_DIODE_DCV_BALLAST',
         })
     # Presence of this sentinel means ALL requested channels finished. Earlier CSV
     # files without it are only partial results and are NOT successful sessions.
@@ -163,9 +202,9 @@ def main(argv=None):
         p.error('--port and --output-dir are mandatory for --run')
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         p.error('Interactive local TTY required; unattended runs forbidden')
-    if any(c.selected_source == 'EXTERNAL_REQUIRED' for c in plan.channels):
-        p.error('External DMM required; CLI cannot orchestrate it. Inject a verified '
-                'observer from a separate integration project, or explicitly force PSU screening')
+    if any(c.selected_source in ('EXTERNAL_REQUIRED', 'EXTERNAL_DIODE_DCV_BALLAST') for c in plan.channels):
+        p.error('External meter required: use guarded equipment runner for DCV, or '
+                'inject an observer via run_profile; do not silently use PSU current')
     if args.output_dir.exists():
         p.error('Output directory must not exist; no overwrite allowed')
     try:
