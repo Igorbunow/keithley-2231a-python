@@ -15,7 +15,7 @@ from pathlib import Path
 
 STAGE = 'R45STEPMUT'
 K = {'voltage': 'VOLT', 'current': 'CURR'}
-STEPS = {'voltage': {0.001, 0.005, 0.010, 0.050, 0.100},
+STEPS = {'voltage': {0.010, 0.050, 0.100},
          'current': {0.001, 0.005, 0.010}}
 READS = {'*IDN?', 'SYST:ERR?', 'OUTP:SER?', 'OUTP:PARALLEL?',
          'OUTP:TRAC?', 'INST:NSEL?', 'CHAN:OUTP?', 'VOLT?', 'CURR?',

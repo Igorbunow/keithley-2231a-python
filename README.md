@@ -961,7 +961,7 @@ Both originals are re-auditable offline with
 ### R4.5-C — controlled source STEP API, OFF-only until hardware qualification
 
 `Keithley2231A.configure_source_step(channel, 'voltage'|'current', increment)`
-configures one bounded 1mV/1mA-multiple digital step and verifies it by SCPI
+configures one bounded 10mV voltage / 1mA current digital step and verifies it by SCPI
 readback. `Keithley2231A.step_source(channel, 'voltage'|'current', 'up'|'down')`
 changes a digital preset by a previously validated step. These are guarded
 production-driver operations, **not arbitrary diagnostic writes**. They require
@@ -971,7 +971,7 @@ polls one SCPI error (consuming the queue). A session that configures STEP
 cannot subsequently turn the outputs ON. Apply a clean new profile for ordinary
 power operations; do not treat this as a substitute for physical precautions.
 
-**SIM TESTED / STEP mutations HW NOT_RUN / NOT EXPERIMENT READY.** A virtual
+**SIM TESTED; two bounded OFF-only digital STEP cases HW REVIEWED PASS; NOT EXPERIMENT READY.** A virtual
 UART validates command ordering, digital register bookkeeping and fail-stop,
 not whether the physical PSU changes voltage/current by 1 mV/1 mA. Before
 using STEP for I–V curves, CV/CC control or experiments, complete the bounded
@@ -979,7 +979,7 @@ operator-approved R4.5-D (OFF) and R4.5-E (live CV/CC with external metrology)
 procedures and independently review their JSONL. Functional qualification
 matrix: `docs/R4_5_FUNCTIONAL_QUALIFICATION.ru.md`.
 
-### R4.5-D — OFF-only STEP mutation bench qualification (prepared, NOT_RUN)
+### R4.5-D — OFF-only STEP mutation bench qualification (in progress)
 
 `tools/r4_5_step_mutation_qualify.py` is **DRY RUN** by default. One exact
 channel/kind/increment per operator-approved hardware run, separate BENCH,
@@ -987,10 +987,10 @@ INITIAL, PROFILE, MUTATION, FINAL gates, no output-enable commands, no load.
 The production STEP API performs one step-register write followed by exactly
 UP/UP/DOWN/DOWN, digital readbacks and OFF checks, returning to the initial
 preset. A distinct profile sets CH1 3.30V/.100A and CH2/CH3 1.00V/.050A,
-leaving safe room for both UP actions. `VOLT?` must confirm even 1mV changes;
+leaving safe room for both UP actions. `VOLT?` must confirm the approved 10mV-or-larger changes;
 firmware rounding or unsupported commands **ABORT**, never widen tolerances.
-See `docs/R4_5_D_STEP_MUTATION_OFF_PLAN.ru.md` for the 24-case matrix and
-operator checks. **SIM TESTED; HW NOT_RUN; not EXPERIMENT READY.**
+See `docs/R4_5_D_STEP_MUTATION_OFF_PLAN.ru.md` for the revised 18-case matrix and
+operator checks. **Two OFF-only digital cases reviewed, 16 outstanding; not EXPERIMENT READY.**
 
 ### R4.5-D voltage STEP refusal (2026-10-30)
 
@@ -999,3 +999,15 @@ CH1 `VOLT:STEP 0.010` digital OFF-only HW REVIEWED PASS;
 Voltage STEP writes now require 10 mV grid (datasheet setting resolution),
 current STEP writes 1 mA grid; no powered STEP or CV/CC readiness is claimed.
 See `docs/reviews/R4_5_D_CH1_VOLT_1MV_REJECTION_2026-10-30.md`.
+
+### R4.5-D CH1 current 1mA OFF-only (2026-10-30)
+
+CH1 `CURR:STEP 0.001` was accepted by real firmware 1.04-1.04. Two
+`CURR:UP` and two `CURR:DOWN` commands gave digital `CURR?` readbacks
+0.100→0.101→0.102→0.101→0.100 A. Original JSONL was independently
+audited: 1002 query/reply pairs, 216 writes, 611 zero SCPI error polls,
+78 OFF readbacks, operator physical OFF confirmed. Bounded **HW REVIEWED
+PASS for this CH1 digital OFF-only case**, not a measured 1mA analog change.
+The approved 18-case OFF-only matrix has **2/18** reviewed (the other is
+CH1 voltage 10mV). Next: CH1 current 5mA; loaded CV/CC still NOT_RUN.
+See `docs/reviews/R4_5_D_CH1_CURR_1MA_HW_REVIEW_2026-10-30.md`.

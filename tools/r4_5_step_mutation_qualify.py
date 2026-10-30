@@ -62,7 +62,7 @@ def main(argv=None):
         'Independent topology, Recall OFF, no other owner; no load, DUT, jumpers.',
         'Profile changes OFF presets: CH1 3.30V/.100A; CH2/3 1.00V/.050A.',
         'Only one STEP set and exactly UP/UP/DOWN/DOWN through production driver.',
-        'Every write has SCPI error polling and digital readback; 1mV rounding aborts.',
+        'Every write has SCPI error polling; digital readback tolerance <0.0005 V/A.',
         'Never OUTP 1/CHAN:OUTP 1. No triggers, events, resets, sweep or auto retry.',
         'Unknown UART => no further SCPI; operator must physically verify OFF.',
         'Finish with global OUTP 0, verified three-channel OFF and manual FINAL gate.',

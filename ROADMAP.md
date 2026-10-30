@@ -408,7 +408,7 @@ write/UP/DOWN/trigger functions or powered modes.
   kind, step and direction-scoped SCPI allowlist; no output enable or load.
 - Real digital readbacks required after STEP write and every UP/DOWN;
   bounded shutdown and mandatory physical OFF, fail-closed on uncertain UART.
-- 24 approved CH1/2/3 × VOLT/CURR × increment cases planned, not yet executed;
+- Initially 24 CH1/2/3 × VOLT/CURR × increment cases planned, later reduced to 18 after real 1mV voltage STEP refusal;
   boundary and combined experiments need additional evidence.
 - Virtual UART and independent patch regression only; **HW NOT_RUN**.
   R4.5-E CV/CC analog qualification and R4.5-F I–V sweep remain separate.
@@ -424,7 +424,7 @@ write/UP/DOWN/trigger functions or powered modes.
   exactly four ordered directional commands. Operator final OFF confirmed.
 - Evidence hash and limitations: `docs/reviews/R4_5_D_CH1_VOLT_10MV_HW_REVIEW_2026-10-30.md`.
   Automated replay audit: `tools/audit_r4_5_step_mutation_evidence.py`.
-- **Remaining 23 STEP cases, analog measurement under load, dynamic CV/CC,
+- **Remaining cases in the subsequently revised 18-case matrix, analog measurement under load, dynamic CV/CC,
   V-I experiments and boundary combinations NOT VERIFIED**. Next case:
   CH1 VOLT 0.001 OFF-only, independent manual execution and evidence review.
 
@@ -435,3 +435,15 @@ CH1 `VOLT:STEP 0.010` digital OFF-only HW REVIEWED PASS;
 Voltage STEP writes now require 10 mV grid (datasheet setting resolution),
 current STEP writes 1 mA grid; no powered STEP or CV/CC readiness is claimed.
 See `docs/reviews/R4_5_D_CH1_VOLT_1MV_REJECTION_2026-10-30.md`.
+
+### R4.5-D second accepted OFF-only mutation — CH1 CURR 1 mA
+
+**HW REVIEWED PASS (bounded)**: CH1 `CURR:STEP 0.001`, followed by
+UP/UP/DOWN/DOWN with digital `CURR?` 0.100→0.101→0.102→0.101→0.100 A;
+Keithley 1.04-1.04. Original 4449-event file SHA
+`b35a1dc15665d629753f76cf6b388cc72200f5c6117b938446fc731a396517ea`;
+1002 complete query/reply pairs, 216 writes, 611 zero error polls,
+78 CH1/2/3 OFF confirmations and final physical OFF gate.
+**2/18 digital OFF-only matrix cases complete**; remaining 16 NOT_RUN.
+R4.5-E powered CV/CC and R4.5-F V–I curves remain NOT_RUN.
+See `docs/reviews/R4_5_D_CH1_CURR_1MA_HW_REVIEW_2026-10-30.md`.

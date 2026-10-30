@@ -510,3 +510,15 @@ CH1 `VOLT:STEP 0.010` digital OFF-only HW REVIEWED PASS;
 Voltage STEP writes now require 10 mV grid (datasheet setting resolution),
 current STEP writes 1 mA grid; no powered STEP or CV/CC readiness is claimed.
 See `docs/reviews/R4_5_D_CH1_VOLT_1MV_REJECTION_2026-10-30.md`.
+
+### R4.5-D CH1 current 1 mA OFF-only independent review (2026-10-30)
+
+`CURR:STEP 0.001` returned successful `SYST:ERR?=0`, then
+`CURR:STEP?=0.001`; `CURR:UP` ×2 and `CURR:DOWN` ×2 produced
+`CURR?` values 0.101, 0.102, 0.101 and 0.100 A. All 78 CHAN:OUTP?
+readbacks OFF; 611 zero SCPI error polls. Original 4449-record
+JSONL independently audited. Scope **HW REVIEWED PASS for CH1 OFF digital
+mutation only** — no current measured, no CC, no powered behavior.
+See `docs/reviews/R4_5_D_CH1_CURR_1MA_HW_REVIEW_2026-10-30.md`.
+`VOLT:STEP` 1/5mV are NOT in the approved write matrix: do not
+confuse the readable 1mV register value with accepted write precision.
