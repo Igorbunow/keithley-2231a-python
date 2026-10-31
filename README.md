@@ -1138,3 +1138,14 @@ probe; it locks output-enable in the current session. A new session does not
 prove physical trigger registers were reset. `*TRG` and `INST:COUP` remain
 blocked; no simultaneous switching or loaded trigger behavior is claimed.
 See `docs/R5_E3_TRIGGER_OFF_STAGING.ru.md`.
+
+### R5-E4 — OFF-only trigger-write qualification candidate
+
+`tools/r5_e4_trigger_write_qualify.py --channel {1,2,3}` is dry-run by
+ default. Once separately approved for hardware, each interactive case writes
+bounded `VOLT:TRIG` and `CURR:TRIG`, reads back, restores original trigger
+registers with readbacks and leaves all outputs OFF. It never sends `*TRG`,
+`INST:COUP` or output ON. Abort may leave partial native presets: inspect
+manually, never auto-retry an uncertain UART. The independent JSONL auditor is
+`tools/audit_r5_e4_trigger_write.py`. **R5-E4 hardware NOT_RUN**, not powered
+trigger qualification. See `docs/R5_E4_TRIGGER_OFF_WRITE_RESTORE_QUALIFICATION.ru.md`.

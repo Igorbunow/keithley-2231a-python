@@ -589,3 +589,12 @@ CH1/CH2/CH3 VOLT:TRIG?/CURR:TRIG? OFF-only readback independently verified
 with original evidence; see docs/reviews/R5_E2_TRIGGER_READ_HW_REVIEW_2026-10-31.md.
 R5-E3 software-only OFF trigger preset staging supports CH1/CH2/CH3 with
 one-session output-enable block; no *TRG, coupling or real write tests.
+
+## R5-E4 — Trigger preset write/read/restore qualification candidate
+
+Software-only stage prepares independently gated CH1/CH2/CH3 OFF-only
+`VOLT:TRIG`/`CURR:TRIG` writes, readback, return to original registers and
+separate evidence auditor. Test fixture and default CLI DRY RUN perform no
+hardware access. Physical writes, `*TRG`, coupling and powered triggering
+remain NOT_RUN/NOT_QUALIFIED; explicit hardware approval needed for each
+channel. See docs/R5_E4_TRIGGER_OFF_WRITE_RESTORE_QUALIFICATION.ru.md.
