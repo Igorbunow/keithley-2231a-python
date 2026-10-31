@@ -21,7 +21,7 @@ class CapabilityScopeTests(unittest.TestCase):
         self.assertTrue(f.instrument_native and f.driver_exposed)
         self.assertEqual(f.evidence, 'bounded_hw')
         self.assertEqual({(s.channels, s.operation, s.output_state) for s in f.hardware_evidence}, {
-            ((1,), 'voltage_step_readback', 'OFF'),
+            ((1, 2, 3), 'voltage_step_readback', 'OFF'),
             ((1, 2, 3), 'current_step_readback', 'OFF'),
         })
 
@@ -37,12 +37,14 @@ class CapabilityScopeTests(unittest.TestCase):
                          {'voltage_step_up_down', 'current_step_up_down'})
         self.assertFalse(any(s.output_state == 'POWERED' for s in f.hardware_evidence))
 
-    def test_powered_step_is_ch1_only_and_cv_cc_separated(self):
+    def test_powered_step_includes_all_channels_and_historical_ch1(self):
         f = self.caps.feature('source_step_powered_qualification')
         self.assertTrue(f.instrument_native and f.driver_exposed)
         self.assertEqual({(s.channels, s.regulation, s.operation) for s in f.hardware_evidence}, {
             ((1,), 'CV', 'voltage_step_up_down'),
             ((1,), 'CC', 'current_step_up_down'),
+            ((1, 2, 3), 'CV', 'voltage_step_up_down'),
+            ((1, 2, 3), 'CC', 'current_step_up_down'),
         })
         self.assertTrue(all(s.output_state == 'POWERED' for s in f.hardware_evidence))
         self.assertTrue(all(s.observation == 'analog_steady_state' for s in f.hardware_evidence))
@@ -84,7 +86,7 @@ class CapabilityScopeTests(unittest.TestCase):
         d['features'][0]['hardware_evidence'].append({'bad': True})
         f = next(f for f in d['features'] if f['name'] == 'source_step_query')
         f['hardware_evidence'][0]['channels'].append(3)
-        self.assertEqual(self.caps.feature('source_step_query').hardware_evidence[0].channels, (1,))
+        self.assertEqual(self.caps.feature('source_step_query').hardware_evidence[0].channels, (1, 2, 3))
         json.dumps(self.caps.to_dict(), allow_nan=False)
 
     def test_frozen_evidence(self):
@@ -127,8 +129,8 @@ class CapabilityScopeTests(unittest.TestCase):
     def test_serialized_published_scope_has_no_authorization_flag(self):
         d = self.caps.to_dict()
         feature = next(f for f in d['features'] if f['name'] == 'source_step_powered_qualification')
-        self.assertEqual(len(feature['hardware_evidence']), 2)
-        self.assertTrue(all(x['channels'] == [1] for x in feature['hardware_evidence']))
+        self.assertEqual(len(feature['hardware_evidence']), 4)
+        self.assertEqual({tuple(x['channels']) for x in feature['hardware_evidence']}, {(1,), (1, 2, 3)})
         self.assertFalse(any('authorization' in x or 'may_execute' in x for x in feature['hardware_evidence']))
 
 

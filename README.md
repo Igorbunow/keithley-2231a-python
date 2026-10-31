@@ -1109,3 +1109,11 @@ exactly four native UP/UP/DOWN/DOWN moves, independent verified OFF and no
 retries. `tools/audit_r5_d2_step_powered.py` reviews original evidence offline.
 **CH2/CH3 powered STEP remains HW NOT_RUN** until independent hardware review.
 See `docs/R5_D2_POWERED_STEP_CH123_HARDWARE_CANDIDATE.ru.md`.
+
+
+**R5-D3 evidence update (2026-10-31):** native voltage and current STEP have
+bounded low-power CV/CC hardware observations on **all three channels**,
+including independent KEL103/DMM7510 measurements and verified final OFF.
+This does not authorize arbitrary powered stepping or prove calibrated current,
+full-range/transient behavior or trigger synchronization. See
+`docs/reviews/R5_D3_ALL_CHANNEL_STEP_HW_REVIEW_2026-10-31.md`.

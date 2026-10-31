@@ -1,0 +1,291 @@
+{
+  "schema_version": 1,
+  "kind": "bounded_reviewed_step_evidence_index",
+  "qualification": "HUMAN_REVIEWED_BOUNDED",
+  "date": "2026-10-31",
+  "model": "Keithley 2231A-30-3",
+  "qualification_scope": {
+    "topology": "Independent, exactly one channel enabled per run; others OFF",
+    "cv": "3.30 V nominal, 0.150 A limit, KEL103 CR 40 ohm, VOLT:STEP 0.010 V",
+    "cc": "3.30 V voltage ceiling, 0.100 A start, KEL103 CR 11 ohm, CURR:STEP 0.005 A",
+    "sequence": [
+      "UP",
+      "UP",
+      "DOWN",
+      "DOWN"
+    ],
+    "max_experiment_w": 0.6,
+    "analog_synchronized": false,
+    "metrology_calibrated": false,
+    "powered_general_api_qualified": false
+  },
+  "provenance": {
+    "config_sha256": "e4c580a71c6931d31b47fec86d3de270047a633818835c9b3f53490b92e9d720"
+  },
+  "software": {
+    "sha": "1b121ffcec26f6119128ee043af901b6cbf2c68d",
+    "dirty": true,
+    "source_sha256": "6a3f41eee2689e3861468c59043df637be7de62e097c03a7b5c572c878577524",
+    "library_version": "0.2.1.dev0",
+    "python": "3.13.5",
+    "os": "Linux-6.12.113+deb13-amd64-x86_64-with-glibc2.41",
+    "r5d2_runner_sha256": "16fdebcb0801efbdf16d137f4fc6f51e20367b7dbafff463c40c3c5aacb2ad60",
+    "r5d2_stage_sha256": "2517508a94c199ac4b6a671d25ce7f671a0d706b88722b834f85f81a5628ca23"
+  },
+  "auditor": "tools/audit_r5_d2_step_powered.py",
+  "original_jsonl_embedded": false,
+  "cases": [
+    {
+      "channel": 1,
+      "mode": "CV",
+      "raw_filename": "events(20261031-013513).jsonl",
+      "original_sha256": "3d775959b1944fc04f938dfd64d664e8ff0188496815b6eb273ca64a69ed5fcd",
+      "events": 7344,
+      "scpi_queries": 1634,
+      "mutations": 4,
+      "snapshots": 5,
+      "firmware_observations": [
+        "1.04-1.04"
+      ],
+      "digital_off_confirmed": true,
+      "physical_off_confirmed": true,
+      "outcome": "PASS",
+      "step": 0.01,
+      "load_cr_ohm": 40.0,
+      "dmm_voltage_v": [
+        3.296745,
+        3.307312,
+        3.317129,
+        3.307325,
+        3.297078
+      ],
+      "kel_current_a": [
+        0.0823,
+        0.0825,
+        0.0828,
+        0.0825,
+        0.0823
+      ],
+      "psu_current_a": [
+        0.0810175,
+        0.0812092,
+        0.0815048,
+        0.0812206,
+        0.0810213
+      ],
+      "kel_power_max_w": 0.2746,
+      "dmm_return_drift_v": 0.0003329999999999167,
+      "scpi_nonzero_error_count": 0
+    },
+    {
+      "channel": 2,
+      "mode": "CV",
+      "raw_filename": "events(20261031-013504).jsonl",
+      "original_sha256": "1cacd7ca7658fa049e3df53e2f7b03b9368af0460d70c8cedd9e79c8345e508b",
+      "events": 7344,
+      "scpi_queries": 1634,
+      "mutations": 4,
+      "snapshots": 5,
+      "firmware_observations": [
+        "1.04-1.04"
+      ],
+      "digital_off_confirmed": true,
+      "physical_off_confirmed": true,
+      "outcome": "PASS",
+      "step": 0.01,
+      "load_cr_ohm": 40.0,
+      "dmm_voltage_v": [
+        3.292944,
+        3.302947,
+        3.313247,
+        3.303051,
+        3.293339
+      ],
+      "kel_current_a": [
+        0.0823,
+        0.0823,
+        0.0828,
+        0.0823,
+        0.0823
+      ],
+      "psu_current_a": [
+        0.081399,
+        0.0815353,
+        0.0819035,
+        0.0815725,
+        0.081461
+      ],
+      "kel_power_max_w": 0.2743,
+      "dmm_return_drift_v": 0.00039500000000014523,
+      "scpi_nonzero_error_count": 0
+    },
+    {
+      "channel": 3,
+      "mode": "CV",
+      "raw_filename": "events(20261031-013457).jsonl",
+      "original_sha256": "e6e88063283ec777e9f0fdb5863318114cc85b2e41e7c09ab194d558ec3bbc45",
+      "events": 7344,
+      "scpi_queries": 1634,
+      "mutations": 4,
+      "snapshots": 5,
+      "firmware_observations": [
+        "1.04-1.04"
+      ],
+      "digital_off_confirmed": true,
+      "physical_off_confirmed": true,
+      "outcome": "PASS",
+      "step": 0.01,
+      "load_cr_ohm": 40.0,
+      "dmm_voltage_v": [
+        3.30011,
+        3.310439,
+        3.32052,
+        3.310412,
+        3.300486
+      ],
+      "kel_current_a": [
+        0.0823,
+        0.0828,
+        0.0828,
+        0.0828,
+        0.0823
+      ],
+      "psu_current_a": [
+        0.0828042,
+        0.0828042,
+        0.0828042,
+        0.0836549,
+        0.0828042
+      ],
+      "kel_power_max_w": 0.275,
+      "dmm_return_drift_v": 0.0003759999999997099,
+      "scpi_nonzero_error_count": 0
+    },
+    {
+      "channel": 1,
+      "mode": "CC",
+      "raw_filename": "events(20261031-014706).jsonl",
+      "original_sha256": "23b8bfaa8abb34ac8ad5db902d4f0b55101c672d6edaaddc741173f43e3f67c9",
+      "events": 7344,
+      "scpi_queries": 1634,
+      "mutations": 4,
+      "snapshots": 5,
+      "firmware_observations": [
+        "1.04-0.01"
+      ],
+      "digital_off_confirmed": true,
+      "physical_off_confirmed": true,
+      "outcome": "PASS",
+      "step": 0.005,
+      "load_cr_ohm": 11.0,
+      "dmm_voltage_v": [
+        1.109042,
+        1.164683,
+        1.219686,
+        1.165205,
+        1.109695
+      ],
+      "kel_current_a": [
+        0.1008,
+        0.1059,
+        0.1109,
+        0.1059,
+        0.1008
+      ],
+      "psu_current_a": [
+        0.099719,
+        0.10473,
+        0.109756,
+        0.104747,
+        0.0997448
+      ],
+      "kel_power_max_w": 0.1352,
+      "dmm_return_drift_v": 0.0006530000000000147,
+      "scpi_nonzero_error_count": 0
+    },
+    {
+      "channel": 2,
+      "mode": "CC",
+      "raw_filename": "events(20261031-014655).jsonl",
+      "original_sha256": "a3a826ce7f830061a6ed3b6c897db870145be7656422e5ffa4991345f2cd4904",
+      "events": 7344,
+      "scpi_queries": 1634,
+      "mutations": 4,
+      "snapshots": 5,
+      "firmware_observations": [
+        "1.04-1.04"
+      ],
+      "digital_off_confirmed": true,
+      "physical_off_confirmed": true,
+      "outcome": "PASS",
+      "step": 0.005,
+      "load_cr_ohm": 11.0,
+      "dmm_voltage_v": [
+        1.104895,
+        1.1619,
+        1.218147,
+        1.16346,
+        1.108291
+      ],
+      "kel_current_a": [
+        0.1006,
+        0.1056,
+        0.1107,
+        0.1059,
+        0.1008
+      ],
+      "psu_current_a": [
+        0.0995445,
+        0.104545,
+        0.109549,
+        0.104533,
+        0.0995321
+      ],
+      "kel_power_max_w": 0.1349,
+      "dmm_return_drift_v": 0.0033959999999999546,
+      "scpi_nonzero_error_count": 0
+    },
+    {
+      "channel": 3,
+      "mode": "CC",
+      "raw_filename": "events(20261031-014648).jsonl",
+      "original_sha256": "9527a306198a17d203bd6970ebe19f44f213a386998c8c3de160ad39d533e31e",
+      "events": 7344,
+      "scpi_queries": 1634,
+      "mutations": 4,
+      "snapshots": 5,
+      "firmware_observations": [
+        "1.04-1.04"
+      ],
+      "digital_off_confirmed": true,
+      "physical_off_confirmed": true,
+      "outcome": "PASS",
+      "step": 0.005,
+      "load_cr_ohm": 11.0,
+      "dmm_voltage_v": [
+        1.087772,
+        1.14188,
+        1.197899,
+        1.142941,
+        1.087426
+      ],
+      "kel_current_a": [
+        0.0989,
+        0.104,
+        0.109,
+        0.104,
+        0.0989
+      ],
+      "psu_current_a": [
+        0.0989667,
+        0.104071,
+        0.109174,
+        0.104071,
+        0.0998173
+      ],
+      "kel_power_max_w": 0.1306,
+      "dmm_return_drift_v": -0.00034599999999995745,
+      "scpi_nonzero_error_count": 0
+    }
+  ]
+}

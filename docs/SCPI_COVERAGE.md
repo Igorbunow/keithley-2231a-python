@@ -544,3 +544,16 @@ A single OFF-only driver session now supports a physically gated matrix of up to
 qualification context. This is not a general ON permission or evidence of
 analog STEP behaviour. OFF-only digital current batch is reviewed 9/9; real
 loaded CV/CC step measurement with DMM7510/KEL103 remains NOT_RUN.
+
+
+### R5-D3 status correction — 2026-10-31
+
+The earlier R4.5-C/D/E paragraphs and original row text are historical and
+must not be read as the current state. Independently reviewed physical results
+now cover native `VOLT:STEP 0.010`, `VOLT:UP/DOWN` under low-power CV and
+`CURR:STEP 0.005`, `CURR:UP/DOWN` under low-power CC, **CH1/CH2/CH3**.
+The three-channel OFF voltage 10 mV series is also reviewed; the nine-case
+OFF current STEP matrix remains valid. See
+`docs/reviews/R5_D3_ALL_CHANNEL_STEP_HW_REVIEW_2026-10-31.md`.
+No evidence supports arbitrary fast timing, full-range accuracy, trigger
+commands or bypass of a guarded/qualification-only powered STEP route.

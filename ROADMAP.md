@@ -538,3 +538,23 @@ separate operator gates. No user-facing arbitrary powered STEP, new SCPI wire
 shortcut, or application orchestration in `src` is introduced. OFF-only VOLT
 STEP on CH2/CH3 and powered CV/CC on CH2/CH3 still require **real** separate
 hardware runs and original-evidence review before marking capabilities verified.
+
+
+## R5-D3 — STEP hardware evidence consolidation (2026-10-31)
+
+**HW REVIEWED PASS (bounded)** for native VOLT:STEP/UP/DOWN (CV 3.30 V,
+KEL103 40 ohm, 10 mV) and CURR:STEP/UP/DOWN (CC 0.100 A,
+KEL103 11 ohm, 5 mA) on **CH1, CH2, CH3**. Six original JSONL
+files (7344 events each) passed independent R5-D2 replay and the R5-D3
+matrix crosscheck; PSU/DMM/KEL live measurements and final physical OFF
+confirmed for each case. Hashes and 30 measured points are indexed in
+`docs/reviews/R5_D3_STEP_HW_EVIDENCE_INDEX_2026-10-31.json` and
+`docs/reviews/R5_D3_ALL_CHANNEL_STEP_HW_REVIEW_2026-10-31.md`.
+
+OFF-only VOLT:STEP 10mV on CH1/CH2/CH3 was separately reviewed in the
+preceding operator sessions; current STEP OFF had an earlier 9/9 review.
+Older notes above are historical stages, superseded for these cases only.
+Powering the output via a general STEP API, full-rated range, SCPI trigger,
+fast transient behavior and metrological calibration are **NOT** qualified.
+Next: R5-E native trigger feasibility/safety on virtual UART first; do not
+send powered trigger commands before separate user-approved hardware stage.
