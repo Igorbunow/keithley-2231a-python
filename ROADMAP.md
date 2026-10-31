@@ -642,3 +642,21 @@ revision's dirty flag remains a provenance note. No loaded or simultaneous
 trigger result. Next R5-E9: software-only investigation of `INST:COUP` grammar
 and guarded non-neutral digital switching, no physical experiment until a new
 operator-approved plan. H09/H10 hardware load points remain open.
+
+## R5-E9 — OFFLINE coupling grammar and all-recipient hazard model
+
+Vendor reference 077100401 (September 2014), section 5-12, specifies a
+parameterized `INST:COUP?` query but `Returns None`, and its dotted multi-CH
+example conflicts with the terse `CH1|CH2|CH3` argument row. No reliable reply
+parser, delimiter, default group or channel isolation can be inferred. Leave
+`INST:COUP` reads/writes and debug bypass blocked. R5-E9 adds ONLY a pure
+software risk model enumerating all eight hypothetical CH1/2/3 recipient sets,
+reusing the existing R5-E5 three-channel bounds. No source driver API, hardware
+runner or SCPI behavior was changed. See
+`docs/R5_E9_COUPLING_GRAMMAR_AND_RECIPIENT_MODEL.en.md`.
+
+**Next R5-E10 (NOT AUTHORIZED / NOT RUN):** draft and independently review a
+new bounded non-neutral OFF-only digital test protocol; require all six
+ordinary and six trigger register baselines, a separately accepted restoration
+plan, all-channel OFF checks and a new operator authorization. A neutral
+`*TRG` acceptance is not proof of any non-neutral or powered actuation.

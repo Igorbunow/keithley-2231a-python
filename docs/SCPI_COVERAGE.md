@@ -1,7 +1,7 @@
 # R4.1 / R5-B — SCPI coverage inventory (reviewed, no hardware I/O)
 
-**Статус:** R5-B 2026-10-31: проведён офлайн-пересмотр всех 86 строк R4.1 после R5-A; **не** заявление о полноте всех query/write вариантов или аппаратной проверке.
-**Итог классификации R5-B:** 53 `W` (есть хотя бы один ограниченный производственный маршрут), 25 `R` (отложены/под отдельный risk gate), 8 `X` (калибровка/сервис); исходная R4.1 классификация до исправления: 49 `W` / 16 `U` / 13 `R` / 8 `X`. Четыре `UP/DOWN` уже реализованы, 12 оставшихся `U` переведены в `R` после оценки рисков и ценности. `W` НЕ означает full API/проверку всех каналов и командных форм.
+**Статус:** R5-B 2026-10-31: проведён офлайн-пересмотр всех 86 строк R4.1 после R5-A; позднее R5-E8 добавил единственный строго ограниченный рабочий маршрут `*TRG`, а R5-E9 — только офлайн-модель неопределённости coupling. **Не** заявление о полноте всех query/write вариантов или аппаратной проверке.
+**Исторический итог R5-B:** 53 `W`, 25 `R`, 8 `X`; **после R5-E9:** 56 `W` (есть хотя бы один ограниченный производственный маршрут), 22 `R` (отложены/под отдельный risk gate), 8 `X` (калибровка/сервис); исходная R4.1 классификация до исправления: 49 `W` / 16 `U` / 13 `R` / 8 `X`. Четыре `UP/DOWN` уже реализованы, 12 оставшихся `U` переведены в `R` после оценки рисков и ценности. `W` НЕ означает full API/проверку всех каналов и командных форм.
 Полный мотивированный отчёт: [`R5_B_SCPI_GAP_AUDIT.ru.md`](R5_B_SCPI_GAP_AUDIT.ru.md). Машиночитаемые строки: [`SCPI_COVERAGE_AUDITED_2026-10-31.csv`](SCPI_COVERAGE_AUDITED_2026-10-31.csv).
 
 **Источник:** Keithley Instruments, *Model 2231A-30-3 Triple-channel DC Power Supply Reference Manual*,
@@ -38,7 +38,7 @@
 | Common 5-2…5-6 | `*RST` | **R** | Сброс конфигурации может изменить условия безопасности |
 | Common 5-2…5-6 | `*SRE / *SRE?` | **W** | R4.2: `status_enable_mask("service_request")` reads `*SRE?` only; writing `*SRE` stays unsupported |
 | Common 5-2…5-6 | `*STB?` | **W** | `status_snapshot()` |
-| Common 5-2…5-6 | `*TRG` | **R** | Триггер может менять выходные уставки |
+| Common 5-2…5-6 | `*TRG` | **W** | R5-E7/E8: **только** `fire_neutral_trigger_off()` для одного события при CH1/2/3 OFF, нейтральных trigger-пресетах и пустых клеммах: HW REVIEWED в узком scope. Не разрешает ненейтральный/питающий триггер, timing или coupling; см. `docs/reviews/R5_E7_NEUTRAL_TRIGGER_HW_REVIEW_2026-10-31.md`. |
 | Common 5-2…5-6 | `*SAV` | **R** | Запись внутренней памяти |
 | Common 5-2…5-6 | `*RCL` | **R** | Восстановление внутренних уставок |
 | Common 5-2…5-6 | `*TST?` | **R** | Самотестирование; непроверенные побочные эффекты |
@@ -64,7 +64,7 @@
 | INSTrument 5-10…5-12 | `INST:COMBine:PARAllel` | **R** | Альтернативный маршрут комбинирования; не подключать к общему API без проверки влияния на топологию. |
 | INSTrument 5-10…5-12 | `INST:COMBine:TRACk` | **R** | Альтернативный маршрут tracking; эффекты на уставки/топологию требуют оценки. |
 | INSTrument 5-10…5-12 | `INST:COMBine:OFF` | **R** | Выход из объединённого режима; mutating, нельзя считать безвредным query. Отложить до точного preflight. |
-| INSTrument 5-10…5-12 | `INST:COUPle[:TRIGger] / ?` | **R** | R5-E1: debug-bypass дополнительно заблокирован; query-синтаксис/ответ неоднозначны по руководству и не доказаны на приборе. |
+| INSTrument 5-10…5-12 | `INST:COUPle[:TRIGger] / ?` | **R** | R5-E9: §5-12 PDF 077100401 (Sept 2014) показывает query с аргументом, `Returns None`, пример `ch1.ch2`; ответ и грамматика группы НЕ установлены. Ни query, ни запись не разрешены, debug-bypass закрыт; три канала остаются потенциальными получателями. См. `docs/R5_E9_COUPLING_GRAMMAR_AND_RECIPIENT_MODEL.en.md`. |
 | MEASure 5-12…5-13 | `MEAS[:SCAL]:VOLT[:DC]?` | **W** | `read_channel()` вызывает `MEAS:VOLT?` |
 | MEASure 5-12…5-13 | `FETCh[:VOLT][:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "voltage")`, query-only `FETC:VOLT?`; R4.4-C HW REVIEWED PASS (one Independent CH1 low-power value 3.2996 V; freshness UNVERIFIED) |
 | MEASure 5-12…5-13 | `MEAS[:SCAL]:CURR[:DC]?` | **W** | `read_channel()` вызывает `MEAS:CURR?` |
@@ -108,12 +108,12 @@
 | SOURce 5-24…5-28 | `CURRent:UP` | **W** | `step_source(ch, "current", "up")` доступен только внутри ограниченного квалификационного STEP-контекста; не общий свободный UP. |
 | SOURce 5-24…5-28 | `CURRent:DOWN` | **W** | `step_source(ch, "current", "down")`; те же OFF/controlled powered gates, не повсеместный API. |
 | SOURce 5-24…5-28 | `CURRent:STEP / ?` | **W** | `source_step()` query и `configure_source_step()` guarded write: профили Independent, OFF, 1 мА lattice, строгий readback; есть ограниченные аппаратные CH1 испытания. Не весь диапазон/CH2/CH3. |
-| SOURce 5-24…5-28 | `CURRent:TRIGgered / ?` | **R** | R5-E1: **только `CURR:TRIG?`** через guarded `read_trigger_presets(ch)`, CH1/CH2/CH3 OFF, SIM-only. R5-E2: OFF-only HW-runner подготовлен, реальные журналы NOT_RUN. Запись и `*TRG` закрыты. |
+| SOURce 5-24…5-28 | `CURRent:TRIGgered / ?` | **W** | R5-E2 OFF-only CH1/2/3 `CURR:TRIG?` и R5-E4 OFF-only write/read/restore аппаратно проверены; R5-E7 neutral `*TRG` проверен отдельно. Ни ненейтральное цифровое переключение, ни powered trigger не проверены. |
 | SOURce 5-24…5-28 | `[SOUR:]VOLTage[:LEV] / ?` | **W** | Уставка и readback через `set_channel()` |
 | SOURce 5-24…5-28 | `VOLTage:UP` | **W** | `step_source(ch, "voltage", "up")`; узкий профиль и аппаратное evidence CH1, не общий sweep. |
 | SOURce 5-24…5-28 | `VOLTage:DOWN` | **W** | `step_source(ch, "voltage", "down")`; узкий профиль и аппаратное evidence CH1. |
 | SOURce 5-24…5-28 | `VOLTage:STEP / ?` | **W** | `source_step()` query и `configure_source_step()` guarded write: Independent, OFF, 10 мВ lattice, строгий readback; 1 мВ запись отвергнута прибором. CH1 bounded HW; не общий sweep. |
-| SOURce 5-24…5-28 | `VOLTage:TRIGgered / ?` | **R** | R5-E1: **только `VOLT:TRIG?`** через guarded `read_trigger_presets(ch)`, CH1/CH2/CH3 OFF, SIM-only. R5-E2: OFF-only HW-runner подготовлен, реальные журналы NOT_RUN. Запись и `*TRG` закрыты. |
+| SOURce 5-24…5-28 | `VOLTage:TRIGgered / ?` | **W** | R5-E2 OFF-only CH1/2/3 `VOLT:TRIG?` и R5-E4 OFF-only write/read/restore аппаратно проверены; R5-E7 neutral `*TRG` проверен отдельно. Ни ненейтральное цифровое переключение, ни powered trigger не проверены. |
 | SOURce 5-24…5-28 | `VOLTage:LIMit / ?` | **W** | Профиль ограничений + readback |
 | SOURce 5-24…5-28 | `VOLTage:LIMit:STATe / ?` | **W** | Защита профиля + readback |
 
