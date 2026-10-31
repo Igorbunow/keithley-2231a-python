@@ -68,6 +68,19 @@ class TriggerPresetReadback:
     current_a: float
 
 
+@dataclass(frozen=True)
+class NeutralTriggerObservation:
+    """Sequential OFF-only digital check around one neutral bus event.
+
+    All channel presets equalled active setpoints before the event. This is
+    NOT proof of channel coupling, setpoint switching, timing or analog output.
+    """
+    channels: tuple[int, int, int]
+    event_sent: bool
+    outputs_off: bool
+    coupling: str = 'UNKNOWN_NOT_QUALIFIED'
+
+
 class Keithley2231A:
     @staticmethod
     def capabilities():
@@ -137,6 +150,8 @@ class Keithley2231A:
         self._trigger_read_query: str | None = None
         self._trigger_write_command: str | None = None
         self._trigger_staged_unqualified = False
+        self._neutral_trigger_command: str | None = None
+        self._neutral_trigger_consumed = False
         self._configured_source_steps: dict[tuple[int, str], float] = {}
         self._powered_step_window: dict | None = None
         self._expected_outputs = {ch: False for ch in (1, 2, 3)}
@@ -261,6 +276,7 @@ class Keithley2231A:
             if (self._service_only_command(command) and command != self._service_command
                     and command != self._source_mutation_command
                     and command != self._trigger_write_command
+                    and command != self._neutral_trigger_command
                     and not (query and command == self._trigger_read_query)):
                 raise SafetyError('Service-only SCPI forbidden outside an explicitly '
                                   'authorized driver service operation')
@@ -1737,6 +1753,61 @@ class Keithley2231A:
                 if self._link_uncertain:
                     raise  # never retry or trust an uncertain UART
                 self._trip(f'CH{ch} trigger OFF staging failed: {exc}')
+
+    def fire_neutral_trigger_off(self, *, confirmed_all_outputs_off: bool = False,
+                                 confirmed_empty_terminals: bool = False
+                                 ) -> NeutralTriggerObservation:
+        """Software-only R5-E6 candidate: one *TRG with neutral CH1/CH2/CH3.
+
+        The trigger presets of EACH channel must exactly match its currently
+        applied independent-profile V/I settings. With all outputs OFF, this
+        allows the bus command itself to be probed without requesting any
+        source-setpoint change, irrespective of unknown INST:COUP routing.
+        It cannot qualify trigger actuation, coupling or analog behavior.
+
+        No live-hardware qualification is supplied by this API. A separate
+        reviewed operator-gated runner is required before physical use.
+        """
+        if confirmed_all_outputs_off is not True or confirmed_empty_terminals is not True:
+            raise SafetyError('Neutral bus trigger requires both physical OFF and empty-terminal assertions')
+        with self._lock:
+            if self._neutral_trigger_consumed:
+                raise SafetyError('Neutral bus trigger is single-use per session; no retry')
+            self._require_ready()
+            if (self._sequencing or self._powered_step_window is not None or
+                    not self._trigger_staged_unqualified or
+                    not isinstance(self._profile, Profile) or
+                    self._profile.wiring != 'independent' or
+                    self._profile.access != 'control'):
+                raise SafetyError('Neutral bus trigger requires staged OFF-only independent profile')
+            self._require_step_off()
+            self.verify_profile()
+            try:
+                # All three may respond regardless of currently selected channel.
+                for ch in (1, 2, 3):
+                    preset = self.read_trigger_presets(ch)
+                    expected_v, expected_i = self._expected_setpoints[ch]
+                    if (abs(preset.voltage_v - expected_v) > .00049 or
+                            abs(preset.current_a - expected_i) > .00049):
+                        raise SafetyError(f'CH{ch}: non-neutral trigger preset; bus event prohibited')
+                self._require_step_off()
+                self.verify_profile()
+                # Consume the one-shot authorization BEFORE a potentially
+                # ambiguous UART write. Never auto-resend *TRG on timeout.
+                self._neutral_trigger_consumed = True
+                self._neutral_trigger_command = '*TRG'
+                try:
+                    self._write('*TRG')
+                finally:
+                    self._neutral_trigger_command = None
+                self.check_errors()
+                self._require_step_off()
+                self.verify_profile()  # all CH1/CH2/CH3 active settings unchanged
+                return NeutralTriggerObservation((1, 2, 3), True, True)
+            except Exception as exc:
+                if self._link_uncertain:
+                    raise  # unknown wire state: never auto-retry or issue cleanup I/O
+                self._trip(f'Neutral OFF-only bus trigger not independently confirmed: {exc}')
 
     @staticmethod
     def _source_step_tokens(ch: int, kind: str, increment: float | None = None):

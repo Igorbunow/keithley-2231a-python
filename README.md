@@ -1160,3 +1160,13 @@ verification. This does not qualify `*TRG`, `INST:COUP`, powered switching,
 or synchronization. The *offline-only* `tools/plan_r5_e5_trigger_event.py`
 models all three channels as potentially affected by a bus trigger and
 performs no device I/O.
+
+
+### R5-E6 — нейтральный *TRG (только программная подготовка)
+
+`fire_neutral_trigger_off()` требует предварительно нейтральных триггерных
+уставок CH1/CH2/CH3, независимого OFF-профиля и двух физических подтверждений.
+Событие однократное; coupling не предполагается известным. **На физическом
+приборе не запускать:** аппаратный qualification runner и независимый
+аудитор ещё не выпущены. См.
+`docs/R5_E6_NEUTRAL_TRIGGER_OFF_SOFTWARE.ru.md`.

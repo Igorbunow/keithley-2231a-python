@@ -611,3 +611,10 @@ query semantics, prepare safety interlocks and separately authorize first
 OFF-only bus trigger characterization across all three channels before any
 low-power analog trigger experiment. H09/H10 power-load qualifications are
 independent and still required.
+
+
+- R5-E6 (2026-10-31): ПО для нейтрального одноразового OFF-only `*TRG`;
+  CH1/CH2/CH3 рассматриваются как потенциальные получатели; виртуальный UART
+  проверяет только цифровую безопасность; hardware event `NOT_RUN`.
+- R5-E7 planned: операторский OFF-only runner и независимый JSONL-аудитор
+  события, затем отдельная проверка ненейтральных цифровых переходов.

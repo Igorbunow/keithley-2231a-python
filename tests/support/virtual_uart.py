@@ -65,7 +65,8 @@ class UARTPeer:
                  fault_after=None, profile_registers=False,
                  channel_response_sequences=None, mode_channel_overrides=None,
                  ignore_step_write=False, ignore_step_action=False,
-                 trigger_registers=False):
+                 trigger_registers=False, trigger_bus_channels=None,
+                 drop_error_after_trigger=False):
         # Explicit per-topology digital readbacks, authored by each test.
         # The peer does not calculate aggregate limits, share branch current,
         # or infer electrical behavior. Mode keys only select canned replies.
@@ -114,6 +115,14 @@ class UARTPeer:
         self.profile_registers = profile_registers
         if trigger_registers and not profile_registers:
             raise ValueError('trigger register fixture requires profile_registers')
+        if trigger_bus_channels is not None:
+            if (not trigger_registers or not isinstance(trigger_bus_channels, tuple) or
+                    not trigger_bus_channels or any(ch not in (1, 2, 3) for ch in trigger_bus_channels) or
+                    len(set(trigger_bus_channels)) != len(trigger_bus_channels)):
+                raise ValueError('trigger bus fixture requires distinct valid channels')
+        self.trigger_bus_channels = trigger_bus_channels
+        self.drop_error_after_trigger = drop_error_after_trigger
+        self.seen_trigger = False
         self.trigger_registers = trigger_registers
         self.ignore_step_write = ignore_step_write
         self.ignore_step_action = ignore_step_action
@@ -172,6 +181,14 @@ class UARTPeer:
                     reg_write = re.fullmatch(
                         r'(VOLT|CURR|VOLT:LIM|VOLT:LIM:STAT|OUTP:TIM:STAT|OUTP:TIM:DEL) '
                         r'([0-9]+(?:\.[0-9]+)?)', cmd)
+                    if cmd == '*TRG' and self.trigger_bus_channels is not None:
+                        self.seen_trigger = True
+                        # Digital fixture only: responders are explicit test
+                        # data, not a claim about real coupling or analog timing.
+                        for responder in self.trigger_bus_channels:
+                            for reg in ('VOLT', 'CURR'):
+                                self.channel_registers[responder][reg] = (
+                                    self.channel_registers[responder][reg + ':TRIG'])
                     if trigger_write:
                         self.channel_registers[self.selected][trigger_write[1]+':TRIG'] = trigger_write[2]
                     if reg_write:
@@ -229,6 +246,8 @@ class UARTPeer:
                                                'CHAN:OUTP 0', 'CHAN:OUTP 1'})
                         if reg_write or step_write or step_action or trigger_write:
                             allowed_writes.add(cmd)
+                if cmd == '*TRG' and self.trigger_bus_channels is not None:
+                    allowed_writes.add('*TRG')
                 if cmd not in (allowed_reads if is_query else allowed_writes):
                     self.unsupported.append(cmd)
                     # An unknown write is rejected at the next error poll;
@@ -244,7 +263,9 @@ class UARTPeer:
                 if cmd in self.event_latches:
                     event_reply = self.event_latches[cmd]
                     self.event_latches[cmd] = '0'
-                if not is_query or cmd == self.drop:
+                if (not is_query or cmd == self.drop or
+                        (self.drop_error_after_trigger and self.seen_trigger and
+                         cmd == 'SYST:ERR?')):
                     continue
                 if cmd in self.response_sequences:
                     values = self.response_sequences[cmd]

@@ -5,12 +5,12 @@ or rewiring. Use external interlocks for hazardous applications.
 """
 from .transport import SerialTransport, TcpTransport, TransportError
 from .profile import Profile, SeriesProfile, ParallelProfile, ChannelProfile, PowerStep, LimitsError, ProfileError
-from .device import Keithley2231A, InstrumentError, SafetyError, Reading, TriggerPresetReadback
+from .device import Keithley2231A, InstrumentError, SafetyError, Reading, TriggerPresetReadback, NeutralTriggerObservation
 from .capabilities import (AccuracySpec, ChannelCapability, InstrumentFeature,
                            InstrumentCapabilities, get_capabilities)
 
 __all__ = ["SerialTransport", "TcpTransport", "TransportError", "Profile", "SeriesProfile", "ParallelProfile",
            "ChannelProfile", "PowerStep", "LimitsError", "ProfileError", "Keithley2231A",
-           "InstrumentError", "SafetyError", "Reading", "TriggerPresetReadback",
+           "InstrumentError", "SafetyError", "Reading", "TriggerPresetReadback", "NeutralTriggerObservation",
            "AccuracySpec", "ChannelCapability", "InstrumentFeature",
            "InstrumentCapabilities", "get_capabilities"]
