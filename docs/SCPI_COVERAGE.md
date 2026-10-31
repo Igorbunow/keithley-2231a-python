@@ -108,12 +108,12 @@
 | SOURce 5-24…5-28 | `CURRent:UP` | **W** | `step_source(ch, "current", "up")` доступен только внутри ограниченного квалификационного STEP-контекста; не общий свободный UP. |
 | SOURce 5-24…5-28 | `CURRent:DOWN` | **W** | `step_source(ch, "current", "down")`; те же OFF/controlled powered gates, не повсеместный API. |
 | SOURce 5-24…5-28 | `CURRent:STEP / ?` | **W** | `source_step()` query и `configure_source_step()` guarded write: профили Independent, OFF, 1 мА lattice, строгий readback; есть ограниченные аппаратные CH1 испытания. Не весь диапазон/CH2/CH3. |
-| SOURce 5-24…5-28 | `CURRent:TRIGgered / ?` | **R** | R5-E1: **только `CURR:TRIG?`** через guarded `read_trigger_presets(ch)`, CH1/CH2/CH3 OFF, SIM-only. Запись и событие `*TRG` закрыты. |
+| SOURce 5-24…5-28 | `CURRent:TRIGgered / ?` | **R** | R5-E1: **только `CURR:TRIG?`** через guarded `read_trigger_presets(ch)`, CH1/CH2/CH3 OFF, SIM-only. R5-E2: OFF-only HW-runner подготовлен, реальные журналы NOT_RUN. Запись и `*TRG` закрыты. |
 | SOURce 5-24…5-28 | `[SOUR:]VOLTage[:LEV] / ?` | **W** | Уставка и readback через `set_channel()` |
 | SOURce 5-24…5-28 | `VOLTage:UP` | **W** | `step_source(ch, "voltage", "up")`; узкий профиль и аппаратное evidence CH1, не общий sweep. |
 | SOURce 5-24…5-28 | `VOLTage:DOWN` | **W** | `step_source(ch, "voltage", "down")`; узкий профиль и аппаратное evidence CH1. |
 | SOURce 5-24…5-28 | `VOLTage:STEP / ?` | **W** | `source_step()` query и `configure_source_step()` guarded write: Independent, OFF, 10 мВ lattice, строгий readback; 1 мВ запись отвергнута прибором. CH1 bounded HW; не общий sweep. |
-| SOURce 5-24…5-28 | `VOLTage:TRIGgered / ?` | **R** | R5-E1: **только `VOLT:TRIG?`** через guarded `read_trigger_presets(ch)`, CH1/CH2/CH3 OFF, SIM-only. Запись и событие `*TRG` закрыты. |
+| SOURce 5-24…5-28 | `VOLTage:TRIGgered / ?` | **R** | R5-E1: **только `VOLT:TRIG?`** через guarded `read_trigger_presets(ch)`, CH1/CH2/CH3 OFF, SIM-only. R5-E2: OFF-only HW-runner подготовлен, реальные журналы NOT_RUN. Запись и `*TRG` закрыты. |
 | SOURce 5-24…5-28 | `VOLTage:LIMit / ?` | **W** | Профиль ограничений + readback |
 | SOURce 5-24…5-28 | `VOLTage:LIMit:STATe / ?` | **W** | Защита профиля + readback |
 

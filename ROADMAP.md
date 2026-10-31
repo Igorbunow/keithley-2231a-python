@@ -571,3 +571,14 @@ evidence-reviewed R5-E2 OFF-only hardware campaign. See
 `docs/R5_E1_TRIGGER_PRESET_READBACK.ru.md`. Subsequent guarded trigger
 mutation APIs, if supported, require individual bounded hardware tests on
 CH1/CH2/CH3 and recovery-of-active-preset verification.
+
+## R5-E2 — OFF-only native trigger preset readback qualification candidate
+
+Prepared a one-case-per-channel operator-gated runner and independent original-
+JSONL offline auditor for `VOLT:TRIG?` then `CURR:TRIG?` on CH1/CH2/CH3. The
+existing independent profile is explicitly applied to physically OFF outputs;
+this is **not** a query-only overall SCPI session. The exact two *native trigger*
+queries are read-only and bounded by per-channel selection and a gate. No
+output ON, `*TRG`, triggered-setpoint writes or `INST:COUP` are permitted.
+Hardware status remains NOT_RUN until user-approved independent runs and review
+of their original JSONL. See `docs/R5_E2_TRIGGER_PRESET_OFF_QUALIFICATION.ru.md`.
