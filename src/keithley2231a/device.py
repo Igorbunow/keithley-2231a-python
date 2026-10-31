@@ -135,6 +135,8 @@ class Keithley2231A:
         # Authorize only one internally validated STEP write at a time.
         self._source_mutation_command: str | None = None
         self._trigger_read_query: str | None = None
+        self._trigger_write_command: str | None = None
+        self._trigger_staged_unqualified = False
         self._configured_source_steps: dict[tuple[int, str], float] = {}
         self._powered_step_window: dict | None = None
         self._expected_outputs = {ch: False for ch in (1, 2, 3)}
@@ -258,6 +260,7 @@ class Keithley2231A:
                 raise SafetyError('Service-owned session forbids ordinary SCPI operations')
             if (self._service_only_command(command) and command != self._service_command
                     and command != self._source_mutation_command
+                    and command != self._trigger_write_command
                     and not (query and command == self._trigger_read_query)):
                 raise SafetyError('Service-only SCPI forbidden outside an explicitly '
                                   'authorized driver service operation')
@@ -279,6 +282,8 @@ class Keithley2231A:
                               and window['enables'] == 0 and window['moves'] == 0)
                 if not (allowed or one_enable):
                     raise SafetyError('Powered STEP window forbids this SCPI write')
+            if command in ('OUTP 1', 'CHAN:OUTP 1') and self._trigger_staged_unqualified:
+                raise SafetyError('Unqualified staged trigger presets forbid output enable in this session')
             if command in ('OUTP 1', 'CHAN:OUTP 1') and self._configured_source_steps:
                 if not (window is not None and command == 'CHAN:OUTP 1'
                         and self._selected_channel == window['channel'] and window['enables'] == 0
@@ -1669,6 +1674,69 @@ class Keithley2231A:
                 if self._link_uncertain:
                     raise  # never auto-retry/shutdown over an uncertain link
                 self._trip(f'CH{ch} trigger-register read failed: {exc}')
+
+    def _write_authorized_trigger_preset(self, command: str):
+        """One exact OFF-only native trigger-register write through guarded dispatch."""
+        if (self._trigger_write_command is not None or self._trigger_read_query is not None
+                or re.fullmatch(r'(VOLT|CURR):TRIG [0-9]+\.[0-9]{3}', command) is None):
+            raise SafetyError('Unexpected or nested trigger write')
+        self._trigger_write_command = command
+        try:
+            self._write(command)
+        finally:
+            self._trigger_write_command = None
+
+    def stage_trigger_presets_off(self, ch: int, voltage_v: float, current_a: float, *,
+                                  confirmed_off_only: bool = False) -> TriggerPresetReadback:
+        """Stage both trigger registers OFF-only; NEVER issue *TRG or enable outputs.
+
+        Virtual UART tested; physical trigger writes remain NOT qualified.
+        Sequential, non-atomic, and the session remains output-enable locked
+        even after apply_profile(). A new session does not erase native presets.
+        """
+        self._check_channel(ch)
+        if confirmed_off_only is not True:
+            raise SafetyError('Explicit OFF-only trigger staging confirmation required')
+        for name, value, quantum in (('voltage', voltage_v, .01), ('current', current_a, .001)):
+            if (type(value) not in (int, float) or not math.isfinite(value)
+                    or value < 0 or abs(value / quantum - round(value / quantum)) > 1e-6):
+                raise LimitsError(f'{name} trigger preset invalid or off the {quantum:.3f} grid')
+        with self._lock:
+            self._require_ready()
+            if self._powered_step_window is not None or self._sequencing:
+                raise SafetyError('Trigger staging forbidden during powered STEP or sequence')
+            if not isinstance(self._profile, Profile) or self._profile.wiring != 'independent':
+                raise SafetyError('Trigger staging requires independent control profile')
+            spec = self._profile.channels[ch - 1]
+            if voltage_v > spec.max_voltage or current_a > spec.max_current:
+                raise LimitsError('Trigger staging outside current safety profile limits')
+            self._require_step_off()
+            self.verify_profile()
+            try:
+                self._select(ch)
+                if self._uint('INST:NSEL?', maximum=3) != ch:
+                    raise SafetyError('Wrong selected channel before trigger write')
+                # Persistent barrier before the FIRST potentially partial write.
+                self._trigger_staged_unqualified = True
+                self._write_authorized_trigger_preset(f'VOLT:TRIG {voltage_v:.3f}')
+                self.check_errors()
+                actual_v = self._read_authorized_trigger_register('VOLT:TRIG?')
+                self.check_errors()
+                if abs(actual_v - voltage_v) > .00049:
+                    raise SafetyError('VOLT:TRIG readback mismatch')
+                self._write_authorized_trigger_preset(f'CURR:TRIG {current_a:.3f}')
+                self.check_errors()
+                actual_i = self._read_authorized_trigger_register('CURR:TRIG?')
+                self.check_errors()
+                if abs(actual_i - current_a) > .00049:
+                    raise SafetyError('CURR:TRIG readback mismatch')
+                self.verify_profile()  # active V/I setpoints must remain unchanged
+                self._require_step_off()
+                return TriggerPresetReadback(ch, actual_v, actual_i)
+            except Exception as exc:
+                if self._link_uncertain:
+                    raise  # never retry or trust an uncertain UART
+                self._trip(f'CH{ch} trigger OFF staging failed: {exc}')
 
     @staticmethod
     def _source_step_tokens(ch: int, kind: str, increment: float | None = None):

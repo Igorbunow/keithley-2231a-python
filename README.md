@@ -1128,3 +1128,13 @@ currently has **virtual-UART-only** evidence. `*TRG`, writing trigger
 setpoints and `INST:COUP` remain blocked; no hardware synchronization or
 active trigger behavior is qualified. See
 `docs/R5_E1_TRIGGER_PRESET_READBACK.ru.md`.
+
+### Native trigger registers (R5-E2/R5-E3)
+
+`read_trigger_presets(ch)` now has bounded OFF-only real-hardware readback
+evidence for CH1/CH2/CH3. `stage_trigger_presets_off(ch, voltage_v, current_a,
+confirmed_off_only=True)` is a software-only guarded trigger-register write
+probe; it locks output-enable in the current session. A new session does not
+prove physical trigger registers were reset. `*TRG` and `INST:COUP` remain
+blocked; no simultaneous switching or loaded trigger behavior is claimed.
+See `docs/R5_E3_TRIGGER_OFF_STAGING.ru.md`.

@@ -167,9 +167,13 @@ class UARTPeer:
                 if self.profile_registers:
                     step_write = re.fullmatch(r'(VOLT|CURR):STEP ([0-9]+\.[0-9]{3})', cmd)
                     step_action = re.fullmatch(r'(VOLT|CURR):(UP|DOWN)', cmd)
+                    trigger_write = (re.fullmatch(r'(VOLT|CURR):TRIG ([0-9]+\.[0-9]{3})', cmd)
+                                     if self.trigger_registers else None)
                     reg_write = re.fullmatch(
                         r'(VOLT|CURR|VOLT:LIM|VOLT:LIM:STAT|OUTP:TIM:STAT|OUTP:TIM:DEL) '
                         r'([0-9]+(?:\.[0-9]+)?)', cmd)
+                    if trigger_write:
+                        self.channel_registers[self.selected][trigger_write[1]+':TRIG'] = trigger_write[2]
                     if reg_write:
                         self.channel_registers[self.selected][reg_write[1]] = reg_write[2]
                     elif step_write and not self.ignore_step_write:
@@ -223,7 +227,7 @@ class UARTPeer:
                                                'OUTP:TRAC 1',
                                                'OUTP 0', 'OUTP 1',
                                                'CHAN:OUTP 0', 'CHAN:OUTP 1'})
-                        if reg_write or step_write or step_action:
+                        if reg_write or step_write or step_action or trigger_write:
                             allowed_writes.add(cmd)
                 if cmd not in (allowed_reads if is_query else allowed_writes):
                     self.unsupported.append(cmd)

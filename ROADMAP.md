@@ -582,3 +582,10 @@ queries are read-only and bounded by per-channel selection and a gate. No
 output ON, `*TRG`, triggered-setpoint writes or `INST:COUP` are permitted.
 Hardware status remains NOT_RUN until user-approved independent runs and review
 of their original JSONL. See `docs/R5_E2_TRIGGER_PRESET_OFF_QUALIFICATION.ru.md`.
+
+## R5-E2 reviewed readback / R5-E3 trigger staging
+
+CH1/CH2/CH3 VOLT:TRIG?/CURR:TRIG? OFF-only readback independently verified
+with original evidence; see docs/reviews/R5_E2_TRIGGER_READ_HW_REVIEW_2026-10-31.md.
+R5-E3 software-only OFF trigger preset staging supports CH1/CH2/CH3 with
+one-session output-enable block; no *TRG, coupling or real write tests.

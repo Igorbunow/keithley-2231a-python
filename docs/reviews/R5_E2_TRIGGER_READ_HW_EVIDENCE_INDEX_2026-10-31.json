@@ -1,0 +1,43 @@
+{
+  "stage": "R5-E2",
+  "review": "OFF_ONLY_HW_READBACK_PASS_NOT_TRIGGER_ACTUATION",
+  "source_sha256": "d537a84fa3770f2e0854b53fba114ffbb61093e4e9ea535109400fc8ce3b538b",
+  "cases": [
+    {
+      "channel": 1,
+      "original": "events(20261031-023106).jsonl",
+      "sha256": "ec6dd8fb24a4414ba562d8f2be458b35ef62a040e2c7f5cac6201d522ef5f2f9",
+      "voltage_v": 0.0,
+      "current_a": 0.0,
+      "scpi_queries": 402,
+      "off_readbacks": 33,
+      "firmware": "1.04-0.01",
+      "physical_off": true,
+      "digital_off": true
+    },
+    {
+      "channel": 2,
+      "original": "events(20261031-023059).jsonl",
+      "sha256": "5a11060c4b34f07ea6333e3d5df66e09ccce626ab4663fee0d71bc78a59bcb71",
+      "voltage_v": 0.0,
+      "current_a": 0.0,
+      "scpi_queries": 402,
+      "off_readbacks": 33,
+      "firmware": "1.04-0.01",
+      "physical_off": true,
+      "digital_off": true
+    },
+    {
+      "channel": 3,
+      "original": "events(20261031-023053).jsonl",
+      "sha256": "1834a84a4e7957713e0ba147ab6a2887b4ca9b4d7804dfba9405bf8c3944caba",
+      "voltage_v": 0.0,
+      "current_a": 0.0,
+      "scpi_queries": 402,
+      "off_readbacks": 33,
+      "firmware": "1.04-0.01",
+      "physical_off": true,
+      "digital_off": true
+    }
+  ]
+}
