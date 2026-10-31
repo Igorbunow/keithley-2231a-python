@@ -1,0 +1,60 @@
+{
+  "stage": "R5-E5",
+  "review": "2026-10-31",
+  "upstream_stage": "R5-E4",
+  "status": "BOUNDED_OFF_ONLY_TRIGGER_PRESET_WRITE_READ_RESTORE_REVIEWED",
+  "actuation": "NOT_RUN",
+  "analog": "NOT_RUN",
+  "trigger_coupling": "NOT_QUALIFIED",
+  "source_sha256": "ba963332ed28816b0ba152afb2a7d5903d98c1fe3387d0472e73661d3facbf9e",
+  "config_sha256": "e4c580a71c6931d31b47fec86d3de270047a633818835c9b3f53490b92e9d720",
+  "runner_sha256": "00b6a7b23ced78a8ff129f9fe1064cb79b0348936f86b6ecf99c4c5cfe908e3f",
+  "stage_sha256": "eac9fcd41631055868204696e0c4b79be4a0eccc2401b71da4a162ca958c117a",
+  "firmware": "1.04-0.01",
+  "channels": [
+    {
+      "channel": 1,
+      "original_jsonl_sha256": "d01da0fc20536443a3cbebb61c2f21828a1c4ca601b8f8d8c46113c946097501",
+      "preset_voltage_v": 2.2,
+      "preset_current_a": 0.12,
+      "original_voltage_v": 0.0,
+      "original_current_a": 0.0,
+      "restored_voltage_v": 0.0,
+      "restored_current_a": 0.0,
+      "queries": 1058,
+      "off_readbacks": 81,
+      "report_dir": "2026-10-31T031907.157459Z_R5E4_CH1_TRIGGER_WRITE_RESTORE_OFF"
+    },
+    {
+      "channel": 2,
+      "original_jsonl_sha256": "8da003374d962623c7020d3d5b20bac995f6f3cb4a09348e9584b29e2d5068c8",
+      "preset_voltage_v": 0.8,
+      "preset_current_a": 0.08,
+      "original_voltage_v": 0.0,
+      "original_current_a": 0.0,
+      "restored_voltage_v": 0.0,
+      "restored_current_a": 0.0,
+      "queries": 1058,
+      "off_readbacks": 81,
+      "report_dir": "2026-10-31T032035.866988Z_R5E4_CH2_TRIGGER_WRITE_RESTORE_OFF"
+    },
+    {
+      "channel": 3,
+      "original_jsonl_sha256": "ade886ee5f42033ee8560a9675868f9a8eb9b458a86f2d2e052c8c8c4371434a",
+      "preset_voltage_v": 0.8,
+      "preset_current_a": 0.08,
+      "original_voltage_v": 0.0,
+      "original_current_a": 0.0,
+      "restored_voltage_v": 0.0,
+      "restored_current_a": 0.0,
+      "queries": 1058,
+      "off_readbacks": 81,
+      "report_dir": "2026-10-31T032140.685633Z_R5E4_CH3_TRIGGER_WRITE_RESTORE_OFF"
+    }
+  ],
+  "notes": [
+    "Source dirty=true; existing untracked hardware reports, not evidence of tracked code change.",
+    "Uploaded filenames are not chronological or channel keyed; match channel by original event content and SHA-256.",
+    "No *TRG or INST:COUP commands; no output enabled."
+  ]
+}

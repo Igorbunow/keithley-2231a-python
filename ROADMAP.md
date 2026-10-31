@@ -598,3 +598,16 @@ separate evidence auditor. Test fixture and default CLI DRY RUN perform no
 hardware access. Physical writes, `*TRG`, coupling and powered triggering
 remain NOT_RUN/NOT_QUALIFIED; explicit hardware approval needed for each
 channel. See docs/R5_E4_TRIGGER_OFF_WRITE_RESTORE_QUALIFICATION.ru.md.
+
+## R5-E5 — Review R5-E4 hardware evidence / plan trigger event
+
+R5-E4 original CH1/CH2/CH3 OFF-only write/read/restore JSONL independently
+reviewed and pinned by full SHA-256. Static trigger-preset staging capability
+now `bounded_hw`, **only** for inactive preset register operation. A standalone
+three-file offline matrix auditor and no-I/O risk planner are included.
+`*TRG`, `TRIG` and `INST:COUP` remain blocked; do not assume channel isolation,
+trigger timing, or an effect on active/live outputs. Next: clarify coupling
+query semantics, prepare safety interlocks and separately authorize first
+OFF-only bus trigger characterization across all three channels before any
+low-power analog trigger experiment. H09/H10 power-load qualifications are
+independent and still required.

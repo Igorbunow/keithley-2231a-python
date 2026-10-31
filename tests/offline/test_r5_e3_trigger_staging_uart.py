@@ -122,8 +122,12 @@ class TriggerStagingUART(unittest.TestCase):
         self.assertEqual(read.hardware_evidence[0].channels,(1,2,3))
         self.assertTrue((Path(__file__).resolve().parents[2] /
                          read.hardware_evidence[0].reference).is_file())
-        self.assertEqual(staged.evidence,'simulated_only')
-        self.assertFalse(staged.hardware_evidence)
+        # R5-E5 updates this assertion after independent R5-E4 OFF-only HW review.
+        self.assertEqual(staged.evidence,'bounded_hw')
+        self.assertEqual(staged.hardware_evidence[0].channels,(1,2,3))
+        self.assertEqual(staged.hardware_evidence[0].output_state,'OFF')
+        self.assertTrue((Path(__file__).resolve().parents[2] /
+                         staged.hardware_evidence[0].reference).is_file())
         self.assertFalse(caps.feature('hardware_triggered_setpoint').driver_exposed)
 
 if __name__ == '__main__': unittest.main()

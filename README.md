@@ -1149,3 +1149,14 @@ registers with readbacks and leaves all outputs OFF. It never sends `*TRG`,
 manually, never auto-retry an uncertain UART. The independent JSONL auditor is
 `tools/audit_r5_e4_trigger_write.py`. **R5-E4 hardware NOT_RUN**, not powered
 trigger qualification. See `docs/R5_E4_TRIGGER_OFF_WRITE_RESTORE_QUALIFICATION.ru.md`.
+
+### R5-E5 — Reviewed OFF-only trigger register staging
+
+Original R5-E4 hardware JSONL independently verifies CH1/CH2/CH3
+`VOLT:TRIG`/`CURR:TRIG` write/read/restore while all outputs OFF. See
+`docs/reviews/R5_E4_TRIGGER_WRITE_HW_REVIEW_2026-10-31.md` and
+`tools/audit_r5_e5_trigger_write_matrix.py` for pinned SHA-256 cross-run
+verification. This does not qualify `*TRG`, `INST:COUP`, powered switching,
+or synchronization. The *offline-only* `tools/plan_r5_e5_trigger_event.py`
+models all three channels as potentially affected by a bus trigger and
+performs no device I/O.
