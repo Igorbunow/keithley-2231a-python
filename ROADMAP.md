@@ -139,6 +139,8 @@ Reviewed all 86 documented family rows against the R5-A code and the manufacture
   and limited CH1 powered CV/CC qualification; trigger/coupling/APPLy/OUTP:ENAB
   remain documented-only. Do not treat evidence metadata as control permission.
   See `docs/R5_C_STEP_SCOPED_CAPABILITIES.ru.md`.
+- **R5-D1, channel-neutral STEP (software stage):** remove historical CH1-only restriction from the guarded *qualification* context for independent CH1/CH2/CH3, while keeping all low-power interlocks and exact per-channel outputs; no additional HW evidence until separate powered CV/CC tests on CH2 and CH3. Close per-channel STEP behavior only after independent original-log audit. See `docs/R5_D_ALL_CHANNEL_STEP_QUALIFICATION_PLAN.ru.md`.
+- **R5-D2 (operator-approved hardware stage):** evaluate CH2 and CH3 separately under low-power CV voltage STEP and CC current STEP with KEL103/DMM7510, plus missing CH2/CH3 voltage STEP OFF readbacks; no series/parallel/tracking; no auto retries. Do not confuse host-driven `VOLT` I-V sweeps with `VOLT:UP/DOWN`.
 - **R5-D, conditional research:** scoped OFF-only readback of `VOLT:TRIG?`, `CURR:TRIG?` and `INST:COUP?`, first virtual UART, then individually approved real hardware if indispensable.
 - **R5-E, conditional and separately approved:** only if useful, supervised trigger/multichannel APPLy feasibility. No auto-enable, no assumed atomicity, no bypass of profiles, no normal-path calibration writes.
 - Continue channel ergonomics, ownership/transport contracts and R6 packaging irrespective of whether the optional hardware investigations are taken.

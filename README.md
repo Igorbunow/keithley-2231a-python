@@ -1088,3 +1088,15 @@ It distinguishes reviewed STEP register queries, OFF-only digital steps,
 and narrowly qualified CH1 CV/CC powered steps. No capability metadata grants
 permission to control outputs or implies firmware-independent behavior.
 See `docs/R5_C_STEP_SCOPED_CAPABILITIES.ru.md`.
+
+### R5-D: channel-neutral STEP qualification candidate
+
+`powered_step_qualification(ch, ...)` now uses the selected channel for
+all three independent outputs, retaining the low-power envelope, one-channel
+ON invariant, exact STEP checks, emergency OFF and no-retry behavior. The
+ordinary `step_source()` method remains OFF-only outside this bounded window.
+**This is software/virtual-UART validation, NOT CH2/CH3 powered hardware
+qualification or general-purpose powered STEP permission.** Actual CH2/CH3
+CV/CC with KEL103 and DMM7510 must be independently reviewed per-channel,
+in separate operator-approved sessions. See
+`docs/R5_D_ALL_CHANNEL_STEP_QUALIFICATION_PLAN.ru.md`.

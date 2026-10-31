@@ -216,7 +216,8 @@ KEITHLEY_2231A_CAPABILITIES = InstrumentCapabilities(
         InstrumentFeature(
             "source_step_powered_qualification", True, True, "bounded_hw",
             ("Qualification context only, not general powered STEP API",
-             "CH1 only; <=3.5V, <=0.15A, <=0.60W profile envelope",
+             "Qualification API parameterized for CH1/CH2/CH3; powered hardware evidence so far CH1 only",
+             "Selected-channel profile <=3.5V, <=0.15A, <=0.60W; other outputs OFF",
              "External load, operator approval and physical OFF required",
              "CV/CC observations only at reviewed low-power points"),
             (HardwareEvidence((1,), "voltage_step_up_down", "POWERED", "CV",

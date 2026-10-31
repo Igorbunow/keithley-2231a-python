@@ -62,8 +62,8 @@ class PoweredStepWindowUART(unittest.TestCase):
     def test_wrong_channel_or_mode_rejected_before_uart(self):
         dev, peer = self.setup_device()
         before = list(peer.rx)
-        for ch, kind, mode in ((2, 'current', 'CC'), (1, 'current', 'CV'),
-                               (1, 'voltage', 'CC'), (3, 'voltage', 'CV')):
+        for ch, kind, mode in ((1, 'current', 'CV'), (1, 'voltage', 'CC'),
+                               (2, 'current', 'CV'), (3, 'voltage', 'CC')):
             with self.assertRaises(SafetyError):
                 with dev.powered_step_qualification(ch, kind, .010, 'up',
                      expected_mode=mode, external_load_confirmed=True):
