@@ -1,0 +1,87 @@
+manual_group,family,old_class,audited_class,driver_scope,audit_flag,manual_section,evidence_scope,priority
+Common,*CLS,R,R,"Очистка диагностик; только явно авторизованный service_mode, не обычный API",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+Common,*ESE / *ESE?,W,W,"R4.2: `status_enable_mask(""standard_event"")` reads `*ESE?` only; writing `*ESE` stays unsupported",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+Common,*ESR?,W,W,"R4.2-B: `consume_status_event(""standard_event"", acknowledge_clear=True)`; destructive read, OFF-only, HW REVIEWED PASS EVENT 2026-10-29 (one-shot; clear effect not independently measured)",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+Common,*IDN?,W,W,`Keithley2231A.identity()`,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+Common,*OPC / *OPC?,W,W,"R3.5.43 `operation_complete()` sends only `*OPC?` with idle/profile-free guard, strict `1`, **HW REVIEWED PASS** (one idle OFF-only `1` in 0.207 s, 2026-10-29); `*OPC` write unsupported; no guaranteed latency or event-latch preservation",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+Common,*RST,R,R,Сброс конфигурации может изменить условия безопасности,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+Common,*SRE / *SRE?,W,W,"R4.2: `status_enable_mask(""service_request"")` reads `*SRE?` only; writing `*SRE` stays unsupported",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+Common,*STB?,W,W,`status_snapshot()`,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+Common,*TRG,R,R,Триггер может менять выходные уставки,retained,§5,bounded / see SCPI_COVERAGE.md,P1
+Common,*SAV,R,R,Запись внутренней памяти,retained,§5,bounded / see SCPI_COVERAGE.md,P2
+Common,*RCL,R,R,Восстановление внутренних уставок,retained,§5,bounded / see SCPI_COVERAGE.md,P2
+Common,*TST?,R,R,Самотестирование; непроверенные побочные эффекты,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+Common,*WAI,R,R,Write-only wait barrier; DEFER: possible instrument queue stall and no reliable readback,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+Common,*PSC / *PSC?,W,W,"R3.5.41 `power_on_status_clear_state()` queries `*PSC?` only (HW REVIEWED PASS 2026-10-29: one real `0` read, OFF-only); `*PSC` write and power-on effects remain untested/blocked",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+APPLy,[SOUR:]APPLy / ?,R,R,Многоканальная настройка с побочными эффектами,retained,§5,bounded / see SCPI_COVERAGE.md,P2
+APPLy,APPLy:VOLTage / ?,R,R,Массовое изменение уставок,retained,§5,bounded / see SCPI_COVERAGE.md,P2
+APPLy,APPLy:CURRent / ?,R,R,Массовое изменение ограничений тока,retained,§5,bounded / see SCPI_COVERAGE.md,P2
+CALibration,CAL:SECure[:STATe],X,X,Сервисная/калибровочная операция,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+CALibration,CAL:VOLT:LEVel,X,X,Калибровочные точки,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+CALibration,CAL:VOLT[:DATA],X,X,Запись калибровки,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+CALibration,CAL:CURR:LEVel,X,X,Калибровочные точки,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+CALibration,CAL:CURR[:DATA],X,X,Запись калибровки,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+CALibration,CAL:SAVe,X,X,Постоянное сохранение калибровки,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+CALibration,CAL:INITial,X,X,Инициализация калибровки,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+CALibration,CAL:STRing,X,X,Калибровочные данные,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+DISPlay,DISP[:WIND][:STATe] / ?,W,W,"R4.4-A `display_enabled()` query-only `DISP?`; R4.4-B **HW REVIEWED PASS** (2026-10-29; one `DISP?=1`, OFF-only, firmware `1.04-1.04`); writes unsupported; see `docs/reviews/R4_4_B_DISPLAY_HW_REVIEW_2026-10-29.md`",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+DISPlay,DISP[:WIND]:TEXT[:DATA],U,R,Текст на передней панели может скрыть операторскую информацию; для библиотеки необязателен.,corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+DISPlay,DISP[:WIND]:TEXT:CLEar,U,R,"Восстановление display; mutation, нужен отдельный сценарий, если вообще потребуется.",corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+INSTrument,INST[:SELect] / ?,W,W,"R4.5-A: `selected_channel_name()` reads `INST?` only; CH1/CH2/CH3; symbolic write is unsupported, **SIM TESTED / HW NOT_RUN**",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+INSTrument,INST:NSELect / ?,W,W,Селектор канала + проверка,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+INSTrument,INST:COMBine:SERies,U,R,Неиспользуемый альтернативный управляющий маршрут комбинирования; не доказана эквивалентность `OUTP:SER` / safety gates.,corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+INSTrument,INST:COMBine:PARAllel,U,R,Альтернативный маршрут комбинирования; не подключать к общему API без проверки влияния на топологию.,corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+INSTrument,INST:COMBine:TRACk,U,R,Альтернативный маршрут tracking; эффекты на уставки/топологию требуют оценки.,corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+INSTrument,INST:COMBine:OFF,U,R,"Выход из объединённого режима; mutating, нельзя считать безвредным query. Отложить до точного preflight.",corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+INSTrument,INST:COUPle[:TRIGger] / ?,R,R,Связь триггеров/каналов,retained,§5,bounded / see SCPI_COVERAGE.md,P1
+MEASure,MEAS[:SCAL]:VOLT[:DC]?,W,W,`read_channel()` вызывает `MEAS:VOLT?`,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+MEASure,FETCh[:VOLT][:DC]?,W,W,"R4.4-A: `fetch_measurement(ch, ""voltage"")`, query-only `FETC:VOLT?`; R4.4-C HW REVIEWED PASS (one Independent CH1 low-power value 3.2996 V; freshness UNVERIFIED)",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+MEASure,MEAS[:SCAL]:CURR[:DC]?,W,W,`read_channel()` вызывает `MEAS:CURR?`,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+MEASure,FETCh:CURR[:DC]?,W,W,"R4.4-A: `fetch_measurement(ch, ""current"")`, query-only `FETC:CURR?`; R4.4-C HW REVIEWED PASS (one CH1 low-power value 0.0811749 A; freshness UNVERIFIED)",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+MEASure,MEAS[:SCAL]:POW[:DC]?,W,W,R4.4-A: `measure_power(ch)` performs `MEAS:POW?`; `Reading.power_w` remains U×I; R4.4-C HW REVIEWED PASS (one CH1 point 0.267863 W),retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+MEASure,FETCh:POW[:DC]?,W,W,"R4.4-A: `fetch_measurement(ch, ""power"")`, query-only `FETC:POW?`; R4.4-C HW REVIEWED PASS (one CH1 low-power value 0.267907 W; freshness UNVERIFIED)",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+OUTPut,OUTP[:STATe][:ALL] / ?,W,W,"`OUTP 0`, guarded global output, readback",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+OUTPut,CHAN:OUTP[:STATe] / ?,W,W,Один канал; при ON нужны профиль и gate,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+OUTPut,OUTP:ENABle,U,R,"В документации активирует функцию, выбранную в меню Enable Channels; query `OUTP:ENAB?` не документирован в показанной грамматике; возможен обход профиля выхода; RISK / до безопасной реализации — запрет.",corrected,§5,bounded / see SCPI_COVERAGE.md,P1
+OUTPut,OUTP:TIMer[:STATe] / ?,W,W,Проверка таймера,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+OUTPut,OUTP:TIMer:DELay / ?,W,W,Установка задержки + readback,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+OUTPut,OUTP:TRACk[:STATe] / ?,W,W,"Tracking, профиль",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+OUTPut,OUTP:SERies[:STATe] / ?,W,W,"Series, физические перемычки отдельно",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+OUTPut,OUTP:PARallel[:STATe] / ?,W,W,"Parallel, физические перемычки отдельно",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SYSTem,SYST:ERRor?,W,W,Очередь ошибок / статус после операций,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SYSTem,SYST:VERSion?,W,W,`status_snapshot()`,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SYSTem,SYST:REMote,W,W,Remote,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SYSTem,SYST:LOCal,W,W,Local при закрытии,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SYSTem,SYST:RWLock,W,W,"Блокировка панели, не safety interlock",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SYSTem,SYST:MODUle?,W,W,R4.2: `module_info()` via `SYST:MODU?`; module text ≠ identity/serial check; HW REVIEWED PASS READ_ONLY 2026-10-29,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SYSTem,SYST:BEEPer,W,W,`beep()`,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:QUES[:EVENt]?,W,W,"R4.2-B: `consume_status_event(""questionable"", acknowledge_clear=True)`; read-to-clear, OFF-only, HW REVIEWED PASS EVENT 2026-10-29 (one-shot; actual clearing not independently demonstrated)",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:QUES:ENABle / ?,W,W,"R4.2: `status_enable_mask(""questionable"")` queries `...:ENAB?` only; writes unsupported",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:QUES:CONDition?,W,W,`status_snapshot()`,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:PRESet,U,R,Сбрасывает конфигурацию регистров статуса; нельзя применять как неразрушающий status snapshot.,corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:QUES:INST[:EVENt]?,U,R,Неподтверждённое потенциально read-to-clear вложенное событие; требуется явное acknowledgement.,corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:QUES:INST:ENABle / ?,W,W,"R4.2-C `status_instrument_enable_mask(""questionable"")`: read-only; writes unsupported; HW REVIEWED PASS READ_ONLY 2026-10-29",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:QUES:INST:ISUM<x>[:EVENt]?,U,R,"Вложенное channel event; потенциально read-to-clear, проверить на OFF и не терять события.",corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:QUES:INST:ISUM<x>:ENABle / ?,W,W,"R4.2-C `status_instrument_enable_mask(""questionable"", channel=1..3)`; queries only; HW REVIEWED PASS READ_ONLY 2026-10-29",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:QUES:INST:ISUM<x>:COND?,W,W,`read_channel()` mode decoding,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:OPER[:EVENt]?,W,W,"R4.2-B: `consume_status_event(""operation"", acknowledge_clear=True)`; potentially destructive event read, OFF-only, HW REVIEWED PASS EVENT 2026-10-29 (one-shot)",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:OPER:COND?,W,W,`status_snapshot()`,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:OPER:ENABle / ?,W,W,"R4.2: `status_enable_mask(""operation"")` queries `...:ENAB?` only; writes unsupported",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:OPER:INST[:EVENt]?,U,R,Документация явно указывает read-to-clear; не запускать как фоновый статус.,corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:OPER:INST:ENABle / ?,W,W,"R4.2-C `status_instrument_enable_mask(""operation"")`: read-only; writes unsupported; HW REVIEWED PASS READ_ONLY 2026-10-29",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:OPER:INST:ISUM<x>[:EVENt]?,U,R,Канальный event-register; предусмотреть read-to-clear/одноразовый доступ.,corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:OPER:INST:ISUM<x>:ENABle / ?,W,W,"R4.2-C `status_instrument_enable_mask(""operation"", channel=1..3)`; queries only; HW REVIEWED PASS READ_ONLY 2026-10-29",retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+STATus,STAT:OPER:INST:ISUM<x>:COND?,W,W,`read_channel()` mode decoding; CH3 caveat,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SOURce,[SOUR:]CHAN:OUTP / ?,W,W,Эквивалент `CHAN:OUTP`,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SOURce,[SOUR:]CURRent[:LEV] / ?,W,W,Уставка и readback через `set_channel()`,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SOURce,CURRent:UP,U,W,"`step_source(ch, ""current"", ""up"")` доступен только внутри ограниченного квалификационного STEP-контекста; не общий свободный UP.",corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+SOURce,CURRent:DOWN,U,W,"`step_source(ch, ""current"", ""down"")`; те же OFF/controlled powered gates, не повсеместный API.",corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+SOURce,CURRent:STEP / ?,W,W,"`source_step()` query и `configure_source_step()` guarded write: профили Independent, OFF, 1 мА lattice, строгий readback; есть ограниченные аппаратные CH1 испытания. Не весь диапазон/CH2/CH3.",corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+SOURce,CURRent:TRIGgered / ?,R,R,Триггер может менять ограничение тока,retained,§5,bounded / see SCPI_COVERAGE.md,P1
+SOURce,[SOUR:]VOLTage[:LEV] / ?,W,W,Уставка и readback через `set_channel()`,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SOURce,VOLTage:UP,U,W,"`step_source(ch, ""voltage"", ""up"")`; узкий профиль и аппаратное evidence CH1, не общий sweep.",corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+SOURce,VOLTage:DOWN,U,W,"`step_source(ch, ""voltage"", ""down"")`; узкий профиль и аппаратное evidence CH1.",corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+SOURce,VOLTage:STEP / ?,W,W,"`source_step()` query и `configure_source_step()` guarded write: Independent, OFF, 10 мВ lattice, строгий readback; 1 мВ запись отвергнута прибором. CH1 bounded HW; не общий sweep.",corrected,§5,bounded / see SCPI_COVERAGE.md,maintain
+SOURce,VOLTage:TRIGgered / ?,R,R,Триггер меняет уставку,retained,§5,bounded / see SCPI_COVERAGE.md,P1
+SOURce,VOLTage:LIMit / ?,W,W,Профиль ограничений + readback,retained,§5,bounded / see SCPI_COVERAGE.md,maintain
+SOURce,VOLTage:LIMit:STATe / ?,W,W,Защита профиля + readback,retained,§5,bounded / see SCPI_COVERAGE.md,maintain

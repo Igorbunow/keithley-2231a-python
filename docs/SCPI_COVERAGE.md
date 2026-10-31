@@ -1,6 +1,8 @@
-# R4.1 — SCPI coverage inventory (baseline, no hardware I/O)
+# R4.1 / R5-B — SCPI coverage inventory (reviewed, no hardware I/O)
 
-**Статус:** R4.1 начат, таблица первичной инвентаризации, **не** заявление о полном покрытии/аппаратной проверке.
+**Статус:** R5-B 2026-10-31: проведён офлайн-пересмотр всех 86 строк R4.1 после R5-A; **не** заявление о полноте всех query/write вариантов или аппаратной проверке.
+**Итог классификации R5-B:** 53 `W` (есть хотя бы один ограниченный производственный маршрут), 25 `R` (отложены/под отдельный risk gate), 8 `X` (калибровка/сервис); исходная R4.1 классификация до исправления: 49 `W` / 16 `U` / 13 `R` / 8 `X`. Четыре `UP/DOWN` уже реализованы, 12 оставшихся `U` переведены в `R` после оценки рисков и ценности. `W` НЕ означает full API/проверку всех каналов и командных форм.
+Полный мотивированный отчёт: [`R5_B_SCPI_GAP_AUDIT.ru.md`](R5_B_SCPI_GAP_AUDIT.ru.md). Машиночитаемые строки: [`SCPI_COVERAGE_AUDITED_2026-10-31.csv`](SCPI_COVERAGE_AUDITED_2026-10-31.csv).
 
 **Источник:** Keithley Instruments, *Model 2231A-30-3 Triple-channel DC Power Supply Reference Manual*,
 публикация 077100401/September 2014, **§5, стр. 5-2–5-28**, по подразделам из официального оглавления.
@@ -14,7 +16,7 @@
 варианты будут уточнены в R4.1; отсутствующее в прямом on-wire маршруте нельзя
 назвать покрытым только по существованию generic debug API.
 
-Классы: `W` — обнаружен прямой рабочий on-wire маршрут драйвера; `U` — маршрут
+Классы: `W` — обнаружен прямой рабочий on-wire маршрут драйвера; `U` (исторический исходный класс) — маршрут
 не обнаружен, требуется оценка необходимости; `R` — отдельная оценка риска до
 реализации/испытания; `X` — сервисная/калибровочная команда, **исключена из
 обычного API**. Некоторые отдельно разрешённые некалибровочные сервисные
@@ -54,14 +56,14 @@
 | CALibration 5-7…5-9 | `CAL:INITial` | **X** | Инициализация калибровки |
 | CALibration 5-7…5-9 | `CAL:STRing` | **X** | Калибровочные данные |
 | DISPlay 5-9…5-10 | `DISP[:WIND][:STATe] / ?` | **W** | R4.4-A `display_enabled()` query-only `DISP?`; R4.4-B **HW REVIEWED PASS** (2026-10-29; one `DISP?=1`, OFF-only, firmware `1.04-1.04`); writes unsupported; see `docs/reviews/R4_4_B_DISPLAY_HW_REVIEW_2026-10-29.md` |
-| DISPlay 5-9…5-10 | `DISP[:WIND]:TEXT[:DATA]` | **U** | Пользовательский текст |
-| DISPlay 5-9…5-10 | `DISP[:WIND]:TEXT:CLEar` | **U** | Очистка текста |
+| DISPlay 5-9…5-10 | `DISP[:WIND]:TEXT[:DATA]` | **R** | Текст на передней панели может скрыть операторскую информацию; для библиотеки необязателен. |
+| DISPlay 5-9…5-10 | `DISP[:WIND]:TEXT:CLEar` | **R** | Восстановление display; mutation, нужен отдельный сценарий, если вообще потребуется. |
 | INSTrument 5-10…5-12 | `INST[:SELect] / ?` | **W** | R4.5-A: `selected_channel_name()` reads `INST?` only; CH1/CH2/CH3; symbolic write is unsupported, **SIM TESTED / HW NOT_RUN** |
 | INSTrument 5-10…5-12 | `INST:NSELect / ?` | **W** | Селектор канала + проверка |
-| INSTrument 5-10…5-12 | `INST:COMBine:SERies` | **U** | Отдельная альтернатива OUTP:SER |
-| INSTrument 5-10…5-12 | `INST:COMBine:PARAllel` | **U** | Отдельная альтернатива OUTP:PARALLEL |
-| INSTrument 5-10…5-12 | `INST:COMBine:TRACk` | **U** | Отдельная альтернатива OUTP:TRAC |
-| INSTrument 5-10…5-12 | `INST:COMBine:OFF` | **U** | Проверить топологические эффекты |
+| INSTrument 5-10…5-12 | `INST:COMBine:SERies` | **R** | Неиспользуемый альтернативный управляющий маршрут комбинирования; не доказана эквивалентность `OUTP:SER` / safety gates. |
+| INSTrument 5-10…5-12 | `INST:COMBine:PARAllel` | **R** | Альтернативный маршрут комбинирования; не подключать к общему API без проверки влияния на топологию. |
+| INSTrument 5-10…5-12 | `INST:COMBine:TRACk` | **R** | Альтернативный маршрут tracking; эффекты на уставки/топологию требуют оценки. |
+| INSTrument 5-10…5-12 | `INST:COMBine:OFF` | **R** | Выход из объединённого режима; mutating, нельзя считать безвредным query. Отложить до точного preflight. |
 | INSTrument 5-10…5-12 | `INST:COUPle[:TRIGger] / ?` | **R** | Связь триггеров/каналов |
 | MEASure 5-12…5-13 | `MEAS[:SCAL]:VOLT[:DC]?` | **W** | `read_channel()` вызывает `MEAS:VOLT?` |
 | MEASure 5-12…5-13 | `FETCh[:VOLT][:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "voltage")`, query-only `FETC:VOLT?`; R4.4-C HW REVIEWED PASS (one Independent CH1 low-power value 3.2996 V; freshness UNVERIFIED) |
@@ -71,7 +73,7 @@
 | MEASure 5-12…5-13 | `FETCh:POW[:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "power")`, query-only `FETC:POW?`; R4.4-C HW REVIEWED PASS (one CH1 low-power value 0.267907 W; freshness UNVERIFIED) |
 | OUTPut 5-14…5-16 | `OUTP[:STATe][:ALL] / ?` | **W** | `OUTP 0`, guarded global output, readback |
 | OUTPut 5-14…5-16 | `CHAN:OUTP[:STATe] / ?` | **W** | Один канал; при ON нужны профиль и gate |
-| OUTPut 5-14…5-16 | `OUTP:ENABle / ?` | **U** | EnableChannels semantics ещё не сопоставлены |
+| OUTPut 5-14…5-16 | `OUTP:ENABle` | **R** | В документации активирует функцию, выбранную в меню Enable Channels; query `OUTP:ENAB?` не документирован в показанной грамматике; возможен обход профиля выхода; RISK / до безопасной реализации — запрет. |
 | OUTPut 5-14…5-16 | `OUTP:TIMer[:STATe] / ?` | **W** | Проверка таймера |
 | OUTPut 5-14…5-16 | `OUTP:TIMer:DELay / ?` | **W** | Установка задержки + readback |
 | OUTPut 5-14…5-16 | `OUTP:TRACk[:STATe] / ?` | **W** | Tracking, профиль |
@@ -87,30 +89,30 @@
 | STATus 5-19…5-23 | `STAT:QUES[:EVENt]?` | **W** | R4.2-B: `consume_status_event("questionable", acknowledge_clear=True)`; read-to-clear, OFF-only, HW REVIEWED PASS EVENT 2026-10-29 (one-shot; actual clearing not independently demonstrated) |
 | STATus 5-19…5-23 | `STAT:QUES:ENABle / ?` | **W** | R4.2: `status_enable_mask("questionable")` queries `...:ENAB?` only; writes unsupported |
 | STATus 5-19…5-23 | `STAT:QUES:CONDition?` | **W** | `status_snapshot()` |
-| STATus 5-19…5-23 | `STAT:PRESet` | **U** | Сброс status config |
-| STATus 5-19…5-23 | `STAT:QUES:INST[:EVENt]?` | **U** | Event/read-to-clear |
+| STATus 5-19…5-23 | `STAT:PRESet` | **R** | Сбрасывает конфигурацию регистров статуса; нельзя применять как неразрушающий status snapshot. |
+| STATus 5-19…5-23 | `STAT:QUES:INST[:EVENt]?` | **R** | Неподтверждённое потенциально read-to-clear вложенное событие; требуется явное acknowledgement. |
 | STATus 5-19…5-23 | `STAT:QUES:INST:ENABle / ?` | **W** | R4.2-C `status_instrument_enable_mask("questionable")`: read-only; writes unsupported; HW REVIEWED PASS READ_ONLY 2026-10-29 |
-| STATus 5-19…5-23 | `STAT:QUES:INST:ISUM<x>[:EVENt]?` | **U** | Event/read-to-clear |
+| STATus 5-19…5-23 | `STAT:QUES:INST:ISUM<x>[:EVENt]?` | **R** | Вложенное channel event; потенциально read-to-clear, проверить на OFF и не терять события. |
 | STATus 5-19…5-23 | `STAT:QUES:INST:ISUM<x>:ENABle / ?` | **W** | R4.2-C `status_instrument_enable_mask("questionable", channel=1..3)`; queries only; HW REVIEWED PASS READ_ONLY 2026-10-29 |
 | STATus 5-19…5-23 | `STAT:QUES:INST:ISUM<x>:COND?` | **W** | `read_channel()` mode decoding |
 | STATus 5-19…5-23 | `STAT:OPER[:EVENt]?` | **W** | R4.2-B: `consume_status_event("operation", acknowledge_clear=True)`; potentially destructive event read, OFF-only, HW REVIEWED PASS EVENT 2026-10-29 (one-shot) |
 | STATus 5-19…5-23 | `STAT:OPER:COND?` | **W** | `status_snapshot()` |
 | STATus 5-19…5-23 | `STAT:OPER:ENABle / ?` | **W** | R4.2: `status_enable_mask("operation")` queries `...:ENAB?` only; writes unsupported |
-| STATus 5-19…5-23 | `STAT:OPER:INST[:EVENt]?` | **U** | Event/read-to-clear |
+| STATus 5-19…5-23 | `STAT:OPER:INST[:EVENt]?` | **R** | Документация явно указывает read-to-clear; не запускать как фоновый статус. |
 | STATus 5-19…5-23 | `STAT:OPER:INST:ENABle / ?` | **W** | R4.2-C `status_instrument_enable_mask("operation")`: read-only; writes unsupported; HW REVIEWED PASS READ_ONLY 2026-10-29 |
-| STATus 5-19…5-23 | `STAT:OPER:INST:ISUM<x>[:EVENt]?` | **U** | Event/read-to-clear |
+| STATus 5-19…5-23 | `STAT:OPER:INST:ISUM<x>[:EVENt]?` | **R** | Канальный event-register; предусмотреть read-to-clear/одноразовый доступ. |
 | STATus 5-19…5-23 | `STAT:OPER:INST:ISUM<x>:ENABle / ?` | **W** | R4.2-C `status_instrument_enable_mask("operation", channel=1..3)`; queries only; HW REVIEWED PASS READ_ONLY 2026-10-29 |
 | STATus 5-19…5-23 | `STAT:OPER:INST:ISUM<x>:COND?` | **W** | `read_channel()` mode decoding; CH3 caveat |
 | SOURce 5-24…5-28 | `[SOUR:]CHAN:OUTP / ?` | **W** | Эквивалент `CHAN:OUTP` |
 | SOURce 5-24…5-28 | `[SOUR:]CURRent[:LEV] / ?` | **W** | Уставка и readback через `set_channel()` |
-| SOURce 5-24…5-28 | `CURRent:UP` | **U** | Инкремент уставки |
-| SOURce 5-24…5-28 | `CURRent:DOWN` | **U** | Декремент уставки |
-| SOURce 5-24…5-28 | `CURRent:STEP / ?` | **W** | R4.5-A: `source_step(ch, "current")` reads `CURR:STEP?` only in armed Independent; writes/UP/DOWN blocked; **SIM TESTED / HW NOT_RUN** |
+| SOURce 5-24…5-28 | `CURRent:UP` | **W** | `step_source(ch, "current", "up")` доступен только внутри ограниченного квалификационного STEP-контекста; не общий свободный UP. |
+| SOURce 5-24…5-28 | `CURRent:DOWN` | **W** | `step_source(ch, "current", "down")`; те же OFF/controlled powered gates, не повсеместный API. |
+| SOURce 5-24…5-28 | `CURRent:STEP / ?` | **W** | `source_step()` query и `configure_source_step()` guarded write: профили Independent, OFF, 1 мА lattice, строгий readback; есть ограниченные аппаратные CH1 испытания. Не весь диапазон/CH2/CH3. |
 | SOURce 5-24…5-28 | `CURRent:TRIGgered / ?` | **R** | Триггер может менять ограничение тока |
 | SOURce 5-24…5-28 | `[SOUR:]VOLTage[:LEV] / ?` | **W** | Уставка и readback через `set_channel()` |
-| SOURce 5-24…5-28 | `VOLTage:UP` | **U** | Инкремент уставки |
-| SOURce 5-24…5-28 | `VOLTage:DOWN` | **U** | Декремент уставки |
-| SOURce 5-24…5-28 | `VOLTage:STEP / ?` | **W** | R4.5-A: `source_step(ch, "voltage")` reads `VOLT:STEP?` only in armed Independent; writes/UP/DOWN blocked; response format not yet HW confirmed |
+| SOURce 5-24…5-28 | `VOLTage:UP` | **W** | `step_source(ch, "voltage", "up")`; узкий профиль и аппаратное evidence CH1, не общий sweep. |
+| SOURce 5-24…5-28 | `VOLTage:DOWN` | **W** | `step_source(ch, "voltage", "down")`; узкий профиль и аппаратное evidence CH1. |
+| SOURce 5-24…5-28 | `VOLTage:STEP / ?` | **W** | `source_step()` query и `configure_source_step()` guarded write: Independent, OFF, 10 мВ lattice, строгий readback; 1 мВ запись отвергнута прибором. CH1 bounded HW; не общий sweep. |
 | SOURce 5-24…5-28 | `VOLTage:TRIGgered / ?` | **R** | Триггер меняет уставку |
 | SOURce 5-24…5-28 | `VOLTage:LIMit / ?` | **W** | Профиль ограничений + readback |
 | SOURce 5-24…5-28 | `VOLTage:LIMit:STATe / ?` | **W** | Защита профиля + readback |
