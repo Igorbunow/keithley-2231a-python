@@ -566,3 +566,14 @@ commands or bypass of a guarded/qualification-only powered STEP route.
 семейства в W и не HW PASS. Положительные виртуальные ответы не подтверждают
 реальную прошивку. `INST:COUP`, `*TRG` и trigger writes запрещены; см.
 `docs/R5_E1_TRIGGER_PRESET_READBACK.ru.md`.
+
+## R5-E10 — non-neutral trigger OFF digital protocol (software design only)
+
+R5-E10 adds a non-executing protocol and synthetic checker, **not** new SCPI
+coverage or driver exposure. Ordinary `VOLT?`/`CURR?` and triggered
+`VOLT:TRIG?`/`CURR:TRIG?` must be kept distinct across all three channels.
+Neutral R5-E7-HW `*TRG` evidence does not prove a non-neutral source event.
+`INST:COUP` semantics remain ambiguous/blocked; powered trigger, analog
+readback, coupling recipients, timing and synchronization remain unqualified.
+The proposed future hardware procedure requires separately authorized
+original twelve-register save/restore, all-channel OFF and raw evidence audit.

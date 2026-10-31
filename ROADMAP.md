@@ -660,3 +660,22 @@ new bounded non-neutral OFF-only digital test protocol; require all six
 ordinary and six trigger register baselines, a separately accepted restoration
 plan, all-channel OFF checks and a new operator authorization. A neutral
 `*TRG` acceptance is not proof of any non-neutral or powered actuation.
+
+## R5-E10 — non-neutral OFF-only digital protocol review (SOFTWARE ONLY)
+
+Prepared a script-free, non-executing **protocol draft** and synthetic digital
+consistency checker. It requires four sets of 12 sequential ordinary and
+trigger-register readbacks plus CH1/2/3 OFF, records both original ordinary
+**and** original TRIG restoration obligations, tests uncertainty, mismatches,
+all possible recipient hypotheses and incomplete data. No production
+SCPI/transport change, no hardware runner, no `*TRG`, coupling query/write,
+output ON or operator authorization is included. An offline synthetic match
+is explicitly **NOT a hardware qualification**. See
+`docs/R5_E10_NON_NEUTRAL_OFF_DIGITAL_PROTOCOL.en.md`.
+
+**Next R5-E11, separate approval gate:** independently review and, only if
+justified, implement a truly guarded one-event non-neutral OFF-only physical
+qualification runner and original-JSONL auditor. This would be software-tested
+first; a *different*, explicit operator approval would still be required for
+any live trial. Do not infer trigger recipients, timing or powered performance.
+H09 loaded Series and H10 loaded Parallel remain separate and OPEN.
