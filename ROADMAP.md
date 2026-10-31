@@ -134,6 +134,11 @@ a software-only increment until the user verifies the full regression.
 Reviewed all 86 documented family rows against the R5-A code and the manufacturer §5. The prior R4.1 register understated bounded STEP/UP/DOWN support. Current disposition: **53 W (at least one guarded route), 25 R (deferred/risk), 8 X (calibration)**. These are family counts, not percent of complete SCPI verb/argument support or HW verified status. See `docs/R5_B_SCPI_GAP_AUDIT.ru.md` and the updated `docs/SCPI_COVERAGE.md`.
 
 - **R5-C, software-only:** strengthen typed capability descriptors, distinguish CH1-only STEP evidence, native trigger setpoints and trigger coupling (`documented_only`) from driver-exposed features, correct stale `source_step()` docstring; keep SCPI code unchanged unless separately justified.
+- **R5-C completed in software patch (pending operator regression):** schema v2 typed
+  `HardwareEvidence` evidence envelopes for STEP query/OFF configure/OFF mutation
+  and limited CH1 powered CV/CC qualification; trigger/coupling/APPLy/OUTP:ENAB
+  remain documented-only. Do not treat evidence metadata as control permission.
+  See `docs/R5_C_STEP_SCOPED_CAPABILITIES.ru.md`.
 - **R5-D, conditional research:** scoped OFF-only readback of `VOLT:TRIG?`, `CURR:TRIG?` and `INST:COUP?`, first virtual UART, then individually approved real hardware if indispensable.
 - **R5-E, conditional and separately approved:** only if useful, supervised trigger/multichannel APPLy feasibility. No auto-enable, no assumed atomicity, no bypass of profiles, no normal-path calibration writes.
 - Continue channel ergonomics, ownership/transport contracts and R6 packaging irrespective of whether the optional hardware investigations are taken.

@@ -1579,10 +1579,13 @@ class Keithley2231A:
         """Read only the preset UP/DOWN increment, without stepping outputs.
 
         ``kind`` is exactly voltage or current. This is an observation of the
-        per-channel register with a validated independent profile; a voltage
-        or current STEP *write*, UP/DOWN and trigger commands remain forbidden.
-        Reading this register is NOT permission to change the source setting.
-        The firmware response to VOLT:STEP? remains SIM TESTED / HW NOT_RUN.
+        per-channel register with a validated independent profile. Separate
+        guarded APIs support OFF-only configure_source_step()/step_source(),
+        with a narrowly bounded CH1 powered qualification context. Those
+        permissions do not follow from a query and do not authorize *TRG,
+        VOLT:TRIG/CURR:TRIG or unrestricted powered UP/DOWN. Recorded STEP
+        register readback evidence is scoped to particular channels/kinds:
+        see static capabilities; no general firmware guarantee is implied.
         """
         self._check_channel(ch)
         if type(kind) is not str or kind not in ('voltage', 'current'):
@@ -1751,8 +1754,11 @@ class Keithley2231A:
         external-load approval; ordinary callers cannot enable STEP outputs.
         Each command checks profile, selected channel and step-register integrity.
         Decimal-millistep arithmetic avoids float drift; readback
-        precision remains 1 m-unit and writes require 10 mV/1 mA grids or the session is tripped. Real firmware
-        semantics and analog effects remain HW NOT_RUN for these mutations.
+        precision remains 1 m-unit and writes require 10 mV/1 mA grids or
+        the session is tripped. Narrowly reviewed CH1 low-power CV/CC STEP
+        mutations and OFF-only digital cases are documented in capabilities.
+        They do not qualify other channels under load, arbitrary ranges,
+        transient timing, or general operator-free powered STEP execution.
         """
         command, _ = self._source_step_tokens(ch, kind)
         if type(direction) is not str or direction not in ('up', 'down'):

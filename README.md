@@ -1080,3 +1080,11 @@ print(caps.to_dict()["readback"]["readings_atomic"])  # False
 
 See `docs/R5_A_STATIC_DEVICE_CAPABILITIES.ru.md` for schema, accuracy
 conditions and bounded qualification caveats.
+
+### R5-C: scoped static capability evidence
+
+`Keithley2231A.capabilities()` is offline model metadata (`schema_version=2`).
+It distinguishes reviewed STEP register queries, OFF-only digital steps,
+and narrowly qualified CH1 CV/CC powered steps. No capability metadata grants
+permission to control outputs or implies firmware-independent behavior.
+See `docs/R5_C_STEP_SCOPED_CAPABILITIES.ru.md`.

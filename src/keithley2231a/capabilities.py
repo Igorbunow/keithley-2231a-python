@@ -55,6 +55,47 @@ class ChannelCapability:
 
 
 @dataclass(frozen=True)
+class HardwareEvidence:
+    """One bounded historical observation, not live device authorization.
+
+    An empty collection on a feature means that detailed per-channel evidence
+    has not been modeled here; it does NOT negate older recorded observations.
+    """
+    channels: tuple[int, ...]
+    operation: str
+    output_state: str  # OFF | POWERED
+    regulation: str | None  # CV | CC | None
+    observation: str  # digital_readback | analog_steady_state
+    reference: str
+
+    def __post_init__(self) -> None:
+        if (not self.channels or any(type(ch) is not int or ch not in (1, 2, 3)
+                                     for ch in self.channels) or
+                len(set(self.channels)) != len(self.channels)):
+            raise ValueError('hardware evidence must name distinct valid channels')
+        if self.output_state not in ('OFF', 'POWERED'):
+            raise ValueError('invalid output state in evidence')
+        if self.regulation not in (None, 'CV', 'CC'):
+            raise ValueError('invalid regulation in evidence')
+        if self.output_state == 'OFF' and self.regulation is not None:
+            raise ValueError('OFF-only evidence cannot assert CV/CC regulation')
+        if self.observation not in ('digital_readback', 'analog_steady_state'):
+            raise ValueError('invalid hardware evidence observation')
+        if not self.operation or not self.reference:
+            raise ValueError('evidence needs operation and provenance')
+
+    def to_dict(self) -> dict:
+        return {
+            'channels': list(self.channels),
+            'operation': self.operation,
+            'output_state': self.output_state,
+            'regulation': self.regulation,
+            'observation': self.observation,
+            'reference': self.reference,
+        }
+
+
+@dataclass(frozen=True)
 class InstrumentFeature:
     """Distinguish hardware, guarded driver API and evidence scope.
 
@@ -66,6 +107,13 @@ class InstrumentFeature:
     driver_exposed: bool
     evidence: str  # bounded_hw | simulated_only | documented_only | absent
     constraints: tuple[str, ...] = ()
+    hardware_evidence: tuple[HardwareEvidence, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.hardware_evidence and (self.evidence != 'bounded_hw' or
+                                       not self.instrument_native or
+                                       not self.driver_exposed):
+            raise ValueError('bounded instrument evidence requires exposed native feature')
 
     def to_dict(self) -> dict:
         return {
@@ -74,6 +122,7 @@ class InstrumentFeature:
             "driver_exposed": self.driver_exposed,
             "evidence": self.evidence,
             "constraints": list(self.constraints),
+            "hardware_evidence": [e.to_dict() for e in self.hardware_evidence],
         }
 
 
@@ -123,7 +172,7 @@ class InstrumentCapabilities:
 
 KEITHLEY_2231A_CAPABILITIES = InstrumentCapabilities(
     model="Keithley 2231A-30-3",
-    schema_version=1,
+    schema_version=2,
     channels=(
         ChannelCapability(1, 30.0, 3.0, 0.01, 0.001),
         ChannelCapability(2, 30.0, 3.0, 0.01, 0.001),
@@ -140,8 +189,52 @@ KEITHLEY_2231A_CAPABILITIES = InstrumentCapabilities(
         InstrumentFeature("tracking", True, True, "bounded_hw", ("CH1/CH2 behavior, bounded scopes",)),
         InstrumentFeature("series", True, True, "bounded_hw", ("physical jumpers required", "no universal CC qualification")),
         InstrumentFeature("parallel", True, True, "bounded_hw", ("physical jumpers required", "branch sharing not verified")),
-        InstrumentFeature("source_step_query", True, True, "simulated_only", ("not qualified for arbitrary firmware",)),
-        InstrumentFeature("hardware_triggered_setpoint", True, False, "documented_only", ("unsafe unqualified output mutation",)),
+        InstrumentFeature(
+            "source_step_query", True, True, "bounded_hw",
+            ("Independent profile; register reads are not a license to step",
+             "CH2/CH3 VOLT:STEP? behavior not independently qualified"),
+            (HardwareEvidence((1,), "voltage_step_readback", "OFF", None,
+                              "digital_readback", "docs/reviews/R4_5_D_CH1_VOLT_10MV_HW_REVIEW_2026-10-30.md"),
+             HardwareEvidence((1, 2, 3), "current_step_readback", "OFF", None,
+                              "digital_readback", "docs/reviews/R4_5_D_CURRENT_BATCH_HW_REVIEW_2026-10-30.md"))),
+        InstrumentFeature(
+            "source_step_off_configuration", True, True, "bounded_hw",
+            ("All outputs OFF, independent control profile, strict 10mV/1mA grid",
+             "Readback confirmation is digital, not analog qualification"),
+            (HardwareEvidence((1,), "voltage_step_configuration", "OFF", None,
+                              "digital_readback", "docs/reviews/R4_5_D_CH1_VOLT_10MV_HW_REVIEW_2026-10-30.md"),
+             HardwareEvidence((1, 2, 3), "current_step_configuration", "OFF", None,
+                              "digital_readback", "docs/reviews/R4_5_D_CURRENT_BATCH_HW_REVIEW_2026-10-30.md"))),
+        InstrumentFeature(
+            "source_step_off_mutation", True, True, "bounded_hw",
+            ("OFF-only UP/DOWN by default", "One verified increment per call",
+             "Digital preset changes do not establish analog behavior"),
+            (HardwareEvidence((1,), "voltage_step_up_down", "OFF", None,
+                              "digital_readback", "docs/reviews/R4_5_D_CH1_VOLT_10MV_HW_REVIEW_2026-10-30.md"),
+             HardwareEvidence((1, 2, 3), "current_step_up_down", "OFF", None,
+                              "digital_readback", "docs/reviews/R4_5_D_CURRENT_BATCH_HW_REVIEW_2026-10-30.md"))),
+        InstrumentFeature(
+            "source_step_powered_qualification", True, True, "bounded_hw",
+            ("Qualification context only, not general powered STEP API",
+             "CH1 only; <=3.5V, <=0.15A, <=0.60W profile envelope",
+             "External load, operator approval and physical OFF required",
+             "CV/CC observations only at reviewed low-power points"),
+            (HardwareEvidence((1,), "voltage_step_up_down", "POWERED", "CV",
+                              "analog_steady_state", "docs/reviews/R4_5_E_C_CH1_CV_FIVE_POINT_HW_REVIEW_2026-10-30.md"),
+             HardwareEvidence((1,), "current_step_up_down", "POWERED", "CC",
+                              "analog_steady_state", "docs/reviews/R4_5_E_C_CH1_CC_FIVE_POINT_HW_REVIEW_2026-10-30.md"))),
+        InstrumentFeature("hardware_triggered_setpoint", True, False, "documented_only",
+                          ("VOLT:TRIG/CURR:TRIG and *TRG; no safe public write path",
+                           "Neither latency nor output mutation qualified")),
+        InstrumentFeature("trigger_channel_coupling", True, False, "documented_only",
+                          ("INST:COUP; not equivalent to output tracking",
+                           "No verified synchronized switching or timing guarantee")),
+        InstrumentFeature("bulk_apply_setpoints", True, False, "documented_only",
+                          ("APPLy; no proven atomicity or faster safe behavior",
+                           "No bypass of per-channel profiles")),
+        InstrumentFeature("enable_channels_function", True, False, "documented_only",
+                          ("OUTP:ENAB has different menu semantics from output_enable",
+                           "High risk; do not expose or infer query form")),
         InstrumentFeature("native_iv_sweep", False, False, "absent", ("host-side example only",)),
         InstrumentFeature("atomic_voltage_current_sample", False, False, "absent", ("readings are sequential",)),
         InstrumentFeature("native_ethernet", False, False, "absent", ("serial UART; TCP requires external bridge",)),
@@ -154,6 +247,7 @@ KEITHLEY_2231A_CAPABILITIES = InstrumentCapabilities(
         "Static model metadata: no SCPI, connection, or live-state validation.",
         "Readback specification is conditional; displayed digits are not guaranteed accuracy.",
         "Evidence labels are bounded to recorded scenarios, wiring and firmware.",
+        "hardware_evidence is illustrative and non-exhaustive; no scope grants power control.",
         "Native operation is not an authorization to enable output or to bypass profiles.",
         "A controller must recheck live topology, profile and physical OFF gates.",
         "Readings are not simultaneous; no calibrated I-V assertion is made.",

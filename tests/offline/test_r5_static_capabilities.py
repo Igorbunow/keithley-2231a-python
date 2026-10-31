@@ -14,7 +14,7 @@ class StaticCapabilityTests(unittest.TestCase):
 
     def test_model_and_identity(self):
         c = get_capabilities()
-        self.assertEqual(c.schema_version, 1)
+        self.assertEqual(c.schema_version, 2)
         self.assertEqual(c.model, 'Keithley 2231A-30-3')
         self.assertIs(c, KEITHLEY_2231A_CAPABILITIES)
 
