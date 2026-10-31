@@ -528,3 +528,13 @@ The prior one-point CV and one-point CC trials were reviewed separately.
 **Five-point CC is NOT_RUN** pending its own operator-approved test and
 original-evidence audit. The CV result does not prove timing transients,
 absolute calibration, arbitrary V–I sweep or additional H09/H10 load points.
+
+## R5-D2 — operator-gated STEP CH1/CH2/CH3 hardware candidate
+
+Added the non-installed, qualification-only stage, CLI and offline raw-JSONL
+reviewer for four native powered STEP transitions on one selected channel.
+CV 10 mV and CC 5 mA use KEL103 + DMM7510, bounded independent topology and
+separate operator gates. No user-facing arbitrary powered STEP, new SCPI wire
+shortcut, or application orchestration in `src` is introduced. OFF-only VOLT
+STEP on CH2/CH3 and powered CV/CC on CH2/CH3 still require **real** separate
+hardware runs and original-evidence review before marking capabilities verified.

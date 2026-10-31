@@ -1100,3 +1100,12 @@ qualification or general-purpose powered STEP permission.** Actual CH2/CH3
 CV/CC with KEL103 and DMM7510 must be independently reviewed per-channel,
 in separate operator-approved sessions. See
 `docs/R5_D_ALL_CHANNEL_STEP_QUALIFICATION_PLAN.ru.md`.
+
+**R5-D2 STEP all-channel powered qualification candidate (software-only):**
+`tools/r5_d2_step_powered_qualify.py --channel 2 --mode cv` is a dry-run by
+ default. One future, separately operator-approved powered test may exercise
+one CH1/CH2/CH3 channel in CV or CC with external KEL103/DMM7510 readings;
+exactly four native UP/UP/DOWN/DOWN moves, independent verified OFF and no
+retries. `tools/audit_r5_d2_step_powered.py` reviews original evidence offline.
+**CH2/CH3 powered STEP remains HW NOT_RUN** until independent hardware review.
+See `docs/R5_D2_POWERED_STEP_CH123_HARDWARE_CANDIDATE.ru.md`.
