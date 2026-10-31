@@ -618,3 +618,16 @@ independent and still required.
   проверяет только цифровую безопасность; hardware event `NOT_RUN`.
 - R5-E7 planned: операторский OFF-only runner и независимый JSONL-аудитор
   события, затем отдельная проверка ненейтральных цифровых переходов.
+
+## R5-E7 — guarded neutral `*TRG` OFF-only hardware candidate
+
+A separate manually gated runner, independent original-JSONL auditor, and
+virtual-UART/negative tests cover **one neutral bus event across all three
+potential recipient channels**. Keep empty PSU terminals and all CH OFF.
+Reading/coupling changes and power output enable are prohibited. Original
+trigger registers are restored only after a healthy-link event; link uncertainty
+requires physical OFF and operator review. The hardware trial is **NOT_RUN**
+until a human-authorized `--execute` and an independent JSONL review.
+`*TRG` event acceptance alone does not qualify coupling, timing, analog
+transitions or low-power CV/CC behavior. See
+`docs/R5_E7_NEUTRAL_BUS_TRIGGER_OFF_QUALIFICATION.ru.md`.

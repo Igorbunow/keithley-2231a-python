@@ -1170,3 +1170,14 @@ performs no device I/O.
 приборе не запускать:** аппаратный qualification runner и независимый
 аудитор ещё не выпущены. См.
 `docs/R5_E6_NEUTRAL_TRIGGER_OFF_SOFTWARE.ru.md`.
+
+### R5-E7 — neutral `*TRG` guarded hardware candidate
+
+A distinct `tools/r5_e7_neutral_trigger_qualify.py` (dry-run by default) and
+`tools/audit_r5_e7_neutral_trigger.py` prepare a manually controlled OFF-only
+qualification. **Not yet tested on physical hardware.** The runner verifies
+and restores CH1/CH2/CH3 neutral trigger registers, sends one bus `*TRG`, and
+requires all output terminals physically empty and all outputs OFF. Neither
+coupling, actual setpoint transitions, analog response nor synchronization are
+qualified by a neutral event. See
+`docs/R5_E7_NEUTRAL_BUS_TRIGGER_OFF_QUALIFICATION.ru.md`.
