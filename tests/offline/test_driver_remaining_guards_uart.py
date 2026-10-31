@@ -178,7 +178,13 @@ class RemainingDriverGuardsUART(unittest.TestCase):
     def test_close_verifies_off_then_closes_connection(self):
         dev, peer, wire = self.device()
         dev.output(1, True)
+        local_before = peer.rx.count('SYST:LOC')
         dev.close()
+        # close() sends final non-query UART writes. Wait until the peer
+        # receives them before taking the no-more-I/O snapshot: otherwise
+        # its reader thread can append already-sent bytes after the snapshot.
+        self.assertTrue(peer.await_command('SYST:LOC', occurrences=local_before + 1,
+                                           timeout=.75))
         # Transport's public contract is close(), NOT a .closed attribute.
         # Verify closure by refusing another wire query for both the
         # production pyserial transport and the POSIX PTY fallback.

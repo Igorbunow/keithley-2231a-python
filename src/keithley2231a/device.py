@@ -58,6 +58,12 @@ class Reading:
     regulation_source: str | None = None
 
 class Keithley2231A:
+    @staticmethod
+    def capabilities():
+        """Model-level metadata; does not access UART, TCP or live state."""
+        from .capabilities import get_capabilities
+        return get_capabilities()
+
     _OUTPUT_OFF_TIMEOUT_S = 1.0
     _OUTPUT_POLL_INTERVAL_S = 0.05
 

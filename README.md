@@ -1064,3 +1064,19 @@ The earlier R4.5-E-B one-point CC test was also separately reviewed PASS;
 any older `CC NOT_RUN` statement above describes its historical review date.
 The **five-point CC series remains NOT_RUN**. No transient-response,
 calibration or unrestricted I–V automation claims follow from this CV review.
+
+## Static capabilities (R5-A)
+
+Instrument-native and driver-exposed features are separate axes. Read-only
+metadata needs no connected instrument and does not authorize switching an output:
+
+```python
+from keithley2231a import Keithley2231A
+caps = Keithley2231A.capabilities()
+print(caps.channel(3).rated_voltage_v)  # 5.0
+print(caps.feature("native_iv_sweep").instrument_native)  # False
+print(caps.to_dict()["readback"]["readings_atomic"])  # False
+```
+
+See `docs/R5_A_STATIC_DEVICE_CAPABILITIES.ru.md` for schema, accuracy
+conditions and bounded qualification caveats.

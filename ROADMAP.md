@@ -118,6 +118,12 @@ A virtual UART test is NOT a real-firmware or metrology qualification.
 
 ## R5 — ergonomic high-level API and capabilities
 
+R5-A: immutable, read-only model capability contract for one 2231A-30-3,
+exposing native hardware support separately from guarded driver exposure
+and bounded evidence. No live SCPI commands, runtime identification or bench
+orchestration. See `docs/R5_A_STATIC_DEVICE_CAPABILITIES.ru.md`. This remains
+a software-only increment until the user verifies the full regression.
+
 - Channel API (CH1/CH2/CH3) *delegating* to common guards, not copying SCPI.
 - Accurate device capability metadata and observed-vs-simulated distinctions.
 - Typed profile validation, versioned serialization, documented ownership and
