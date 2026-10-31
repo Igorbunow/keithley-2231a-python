@@ -1181,3 +1181,12 @@ requires all output terminals physically empty and all outputs OFF. Neither
 coupling, actual setpoint transitions, analog response nor synchronization are
 qualified by a neutral event. See
 `docs/R5_E7_NEUTRAL_BUS_TRIGGER_OFF_QUALIFICATION.ru.md`.
+
+### R5-E8 — reviewed R5-E7 neutral bus trigger hardware evidence
+
+The original 2026-10-31 single `*TRG` event was independently reviewed on an
+OFF-only, empty-terminal Keithley. `neutral_trigger_bus_off_candidate` is
+`bounded_hw` **for that exact neutral event only**; `INST:COUP`, non-neutral
+setpoint switching, analog response and synchronization are unqualified.
+The full original JSONL is SHA-pinned but not committed. See
+`docs/reviews/R5_E7_NEUTRAL_TRIGGER_HW_REVIEW_2026-10-31.md`.

@@ -1,0 +1,56 @@
+{
+  "analog": "NOT_MEASURED",
+  "config_sha256": "e4c580a71c6931d31b47fec86d3de270047a633818835c9b3f53490b92e9d720",
+  "coupling": "UNKNOWN_NOT_QUALIFIED",
+  "duplicated_adjacent_error_query_pairs_in_call_sequence": 50,
+  "elapsed_seconds": 114.53525494100177,
+  "evidence_note": "The original multi-MB JSONL remains external, not embedded in Git.",
+  "firmware": "1.04-1.04",
+  "git_head_at_run": "2a1192943b17e6787f5ff8892969902d28dae4c4",
+  "model": "2231A-30-3",
+  "neutral_presets": {
+    "1": {
+      "current_a": 0.15,
+      "voltage_v": 3.3
+    },
+    "2": {
+      "current_a": 0.1,
+      "voltage_v": 1.0
+    },
+    "3": {
+      "current_a": 0.1,
+      "voltage_v": 1.0
+    }
+  },
+  "off_readback_count": 240,
+  "original_file": "events(20261031-112541).jsonl",
+  "original_presets": {
+    "1": {
+      "current_a": 0.0,
+      "voltage_v": 0.0
+    },
+    "2": {
+      "current_a": 0.0,
+      "voltage_v": 0.0
+    },
+    "3": {
+      "current_a": 0.0,
+      "voltage_v": 0.0
+    }
+  },
+  "original_sha256": "0c3dd7335dc15a304f65bd14fa604d11ef07c24accc225a93b2bed4c0aa71116",
+  "record_count": 14352,
+  "review_date": "2026-10-31",
+  "runner_sha256": "da1c0e90157fdd258f35997d998a1724516f45a972088d70810a89eb0b1c6204",
+  "schema_version": 1,
+  "scpi_error_query_count": 1978,
+  "source_sha256": "bb6896a7662c00ffefc36f5c3dce2a97d725e078e244fc711ca2c05fa021a0da",
+  "stage": "R5-E7-HW",
+  "stage_sha256": "5cbf4b3c94e217bd746d911037b0647cd54820113431fdd07e19f7397f973b08",
+  "status": "REVIEWABLE_PASS_NEUTRAL_OFF_ONLY_NOT_ACTUATION",
+  "test_id": "R5E7NEUTRALTRIGGER",
+  "trigger_count": 1,
+  "wire_query_count": 3263,
+  "wire_write_count": 645,
+  "working_tree_dirty_at_run": true
+}

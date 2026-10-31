@@ -631,3 +631,14 @@ until a human-authorized `--execute` and an independent JSONL review.
 `*TRG` event acceptance alone does not qualify coupling, timing, analog
 transitions or low-power CV/CC behavior. See
 `docs/R5_E7_NEUTRAL_BUS_TRIGGER_OFF_QUALIFICATION.ru.md`.
+
+## R5-E8 — hardware review completed; R5-E9 next
+
+R5-E7-HW original JSONL SHA was pinned, checked with the standalone R5-E7
+auditor and independently inspected for order, readbacks, OFF, provenance
+and hidden diagnostics. Single neutral event `bounded_hw` only. 50 adjacent
+error-queue query pairs noted as nonblocking diagnostic overhead. The source
+revision's dirty flag remains a provenance note. No loaded or simultaneous
+trigger result. Next R5-E9: software-only investigation of `INST:COUP` grammar
+and guarded non-neutral digital switching, no physical experiment until a new
+operator-approved plan. H09/H10 hardware load points remain open.

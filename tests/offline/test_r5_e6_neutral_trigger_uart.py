@@ -127,11 +127,12 @@ class NeutralBusUART(unittest.TestCase):
                  else dev.diagnostic_write(command))
         self.assertEqual(before, peer.rx)
 
-    def test_capability_status_is_simulation_not_hardware(self):
+    def test_capability_status_is_bounded_neutral_event_hardware(self):
         entry = Keithley2231A.capabilities().feature('neutral_trigger_bus_off_candidate')
-        self.assertEqual(entry.evidence, 'simulated_only')
+        self.assertEqual(entry.evidence, 'bounded_hw')
         self.assertTrue(entry.driver_exposed)
-        self.assertFalse(entry.hardware_evidence)
+        self.assertEqual(len(entry.hardware_evidence), 1)
+        self.assertEqual(entry.hardware_evidence[0].channels, (1, 2, 3))
 
     def test_after_event_output_enable_remains_denied(self):
         dev, peer = self.pair()

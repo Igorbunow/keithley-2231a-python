@@ -1706,7 +1706,8 @@ class Keithley2231A:
                                   confirmed_off_only: bool = False) -> TriggerPresetReadback:
         """Stage both trigger registers OFF-only; NEVER issue *TRG or enable outputs.
 
-        Virtual UART tested; physical trigger writes remain NOT qualified.
+        Physical trigger register write/read/restore reviewed at OFF on CH1/2/3.
+        This does not qualify applying a non-neutral trigger or powered outputs.
         Sequential, non-atomic, and the session remains output-enable locked
         even after apply_profile(). A new session does not erase native presets.
         """
@@ -1757,7 +1758,7 @@ class Keithley2231A:
     def fire_neutral_trigger_off(self, *, confirmed_all_outputs_off: bool = False,
                                  confirmed_empty_terminals: bool = False
                                  ) -> NeutralTriggerObservation:
-        """Software-only R5-E6 candidate: one *TRG with neutral CH1/CH2/CH3.
+        """Bounded R5-E7 hardware-reviewed OFF-only neutral bus *TRG.
 
         The trigger presets of EACH channel must exactly match its currently
         applied independent-profile V/I settings. With all outputs OFF, this
@@ -1765,8 +1766,9 @@ class Keithley2231A:
         source-setpoint change, irrespective of unknown INST:COUP routing.
         It cannot qualify trigger actuation, coupling or analog behavior.
 
-        No live-hardware qualification is supplied by this API. A separate
-        reviewed operator-gated runner is required before physical use.
+        The reviewed event required a separate operator-gated runner, empty
+        terminals and independent JSONL audit; it is not a blanket power-on
+        or non-neutral trigger authorization.
         """
         if confirmed_all_outputs_off is not True or confirmed_empty_terminals is not True:
             raise SafetyError('Neutral bus trigger requires both physical OFF and empty-terminal assertions')
