@@ -64,7 +64,7 @@
 | INSTrument 5-10…5-12 | `INST:COMBine:PARAllel` | **R** | Альтернативный маршрут комбинирования; не подключать к общему API без проверки влияния на топологию. |
 | INSTrument 5-10…5-12 | `INST:COMBine:TRACk` | **R** | Альтернативный маршрут tracking; эффекты на уставки/топологию требуют оценки. |
 | INSTrument 5-10…5-12 | `INST:COMBine:OFF` | **R** | Выход из объединённого режима; mutating, нельзя считать безвредным query. Отложить до точного preflight. |
-| INSTrument 5-10…5-12 | `INST:COUPle[:TRIGger] / ?` | **R** | Связь триггеров/каналов |
+| INSTrument 5-10…5-12 | `INST:COUPle[:TRIGger] / ?` | **R** | R5-E1: debug-bypass дополнительно заблокирован; query-синтаксис/ответ неоднозначны по руководству и не доказаны на приборе. |
 | MEASure 5-12…5-13 | `MEAS[:SCAL]:VOLT[:DC]?` | **W** | `read_channel()` вызывает `MEAS:VOLT?` |
 | MEASure 5-12…5-13 | `FETCh[:VOLT][:DC]?` | **W** | R4.4-A: `fetch_measurement(ch, "voltage")`, query-only `FETC:VOLT?`; R4.4-C HW REVIEWED PASS (one Independent CH1 low-power value 3.2996 V; freshness UNVERIFIED) |
 | MEASure 5-12…5-13 | `MEAS[:SCAL]:CURR[:DC]?` | **W** | `read_channel()` вызывает `MEAS:CURR?` |
@@ -108,12 +108,12 @@
 | SOURce 5-24…5-28 | `CURRent:UP` | **W** | `step_source(ch, "current", "up")` доступен только внутри ограниченного квалификационного STEP-контекста; не общий свободный UP. |
 | SOURce 5-24…5-28 | `CURRent:DOWN` | **W** | `step_source(ch, "current", "down")`; те же OFF/controlled powered gates, не повсеместный API. |
 | SOURce 5-24…5-28 | `CURRent:STEP / ?` | **W** | `source_step()` query и `configure_source_step()` guarded write: профили Independent, OFF, 1 мА lattice, строгий readback; есть ограниченные аппаратные CH1 испытания. Не весь диапазон/CH2/CH3. |
-| SOURce 5-24…5-28 | `CURRent:TRIGgered / ?` | **R** | Триггер может менять ограничение тока |
+| SOURce 5-24…5-28 | `CURRent:TRIGgered / ?` | **R** | R5-E1: **только `CURR:TRIG?`** через guarded `read_trigger_presets(ch)`, CH1/CH2/CH3 OFF, SIM-only. Запись и событие `*TRG` закрыты. |
 | SOURce 5-24…5-28 | `[SOUR:]VOLTage[:LEV] / ?` | **W** | Уставка и readback через `set_channel()` |
 | SOURce 5-24…5-28 | `VOLTage:UP` | **W** | `step_source(ch, "voltage", "up")`; узкий профиль и аппаратное evidence CH1, не общий sweep. |
 | SOURce 5-24…5-28 | `VOLTage:DOWN` | **W** | `step_source(ch, "voltage", "down")`; узкий профиль и аппаратное evidence CH1. |
 | SOURce 5-24…5-28 | `VOLTage:STEP / ?` | **W** | `source_step()` query и `configure_source_step()` guarded write: Independent, OFF, 10 мВ lattice, строгий readback; 1 мВ запись отвергнута прибором. CH1 bounded HW; не общий sweep. |
-| SOURce 5-24…5-28 | `VOLTage:TRIGgered / ?` | **R** | Триггер меняет уставку |
+| SOURce 5-24…5-28 | `VOLTage:TRIGgered / ?` | **R** | R5-E1: **только `VOLT:TRIG?`** через guarded `read_trigger_presets(ch)`, CH1/CH2/CH3 OFF, SIM-only. Запись и событие `*TRG` закрыты. |
 | SOURce 5-24…5-28 | `VOLTage:LIMit / ?` | **W** | Профиль ограничений + readback |
 | SOURce 5-24…5-28 | `VOLTage:LIMit:STATe / ?` | **W** | Защита профиля + readback |
 
@@ -557,3 +557,12 @@ OFF current STEP matrix remains valid. See
 `docs/reviews/R5_D3_ALL_CHANNEL_STEP_HW_REVIEW_2026-10-31.md`.
 No evidence supports arbitrary fast timing, full-range accuracy, trigger
 commands or bypass of a guarded/qualification-only powered STEP route.
+
+### R5-E1: границы read-only доступа к trigger-регистрам (software-only)
+
+`read_trigger_presets(ch)` формирует два последовательных запроса
+`VOLT:TRIG?` и `CURR:TRIG?` под OFF-only profile guards для CH1/CH2/CH3.
+Это **частичное** покрытие соответствующих строк **R**, не перевод всего
+семейства в W и не HW PASS. Положительные виртуальные ответы не подтверждают
+реальную прошивку. `INST:COUP`, `*TRG` и trigger writes запрещены; см.
+`docs/R5_E1_TRIGGER_PRESET_READBACK.ru.md`.

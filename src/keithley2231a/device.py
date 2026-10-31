@@ -57,6 +57,17 @@ class Reading:
     questionable_status_mask: int | None = None
     regulation_source: str | None = None
 
+@dataclass(frozen=True)
+class TriggerPresetReadback:
+    """Two sequential digital trigger-register queries; no trigger fired.
+
+    Values are NOT applied source settings, live measurements, or timing proof.
+    """
+    channel: int
+    voltage_v: float
+    current_a: float
+
+
 class Keithley2231A:
     @staticmethod
     def capabilities():
@@ -123,6 +134,7 @@ class Keithley2231A:
         self._expected_setpoints = {}
         # Authorize only one internally validated STEP write at a time.
         self._source_mutation_command: str | None = None
+        self._trigger_read_query: str | None = None
         self._configured_source_steps: dict[tuple[int, str], float] = {}
         self._powered_step_window: dict | None = None
         self._expected_outputs = {ch: False for ch in (1, 2, 3)}
@@ -218,6 +230,12 @@ class Keithley2231A:
             return True
         if re.match(r'^(?:STAT(?:US)?:PRES|TRIG(?:GER)?(?:\b|:))', cmd):
             return True
+        # Coupling is independent of output tracking: a trigger can change
+        # previously staged V/I setpoints. Diagnostics must never bypass it.
+        if re.match(r'^INST(?:RUMENT)?:COUP(?:LE)?(?::TRIG(?:GER)?)?(?:\b|\?)', cmd):
+            return True
+        if re.match(r'^(?:SOUR(?:CE)?:)?(?:VOLT(?:AGE)?|CURR(?:ENT)?)(?::LEV(?:EL)?)?:TRIG', cmd):
+            return True
         if re.match(r'^\*(?:CLS|RST|WAI|TRG|RCL|SAV|TST)(?:\b|\?)', cmd):
             return True
         if re.match(r'^\*(?:PSC|OPC)(?!\?)\b', cmd):
@@ -239,7 +257,8 @@ class Keithley2231A:
             if self._service_mode and not self._service_busy and command not in ('*IDN?', 'SYST:LOC'):
                 raise SafetyError('Service-owned session forbids ordinary SCPI operations')
             if (self._service_only_command(command) and command != self._service_command
-                    and command != self._source_mutation_command):
+                    and command != self._source_mutation_command
+                    and not (query and command == self._trigger_read_query)):
                 raise SafetyError('Service-only SCPI forbidden outside an explicitly '
                                   'authorized driver service operation')
             if self._link_uncertain:
@@ -1581,8 +1600,9 @@ class Keithley2231A:
         ``kind`` is exactly voltage or current. This is an observation of the
         per-channel register with a validated independent profile. Separate
         guarded APIs support OFF-only configure_source_step()/step_source(),
-        with a narrowly bounded CH1 powered qualification context. Those
-        permissions do not follow from a query and do not authorize *TRG,
+        with a narrowly bounded, independently reviewed CH1/CH2/CH3 powered
+        qualification context. Those permissions do not follow from a query
+        and do not authorize *TRG,
         VOLT:TRIG/CURR:TRIG or unrestricted powered UP/DOWN. Recorded STEP
         register readback evidence is scoped to particular channels/kinds:
         see static capabilities; no general firmware guarantee is implied.
@@ -1604,6 +1624,51 @@ class Keithley2231A:
             if value < 0 or value > maximum:
                 self._malformed_value(f'Out-of-range {command} reply: {value!r}')
             return value
+
+    def _read_authorized_trigger_register(self, command: str) -> float:
+        """Authorize exactly one OFF-only read, never a TRIG write or *TRG."""
+        if self._trigger_read_query is not None or command not in ('VOLT:TRIG?', 'CURR:TRIG?'):
+            raise SafetyError('Nested or unrecognized trigger register read')
+        self._trigger_read_query = command
+        try:
+            return self._num(command)
+        finally:
+            self._trigger_read_query = None
+
+    def read_trigger_presets(self, ch: int) -> TriggerPresetReadback:
+        """Read native V/I trigger *registers*, OFF-only for CH1/CH2/CH3.
+
+        A limited, software-tested protocol probe; NOT an authorization to
+        set trigger levels, couple channels, issue *TRG, or energize outputs.
+        The instrument's coupling-query return format is ambiguous in the
+        reference manual, so this method does not query INST:COUP?.
+        Digital reads are sequential and may fail on unqualified firmware.
+        """
+        self._check_channel(ch)  # invalid input must never reach the wire
+        with self._lock:
+            self._require_ready()
+            if self._powered_step_window is not None:
+                raise SafetyError('Cannot inspect trigger registers in powered STEP window')
+            self._require_step_off()  # independent, control-access, all outputs OFF
+            self.verify_profile()
+            try:
+                self._select(ch)
+                if self._uint('INST:NSEL?', maximum=3) != ch:
+                    raise SafetyError('Wrong selected channel before trigger read')
+                voltage = self._read_authorized_trigger_register('VOLT:TRIG?')
+                self.check_errors()
+                current = self._read_authorized_trigger_register('CURR:TRIG?')
+                self.check_errors()
+                max_voltage = 5.0 if ch == 3 else 30.0
+                if not 0 <= voltage <= max_voltage or not 0 <= current <= 3.0:
+                    self._malformed_value(f'CH{ch} trigger register outside rated limits')
+                # Revalidate the independent profile; no values are staged by this read.
+                self.verify_profile()
+                return TriggerPresetReadback(ch, voltage, current)
+            except Exception as exc:
+                if self._link_uncertain:
+                    raise  # never auto-retry/shutdown over an uncertain link
+                self._trip(f'CH{ch} trigger-register read failed: {exc}')
 
     @staticmethod
     def _source_step_tokens(ch: int, kind: str, increment: float | None = None):
@@ -1755,9 +1820,9 @@ class Keithley2231A:
         Each command checks profile, selected channel and step-register integrity.
         Decimal-millistep arithmetic avoids float drift; readback
         precision remains 1 m-unit and writes require 10 mV/1 mA grids or
-        the session is tripped. Narrowly reviewed low-power CH1 CV/CC STEP
-        mutations and OFF-only digital cases are documented in capabilities.
-        They do not qualify other channels under load, arbitrary ranges,
+        the session is tripped. Narrowly reviewed low-power CH1/CH2/CH3 CV/CC
+        STEP mutations and OFF-only digital cases are in capabilities.
+        They do not qualify arbitrary loads or full-rated ranges,
         transient timing, or general operator-free powered STEP execution.
         """
         command, _ = self._source_step_tokens(ch, kind)

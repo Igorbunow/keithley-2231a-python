@@ -1117,3 +1117,14 @@ including independent KEL103/DMM7510 measurements and verified final OFF.
 This does not authorize arbitrary powered stepping or prove calibrated current,
 full-range/transient behavior or trigger synchronization. See
 `docs/reviews/R5_D3_ALL_CHANNEL_STEP_HW_REVIEW_2026-10-31.md`.
+
+### R5-E1: read-only native trigger preset registers
+
+`device.read_trigger_presets(ch)` reads `VOLT:TRIG?` and `CURR:TRIG?` for
+CH1/CH2/CH3 in an independent control profile with all outputs OFF. The
+returned immutable `TriggerPresetReadback` is a pair of **sequential digital
+registers** (not active outputs or simultaneous measurements). The path
+currently has **virtual-UART-only** evidence. `*TRG`, writing trigger
+setpoints and `INST:COUP` remain blocked; no hardware synchronization or
+active trigger behavior is qualified. See
+`docs/R5_E1_TRIGGER_PRESET_READBACK.ru.md`.

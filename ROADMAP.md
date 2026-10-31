@@ -558,3 +558,16 @@ Powering the output via a general STEP API, full-rated range, SCPI trigger,
 fast transient behavior and metrological calibration are **NOT** qualified.
 Next: R5-E native trigger feasibility/safety on virtual UART first; do not
 send powered trigger commands before separate user-approved hardware stage.
+
+## R5-E1 — Native triggered preset register readback (software-only)
+
+After R5-D3, added read-only `read_trigger_presets(ch)` for all three
+independent, OFF-only, control-profile channels using the guarded dispatcher.
+No trigger events, trigger writes or coupling commands are authorized.
+The vendor's `INST:COUP?` argument/return specification is ambiguous;
+do not invent its response or promise synchronized switching.  Native
+trigger readback is SIM-only until a separate, operator-approved, original-
+evidence-reviewed R5-E2 OFF-only hardware campaign. See
+`docs/R5_E1_TRIGGER_PRESET_READBACK.ru.md`. Subsequent guarded trigger
+mutation APIs, if supported, require individual bounded hardware tests on
+CH1/CH2/CH3 and recovery-of-active-preset verification.

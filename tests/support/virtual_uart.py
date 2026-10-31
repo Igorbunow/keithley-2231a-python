@@ -64,7 +64,8 @@ class UARTPeer:
                  fault_code=None, off_by_channel=None, response_sequences=None,
                  fault_after=None, profile_registers=False,
                  channel_response_sequences=None, mode_channel_overrides=None,
-                 ignore_step_write=False, ignore_step_action=False):
+                 ignore_step_write=False, ignore_step_action=False,
+                 trigger_registers=False):
         # Explicit per-topology digital readbacks, authored by each test.
         # The peer does not calculate aggregate limits, share branch current,
         # or infer electrical behavior. Mode keys only select canned replies.
@@ -111,6 +112,9 @@ class UARTPeer:
         self.fault_code = fault_code
         self.off_by_channel = off_by_channel or {}
         self.profile_registers = profile_registers
+        if trigger_registers and not profile_registers:
+            raise ValueError('trigger register fixture requires profile_registers')
+        self.trigger_registers = trigger_registers
         self.ignore_step_write = ignore_step_write
         self.ignore_step_action = ignore_step_action
         self.ignore_shutdown = False
@@ -120,6 +124,10 @@ class UARTPeer:
                                       'VOLT:LIM:STAT': '0', 'OUTP:TIM:STAT': '0',
                                       'VOLT:STEP': '0.010', 'CURR:STEP': '0.001'}
                                   for ch in (1, 2, 3)}
+        if trigger_registers:
+            for ch in (1, 2, 3):
+                self.channel_registers[ch]['VOLT:TRIG'] = f'{ch * .5:.3f}'
+                self.channel_registers[ch]['CURR:TRIG'] = f'{ch * .025:.3f}'
         # Three documented read-to-clear event latches; the peer is a wire
         # fixture, not a second implementation of the Keithley driver.
         self.event_latches = {'*ESR?': '7', 'STAT:QUES:EVEN?': '129',
@@ -206,6 +214,7 @@ class UARTPeer:
                                               'STAT:QUES:COND?', 'STAT:OPER:COND?',
                                               'MEAS:VOLT?', 'MEAS:CURR?', 'MEAS:POW?',
                                               'VOLT:STEP?', 'CURR:STEP?',
+                                              *({'VOLT:TRIG?', 'CURR:TRIG?'} if self.trigger_registers else set()),
                                               'FETC:VOLT?', 'FETC:CURR?', 'FETC:POW?'})
                     else:
                         allowed_writes.update({'SYST:RWLOCK', 'OUTP:SER 0',
